@@ -175,7 +175,7 @@ export default function App() {
     <main className="app-shell">
       <style>{`
         @media print {
-          @page { size: letter landscape; margin: 0.25in; }
+          @page { size: letter portrait; margin: 0; }
         }
       `}</style>
 
