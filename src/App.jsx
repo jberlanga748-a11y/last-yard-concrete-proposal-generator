@@ -421,11 +421,19 @@ export default function App() {
   function fillProposalFromNotes() {
     const parsedNotes = parseProjectNotes(smartPasteNotes);
     const parsedLineItemCount = parsedNotes.lineItems.length + (parsedNotes.values.baseBidLineItem ? 1 : 0);
+    const parsedPricingSectionCount = parsedNotes.pricingSectionCount || 0;
 
-    if (parsedNotes.fields.length === 0 && parsedNotes.lineItems.length === 0) {
+    if (
+      parsedNotes.fields.length === 0 &&
+      parsedNotes.lineItems.length === 0 &&
+      parsedPricingSectionCount === 0 &&
+      parsedNotes.sectionsCaptured.length === 0
+    ) {
       setSmartPasteResult({
         fields: [],
         lineItemCount: 0,
+        pricingSectionCount: 0,
+        sectionsCaptured: [],
         warnings: parsedNotes.warnings.length > 0 ? parsedNotes.warnings : ["No clearly labeled proposal fields were found."],
       });
       return;
@@ -435,6 +443,8 @@ export default function App() {
     setSmartPasteResult({
       fields: parsedNotes.fields,
       lineItemCount: parsedLineItemCount,
+      pricingSectionCount: parsedPricingSectionCount,
+      sectionsCaptured: parsedNotes.sectionsCaptured,
       warnings: parsedNotes.warnings,
     });
   }
@@ -1144,7 +1154,10 @@ function SmartPasteSummary({ result }) {
       <ul>
         <li>{result.fields.length} fields updated</li>
         <li>{result.lineItemCount} line items added</li>
+        <li>{result.pricingSectionCount || 0} alternates / allowances added</li>
+        <li>{(result.sectionsCaptured || []).length} sections captured</li>
         {result.fields.length > 0 ? <li>Updated: {result.fields.join(", ")}</li> : null}
+        {(result.sectionsCaptured || []).length > 0 ? <li>Captured: {result.sectionsCaptured.join(", ")}</li> : null}
       </ul>
       {result.warnings.length > 0 ? (
         <div className="smart-paste-warnings">
@@ -2977,6 +2990,11 @@ function parseProjectNotes(notes) {
   setTextValue("projectAddress", "projectAddress", "project address");
   setTextValue("schedule", "schedule", "schedule");
   setTextValue("terms", "terms", "terms");
+  setTextValue("rfiClarificationNotes", "rfiClarifications", "RFIs / Clarifications");
+  setTextValue("addendaAcknowledged", "addendaAcknowledged", "addenda acknowledged");
+  setTextValue("proposalNotes", "proposalNotes", "proposal notes");
+  setTextValue("gcPrimeNotes", "gcPrimeNotes", "GC / Prime notes");
+  setTextValue("concreteSpecNotes", "concreteSpecs", "concrete specs");
 
   const proposalType = normalizeSmartProposalType(getSectionText(sections, "proposalType"));
 
@@ -3035,6 +3053,8 @@ function parseProjectNotes(notes) {
   return {
     fields: [...new Set(fields)],
     lineItems,
+    pricingSectionCount: pricingParse.sections.length,
+    sectionsCaptured: getCapturedSmartPasteLabels(sections),
     values,
     warnings: [...new Set(warnings)],
   };
@@ -3115,6 +3135,27 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     };
   }
 
+  if (values.rfiClarificationNotes) {
+    nextProposal.gcPrime.rfiClarificationNotes = values.rfiClarificationNotes;
+  }
+
+  if (values.addendaAcknowledged) {
+    nextProposal.gcPrime.addendaAcknowledged = values.addendaAcknowledged;
+  }
+
+  if (values.proposalNotes) {
+    nextProposal.proposalNotes = values.proposalNotes;
+    nextProposal.notes = values.proposalNotes;
+  }
+
+  if (values.gcPrimeNotes) {
+    nextProposal.gcPrime.gcPrimeNotes = values.gcPrimeNotes;
+  }
+
+  if (values.concreteSpecNotes) {
+    nextProposal.concreteSpecs.notes = values.concreteSpecNotes;
+  }
+
   if (parsedNotes.lineItems.length > 0) {
     nextProposal.lineItems = parsedNotes.lineItems;
   } else if (values.baseBidLineItem) {
@@ -3132,7 +3173,26 @@ function collectSmartPasteSections(notes) {
   const sections = {};
   const lines = String(notes || "").split(/\r?\n/);
   let activeKey = "";
-  const multiLineKeys = new Set(["scope", "exclusions", "assumptions", "terms", "lineItems"]);
+  const multiLineKeys = new Set([
+    "scope",
+    "exclusions",
+    "assumptions",
+    "terms",
+    "lineItems",
+    "rfiClarifications",
+    "addendaAcknowledged",
+    "proposalNotes",
+    "gcPrimeNotes",
+    "concreteSpecs",
+    "pricingSections",
+  ]);
+  const textCaptureKeys = new Set([
+    "rfiClarifications",
+    "addendaAcknowledged",
+    "proposalNotes",
+    "gcPrimeNotes",
+    "concreteSpecs",
+  ]);
 
   lines.forEach((rawLine) => {
     const line = rawLine.trim();
@@ -3141,25 +3201,43 @@ function collectSmartPasteSections(notes) {
       return;
     }
 
-    if (isSmartPricingLine(line)) {
-      activeKey = "pricingSections";
-      appendSmartPasteSection(sections, "pricingSections", line);
+    const labelMatch = line.match(/^([^:]+):\s*(.*)$/);
+
+    if (labelMatch) {
+      const key = getSmartPasteLabelKey(labelMatch[1]);
+
+      if (key && isSmartPasteSectionHeading(labelMatch[1], key)) {
+        activeKey = key;
+        recordSmartPasteSection(sections, key);
+        appendSmartPasteSection(sections, key, labelMatch[2]);
+        return;
+      }
+    }
+
+    if (textCaptureKeys.has(activeKey)) {
+      appendSmartPasteSection(sections, activeKey, line);
       return;
     }
 
-    const labelMatch = line.match(/^([^:]+):\s*(.*)$/);
+    if (isSmartPricingLine(line)) {
+      activeKey = "pricingSections";
+      recordSmartPasteSection(sections, "pricingSections");
+      appendSmartPasteSection(sections, "pricingSections", line);
+      return;
+    }
 
     if (labelMatch) {
       const key = getSmartPasteLabelKey(labelMatch[1]);
 
       if (key) {
         activeKey = key;
+        recordSmartPasteSection(sections, key);
         appendSmartPasteSection(sections, key, labelMatch[2]);
         return;
       }
     }
 
-    if (activeKey === "lineItems" || line.includes("|")) {
+    if (activeKey === "lineItems") {
       activeKey = "lineItems";
       appendSmartPasteSection(sections, "lineItems", line);
       return;
@@ -3167,6 +3245,13 @@ function collectSmartPasteSections(notes) {
 
     if (multiLineKeys.has(activeKey)) {
       appendSmartPasteSection(sections, activeKey, line);
+      return;
+    }
+
+    if (line.includes("|")) {
+      activeKey = "lineItems";
+      recordSmartPasteSection(sections, "lineItems");
+      appendSmartPasteSection(sections, "lineItems", line);
     }
   });
 
@@ -3176,12 +3261,19 @@ function collectSmartPasteSections(notes) {
 function getSmartPasteLabelKey(label) {
   const normalizedLabel = label.trim().toLowerCase().replace(/\s+/g, " ");
   const labels = {
+    "addenda acknowledged": "addendaAcknowledged",
+    "addendum acknowledged": "addendaAcknowledged",
     address: "billingAddress",
+    allowances: "pricingSections",
+    alternates: "pricingSections",
     assumptions: "assumptions",
     client: "clientCompany",
+    "concrete specs": "concreteSpecs",
     contact: "contactName",
     email: "clientEmail",
     exclusions: "exclusions",
+    "gc / prime notes": "gcPrimeNotes",
+    "gc prime notes": "gcPrimeNotes",
     "line items": "lineItems",
     "line item": "lineItems",
     location: "projectLocation",
@@ -3191,7 +3283,10 @@ function getSmartPasteLabelKey(label) {
     "project address": "projectAddress",
     "project location": "projectLocation",
     "project name": "projectName",
+    "proposal notes": "proposalNotes",
     "proposal type": "proposalType",
+    "rfi / clarification": "rfiClarifications",
+    "rfis / clarifications": "rfiClarifications",
     schedule: "schedule",
     scope: "scope",
     terms: "terms",
@@ -3200,6 +3295,68 @@ function getSmartPasteLabelKey(label) {
   };
 
   return labels[normalizedLabel] || "";
+}
+
+function isSmartPasteSectionHeading(label, key) {
+  const normalizedLabel = label.trim().toLowerCase().replace(/\s+/g, " ");
+  const sectionHeadingLabels = new Set([
+    "addenda acknowledged",
+    "addendum acknowledged",
+    "allowances",
+    "alternates",
+    "assumptions",
+    "concrete specs",
+    "exclusions",
+    "gc / prime notes",
+    "gc prime notes",
+    "line item",
+    "line items",
+    "proposal notes",
+    "rfi / clarification",
+    "rfis / clarifications",
+    "scope",
+    "terms",
+  ]);
+
+  return sectionHeadingLabels.has(normalizedLabel) || key === "lineItems";
+}
+
+function recordSmartPasteSection(sections, key) {
+  if (!sections.__capturedKeys) {
+    sections.__capturedKeys = [];
+  }
+
+  if (!sections.__capturedKeys.includes(key)) {
+    sections.__capturedKeys.push(key);
+  }
+}
+
+function getCapturedSmartPasteLabels(sections) {
+  const labels = {
+    addendaAcknowledged: "Addenda Acknowledged",
+    assumptions: "Assumptions",
+    billingAddress: "Billing Address",
+    clientCompany: "Client",
+    clientEmail: "Client Email",
+    clientPhone: "Client Phone",
+    concreteSpecs: "Concrete Specs",
+    contactName: "Contact",
+    exclusions: "Exclusions",
+    gcPrimeNotes: "GC / Prime Notes",
+    lineItems: "Line Items",
+    pricingSections: "Alternates / Allowances",
+    projectAddress: "Project Address",
+    projectLocation: "Project Location",
+    projectName: "Project",
+    proposalNotes: "Proposal Notes",
+    proposalType: "Proposal Type",
+    rfiClarifications: "RFIs / Clarifications",
+    schedule: "Schedule",
+    scope: "Scope",
+    terms: "Terms",
+  };
+
+  return (sections.__capturedKeys || []).map((key) => labels[key] || key);
 }
 
 function appendSmartPasteSection(sections, key, value) {
