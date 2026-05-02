@@ -21,7 +21,15 @@ export default function App() {
   const company = proposalDraft.company;
 
   function updateProposalField(path, value) {
-    setProposalDraft((currentProposal) => updateNestedValue(currentProposal, path, value));
+    setProposalDraft((currentProposal) => {
+      const nextProposal = updateNestedValue(currentProposal, path, value);
+
+      if (path === "proposalType") {
+        nextProposal.type = value;
+      }
+
+      return nextProposal;
+    });
   }
 
   function updateLineItem(index, field, value) {
@@ -153,6 +161,16 @@ export default function App() {
     }));
   }
 
+  function updateGcPrimeField(field, value) {
+    setProposalDraft((currentProposal) => ({
+      ...currentProposal,
+      gcPrime: {
+        ...currentProposal.gcPrime,
+        [field]: value,
+      },
+    }));
+  }
+
   return (
     <main className="app-shell">
       <style>{`
@@ -186,6 +204,7 @@ export default function App() {
           onScopeBulletChange={updateScopeBullet}
           onScopeTitleChange={updateScopeSectionTitle}
           onConcreteSpecChange={updateConcreteSpec}
+          onGcPrimeChange={updateGcPrimeField}
         />
         <div className="preview-pane">
           <ProposalPreview proposal={proposalDraft} />
@@ -209,16 +228,18 @@ function ProposalEditor({
   onScopeBulletChange,
   onScopeTitleChange,
   onConcreteSpecChange,
+  onGcPrimeChange,
 }) {
   const proposalTotals = calculateProposalTotals(proposal);
+  const isGcPrime = proposal.proposalType === "gc_prime";
 
   return (
     <aside className="editor-panel no-print" aria-label="Proposal editor">
       <EditorSection title="Proposal Info">
         <EditorField
           label="Proposal Type"
-          path="type"
-          value={proposal.type}
+          path="proposalType"
+          value={proposal.proposalType}
           onChange={onChange}
           options={PROPOSAL_TYPES}
         />
@@ -344,6 +365,12 @@ function ProposalEditor({
       <EditorSection title="Concrete Specifications">
         <ConcreteSpecsEditor concreteSpecs={proposal.concreteSpecs} onChange={onConcreteSpecChange} />
       </EditorSection>
+
+      {isGcPrime ? (
+        <EditorSection title="GC / Prime Contractor">
+          <GcPrimeEditor gcPrime={proposal.gcPrime} onChange={onGcPrimeChange} />
+        </EditorSection>
+      ) : null}
 
       <EditorSection title="Pricing">
         <LineItemEditor
@@ -655,6 +682,144 @@ function ConcreteSpecsEditor({ concreteSpecs, onChange }) {
   );
 }
 
+function GcPrimeEditor({ gcPrime, onChange }) {
+  return (
+    <div className="gc-prime-editor">
+      <div className="editor-spec-grid">
+        <EditorField
+          label="GC / Prime Contractor Name"
+          path="gcPrime.contractorName"
+          value={gcPrime.contractorName}
+          onChange={(_, value) => onChange("contractorName", value)}
+        />
+        <EditorField
+          label="Project Manager Name"
+          path="gcPrime.projectManagerName"
+          value={gcPrime.projectManagerName}
+          onChange={(_, value) => onChange("projectManagerName", value)}
+        />
+        <EditorField
+          label="Project Manager Phone"
+          path="gcPrime.projectManagerPhone"
+          value={gcPrime.projectManagerPhone}
+          onChange={(_, value) => onChange("projectManagerPhone", value)}
+        />
+        <EditorField
+          label="Project Manager Email"
+          path="gcPrime.projectManagerEmail"
+          type="email"
+          value={gcPrime.projectManagerEmail}
+          onChange={(_, value) => onChange("projectManagerEmail", value)}
+        />
+        <EditorField
+          label="Bid Package Number"
+          path="gcPrime.bidPackageNumber"
+          value={gcPrime.bidPackageNumber}
+          onChange={(_, value) => onChange("bidPackageNumber", value)}
+        />
+        <EditorField
+          label="Spec Section"
+          path="gcPrime.specSection"
+          value={gcPrime.specSection}
+          onChange={(_, value) => onChange("specSection", value)}
+        />
+        <EditorField
+          label="Retainage Percentage"
+          path="gcPrime.retainagePercentage"
+          value={gcPrime.retainagePercentage}
+          onChange={(_, value) => onChange("retainagePercentage", value)}
+        />
+        <EditorField
+          label="Addenda Acknowledged"
+          path="gcPrime.addendaAcknowledged"
+          value={gcPrime.addendaAcknowledged}
+          onChange={(_, value) => onChange("addendaAcknowledged", value)}
+        />
+      </div>
+
+      <EditorField
+        label="Drawing References"
+        path="gcPrime.drawingReferences"
+        value={gcPrime.drawingReferences}
+        onChange={(_, value) => onChange("drawingReferences", value)}
+        multiline
+      />
+
+      <div className="editor-check-row gc-check-row">
+        <label className="editor-check">
+          <input
+            checked={Boolean(gcPrime.prevailingWageRequired)}
+            type="checkbox"
+            onChange={(event) => onChange("prevailingWageRequired", event.target.checked)}
+          />
+          <span>Prevailing wage required</span>
+        </label>
+        <label className="editor-check">
+          <input
+            checked={Boolean(gcPrime.certifiedPayrollRequired)}
+            type="checkbox"
+            onChange={(event) => onChange("certifiedPayrollRequired", event.target.checked)}
+          />
+          <span>Certified payroll required</span>
+        </label>
+        <label className="editor-check">
+          <input
+            checked={Boolean(gcPrime.insuranceCertificateRequired)}
+            type="checkbox"
+            onChange={(event) => onChange("insuranceCertificateRequired", event.target.checked)}
+          />
+          <span>Insurance certificate required</span>
+        </label>
+        <label className="editor-check">
+          <input
+            checked={Boolean(gcPrime.w9Required)}
+            type="checkbox"
+            onChange={(event) => onChange("w9Required", event.target.checked)}
+          />
+          <span>W-9 required</span>
+        </label>
+        <label className="editor-check">
+          <input
+            checked={Boolean(gcPrime.safetyOrientationRequired)}
+            type="checkbox"
+            onChange={(event) => onChange("safetyOrientationRequired", event.target.checked)}
+          />
+          <span>Safety orientation required</span>
+        </label>
+      </div>
+
+      <EditorField
+        label="Jobsite Access / Badging Requirements"
+        path="gcPrime.jobsiteAccessBadgingRequirements"
+        value={gcPrime.jobsiteAccessBadgingRequirements}
+        onChange={(_, value) => onChange("jobsiteAccessBadgingRequirements", value)}
+        multiline
+      />
+      <EditorField
+        label="Payment Application Terms"
+        path="gcPrime.paymentApplicationTerms"
+        value={gcPrime.paymentApplicationTerms}
+        onChange={(_, value) => onChange("paymentApplicationTerms", value)}
+        multiline
+      />
+      <EditorField
+        label="Change Order Process"
+        path="gcPrime.changeOrderProcess"
+        value={gcPrime.changeOrderProcess}
+        onChange={(_, value) => onChange("changeOrderProcess", value)}
+        multiline
+      />
+      <EditorField
+        label="RFI / Clarification Notes"
+        path="gcPrime.rfiClarificationNotes"
+        value={gcPrime.rfiClarificationNotes}
+        onChange={(_, value) => onChange("rfiClarificationNotes", value)}
+        multiline
+      />
+    </div>
+  );
+}
+
 function EditorSection({ title, children }) {
   return (
     <section className="editor-section">
@@ -690,6 +855,8 @@ function EditorField({ label, path, value, onChange, type = "text", multiline = 
 function ProposalPreview({ proposal }) {
   const company = proposal.company;
   const companyCredentials = company.credentials.join(" | ");
+  const isGcPrime = proposal.proposalType === "gc_prime";
+  const gcPrimeRows = isGcPrime ? buildGcPrimeRows(proposal.gcPrime) : [];
   const scopeSplitIndex = Math.ceil(proposal.scopeSections.length / 2);
   const scopeLeft = proposal.scopeSections.slice(0, scopeSplitIndex);
   const scopeRight = proposal.scopeSections.slice(scopeSplitIndex);
@@ -719,6 +886,7 @@ function ProposalPreview({ proposal }) {
         <CoverHeader company={company} />
         <CompanyIntro company={company} companyCredentials={companyCredentials} />
         <ProjectCards proposal={proposal} />
+        {gcPrimeRows.length > 0 ? <GcPrimeNotes rows={gcPrimeRows} /> : null}
         <div className="page-one-feature-block">
           <PhotoBand />
           <WhyChoose />
@@ -766,6 +934,23 @@ function ProposalPreview({ proposal }) {
           <PageFooter company={company} companyCredentials={companyCredentials} />
         </div>
       </ProposalPage>
+    </section>
+  );
+}
+
+function GcPrimeNotes({ rows }) {
+  return (
+    <section className="gc-prime-notes">
+      <InfoCard title="GC / Prime Notes" watermark="GC">
+        <div className="gc-prime-note-grid">
+          {rows.map(([label, value]) => (
+            <p className="gc-prime-note-row" key={label}>
+              <span>{label}:</span>
+              <span>{value}</span>
+            </p>
+          ))}
+        </div>
+      </InfoCard>
     </section>
   );
 }
@@ -1093,12 +1278,19 @@ function PageFooter({ company, companyCredentials, compact = false }) {
 
 function createEditableProposal(seedProposal) {
   const proposal = cloneObject(seedProposal);
+  const proposalType = proposal.proposalType ?? proposal.type ?? "commercial";
 
   return {
     ...proposal,
+    proposalType,
+    type: proposalType,
     concreteSpecs: {
       ...getDefaultConcreteSpecs(),
       ...(proposal.concreteSpecs || {}),
+    },
+    gcPrime: {
+      ...getDefaultGcPrime(),
+      ...(proposal.gcPrime || {}),
     },
     lineItems: proposal.lineItems.map((item) => ({
       ...item,
@@ -1164,6 +1356,15 @@ function buildTermsCopy(terms) {
 }
 
 function formatOptionLabel(value) {
+  const labels = {
+    gc_prime: "GC / Prime Contractor",
+    public_municipal: "Public / Municipal",
+  };
+
+  if (labels[value]) {
+    return labels[value];
+  }
+
   return value
     .split("_")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
@@ -1206,6 +1407,49 @@ function hasSpecValue(value) {
   return value !== undefined && value !== null && String(value).trim() !== "";
 }
 
+function buildGcPrimeRows(gcPrime = {}) {
+  const textRows = [
+    ["GC / Prime", gcPrime.contractorName],
+    ["Project Manager", gcPrime.projectManagerName],
+    ["PM Phone", gcPrime.projectManagerPhone],
+    ["PM Email", gcPrime.projectManagerEmail],
+    ["Bid Package", gcPrime.bidPackageNumber],
+    ["Spec Section", gcPrime.specSection],
+    ["Drawings", gcPrime.drawingReferences],
+    ["Addenda", gcPrime.addendaAcknowledged],
+    ["Access / Badging", gcPrime.jobsiteAccessBadgingRequirements],
+    ["Retainage", formatRetainage(gcPrime.retainagePercentage)],
+    ["Pay App Terms", gcPrime.paymentApplicationTerms],
+    ["Change Orders", gcPrime.changeOrderProcess],
+    ["RFI Notes", gcPrime.rfiClarificationNotes],
+  ].filter(([, value]) => hasTextValue(value));
+
+  const requirementRows = [
+    ["Prevailing Wage", gcPrime.prevailingWageRequired],
+    ["Certified Payroll", gcPrime.certifiedPayrollRequired],
+    ["Insurance Cert", gcPrime.insuranceCertificateRequired],
+    ["W-9", gcPrime.w9Required],
+    ["Safety Orientation", gcPrime.safetyOrientationRequired],
+  ]
+    .filter(([, value]) => value === true)
+    .map(([label]) => [label, "Yes"]);
+
+  return [...textRows, ...requirementRows];
+}
+
+function hasTextValue(value) {
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function formatRetainage(value) {
+  if (!hasTextValue(value)) {
+    return "";
+  }
+
+  const textValue = String(value).trim();
+  return textValue.includes("%") ? textValue : `${textValue}%`;
+}
+
 function getDefaultConcreteSpecs() {
   return {
     estimatedSquareFeet: "",
@@ -1223,6 +1467,29 @@ function getDefaultConcreteSpecs() {
     concreteSupplier: "",
     pumpRequired: false,
     truckAccessNotes: "",
+  };
+}
+
+function getDefaultGcPrime() {
+  return {
+    contractorName: "",
+    projectManagerName: "",
+    projectManagerPhone: "",
+    projectManagerEmail: "",
+    bidPackageNumber: "",
+    specSection: "",
+    drawingReferences: "",
+    addendaAcknowledged: "",
+    prevailingWageRequired: false,
+    certifiedPayrollRequired: false,
+    insuranceCertificateRequired: false,
+    w9Required: false,
+    safetyOrientationRequired: false,
+    jobsiteAccessBadgingRequirements: "",
+    retainagePercentage: "",
+    paymentApplicationTerms: "",
+    changeOrderProcess: "",
+    rfiClarificationNotes: "",
   };
 }
 

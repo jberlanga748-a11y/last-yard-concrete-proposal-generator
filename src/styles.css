@@ -198,6 +198,11 @@ h4 {
   gap: 10px;
 }
 
+.gc-prime-editor {
+  display: grid;
+  gap: 10px;
+}
+
 .editor-spec-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -212,6 +217,10 @@ h4 {
   border-radius: 9px;
   background: #f8fafc;
   padding: 10px;
+}
+
+.gc-check-row {
+  grid-template-columns: 1fr;
 }
 
 .line-item-card {
@@ -600,6 +609,34 @@ h4 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
   padding: 24px 32px 10px;
+}
+
+.gc-prime-notes {
+  padding: 0 32px 10px;
+}
+
+.gc-prime-notes .info-card {
+  min-height: 0;
+}
+
+.gc-prime-note-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 18px;
+}
+
+.gc-prime-note-row {
+  display: grid;
+  grid-template-columns: 112px 1fr;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.gc-prime-note-row span:first-child {
+  color: var(--ink);
+  font-weight: 950;
+  text-transform: uppercase;
 }
 
 .info-card {
