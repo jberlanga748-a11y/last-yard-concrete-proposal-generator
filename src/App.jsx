@@ -1,13 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   LINE_ITEM_UNITS,
+  PROPOSAL_STATUSES,
   PROPOSAL_TYPES,
   SEED_PROPOSAL,
   calculateProposalTotals,
   formatCurrency,
+  generateProposalNumber,
 } from "./proposalData.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
+const storageKey = "last-yard-proposals-v1";
 
 const trustCards = [
   ["01", "PROVEN RELIABILITY", "On time. On budget. Built to last."],
@@ -17,8 +20,45 @@ const trustCards = [
 ];
 
 export default function App() {
-  const [proposalDraft, setProposalDraft] = useState(() => createEditableProposal(SEED_PROPOSAL));
+  const [savedProposals, setSavedProposals] = useState(() => loadSavedProposals());
+  const [route, setRoute] = useState(() => parseRoute(window.location.pathname));
+  const [proposalDraft, setProposalDraft] = useState(() =>
+    getInitialProposalForRoute(parseRoute(window.location.pathname), loadSavedProposals()),
+  );
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [saveMessage, setSaveMessage] = useState("");
   const company = proposalDraft.company;
+  const isListView = route.view === "list";
+  const isPrintView = route.view === "print";
+
+  useEffect(() => {
+    saveStoredProposals(savedProposals);
+  }, [savedProposals]);
+
+  useEffect(() => {
+    if (window.location.pathname !== route.path) {
+      window.history.replaceState({}, "", route.path);
+    }
+  }, [route.path]);
+
+  useEffect(() => {
+    function handlePopState() {
+      const nextRoute = parseRoute(window.location.pathname);
+      setRoute(nextRoute);
+
+      if (nextRoute.view !== "list") {
+        setProposalDraft(getInitialProposalForRoute(nextRoute, savedProposals));
+      }
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [savedProposals]);
+
+  useEffect(() => {
+    setSaveMessage("");
+  }, [route.path]);
 
   function updateProposalField(path, value) {
     setProposalDraft((currentProposal) => {
@@ -28,8 +68,66 @@ export default function App() {
         nextProposal.type = value;
       }
 
+      if (path === "status") {
+        nextProposal.status = value;
+      }
+
       return nextProposal;
     });
+  }
+
+  function navigate(path, options = {}) {
+    const nextRoute = parseRoute(path);
+    const method = options.replace ? "replaceState" : "pushState";
+    window.history[method]({}, "", path);
+    setRoute(nextRoute);
+
+    if (nextRoute.view !== "list") {
+      setProposalDraft(options.proposal ? createEditableProposal(options.proposal) : getInitialProposalForRoute(nextRoute, savedProposals));
+    }
+  }
+
+  function openProposal(proposalId) {
+    const proposal = savedProposals.find((item) => item.id === proposalId);
+    if (!proposal) {
+      return;
+    }
+
+    navigate(`/proposals/${proposalId}`, { proposal });
+  }
+
+  function createNewProposal() {
+    const proposal = createNewProposalDraft(savedProposals);
+    navigate("/proposals/new", { proposal });
+  }
+
+  function saveCurrentProposal() {
+    const proposalToSave = createEditableProposal({
+      ...proposalDraft,
+      updatedAt: new Date().toISOString(),
+    });
+
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, proposalToSave));
+    setProposalDraft(proposalToSave);
+    setSaveMessage("Draft saved locally.");
+
+    if (route.view === "new") {
+      navigate(`/proposals/${proposalToSave.id}`, { proposal: proposalToSave, replace: true });
+    }
+  }
+
+  function duplicateCurrentProposal(proposal = proposalDraft) {
+    const duplicate = duplicateProposalDraft(proposal, savedProposals);
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, duplicate));
+    navigate(`/proposals/${duplicate.id}`, { proposal: duplicate });
+    setSaveMessage("Duplicated as a new draft.");
+  }
+
+  function updateCurrentStatus(status) {
+    const updatedProposal = createEditableProposal({ ...proposalDraft, status, updatedAt: new Date().toISOString() });
+    setProposalDraft(updatedProposal);
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
+    setSaveMessage(`Marked as ${formatOptionLabel(status)}.`);
   }
 
   function updateLineItem(index, field, value) {
@@ -172,45 +270,279 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${isPrintView ? "print-route-shell" : ""}`}>
       <style>{`
         @media print {
           @page { size: letter portrait; margin: 0; }
         }
       `}</style>
 
-      <div className="print-bar no-print">
-        <div>
-          <p className="eyebrow">{company.name}</p>
-          <h1>Proposal Generator</h1>
+      {!isPrintView ? (
+        <div className="print-bar no-print">
+          <div>
+            <p className="eyebrow">{company.name}</p>
+            <h1>Proposal Generator</h1>
+          </div>
+          <div className="app-header-actions">
+            <button type="button" onClick={() => navigate("/proposals")}>
+              Proposals
+            </button>
+            <button type="button" onClick={createNewProposal}>
+              New Proposal
+            </button>
+            {!isListView ? (
+              <button type="button" onClick={() => window.print()}>
+                Print / Save PDF
+              </button>
+            ) : null}
+          </div>
         </div>
-        <button type="button" onClick={() => window.print()}>
-          Print / Save PDF
+      ) : null}
+
+      {isListView ? (
+        <ProposalListView
+          proposals={savedProposals}
+          searchQuery={searchQuery}
+          statusFilter={statusFilter}
+          onCreateNew={createNewProposal}
+          onDuplicate={duplicateCurrentProposal}
+          onOpen={openProposal}
+          onSearchChange={setSearchQuery}
+          onStatusFilterChange={setStatusFilter}
+          onStatusChange={(proposal, status) => {
+            const updatedProposal = { ...proposal, status, updatedAt: new Date().toISOString() };
+            setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
+          }}
+        />
+      ) : (
+        <>
+          {isPrintView ? (
+            <PrintRouteToolbar onBackToList={() => navigate("/proposals")} onPrint={() => window.print()} />
+          ) : (
+            <ProposalActionBar
+              isPrintView={isPrintView}
+              proposal={proposalDraft}
+              saveMessage={saveMessage}
+              onBackToList={() => navigate("/proposals")}
+              onDuplicate={() => duplicateCurrentProposal(proposalDraft)}
+              onOpenPrintView={() => navigate(`/proposals/${proposalDraft.id}/print`, { proposal: proposalDraft })}
+              onSave={saveCurrentProposal}
+              onStatusChange={updateCurrentStatus}
+            />
+          )}
+
+          <div className={`proposal-workbench ${isPrintView ? "print-route-view" : ""}`}>
+            {isPrintView ? null : (
+              <ProposalEditor
+                proposal={proposalDraft}
+                onAddLineItem={addLineItem}
+                onChange={updateProposalField}
+                onFinancialChange={updateFinancialField}
+                onLineItemChange={updateLineItem}
+                onRemoveLineItem={removeLineItem}
+                onAddScopeBullet={addScopeBullet}
+                onAddScopeSection={addScopeSection}
+                onRemoveScopeBullet={removeScopeBullet}
+                onRemoveScopeSection={removeScopeSection}
+                onScopeBulletChange={updateScopeBullet}
+                onScopeTitleChange={updateScopeSectionTitle}
+                onConcreteSpecChange={updateConcreteSpec}
+                onGcPrimeChange={updateGcPrimeField}
+              />
+            )}
+            <div className="preview-pane">
+              <ProposalPreview proposal={proposalDraft} />
+            </div>
+          </div>
+        </>
+      )}
+    </main>
+  );
+}
+
+function ProposalListView({
+  proposals,
+  searchQuery,
+  statusFilter,
+  onCreateNew,
+  onDuplicate,
+  onOpen,
+  onSearchChange,
+  onStatusChange,
+  onStatusFilterChange,
+}) {
+  const filteredProposals = proposals.filter((proposal) => {
+    const searchText = [
+      proposal.client?.companyName,
+      proposal.client?.contactName,
+      proposal.project?.name,
+      proposal.gcPrime?.contractorName,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    const matchesSearch = searchText.includes(searchQuery.trim().toLowerCase());
+    const matchesStatus = statusFilter === "all" || proposal.status === statusFilter;
+
+    return matchesSearch && matchesStatus;
+  });
+
+  return (
+    <section className="proposal-list-panel no-print">
+      <div className="list-toolbar">
+        <div>
+          <p className="list-kicker">Local proposals</p>
+          <h2>Saved Proposals</h2>
+        </div>
+        <button type="button" onClick={onCreateNew}>
+          New Proposal
         </button>
       </div>
 
-      <div className="proposal-workbench">
-        <ProposalEditor
-          proposal={proposalDraft}
-          onAddLineItem={addLineItem}
-          onChange={updateProposalField}
-          onFinancialChange={updateFinancialField}
-          onLineItemChange={updateLineItem}
-          onRemoveLineItem={removeLineItem}
-          onAddScopeBullet={addScopeBullet}
-          onAddScopeSection={addScopeSection}
-          onRemoveScopeBullet={removeScopeBullet}
-          onRemoveScopeSection={removeScopeSection}
-          onScopeBulletChange={updateScopeBullet}
-          onScopeTitleChange={updateScopeSectionTitle}
-          onConcreteSpecChange={updateConcreteSpec}
-          onGcPrimeChange={updateGcPrimeField}
-        />
-        <div className="preview-pane">
-          <ProposalPreview proposal={proposalDraft} />
-        </div>
+      <div className="list-filters">
+        <label>
+          <span>Search</span>
+          <input
+            type="search"
+            value={searchQuery}
+            placeholder="Client, contact, project, or GC"
+            onChange={(event) => onSearchChange(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>Status</span>
+          <select value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value)}>
+            <option value="all">All statuses</option>
+            {PROPOSAL_STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {formatOptionLabel(status)}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
-    </main>
+
+      <div className="proposal-table-wrap">
+        <table className="proposal-list-table">
+          <thead>
+            <tr>
+              <th>Proposal #</th>
+              <th>Client</th>
+              <th>Project</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Total</th>
+              <th>Proposal Date</th>
+              <th>Expiration</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredProposals.map((proposal) => {
+              const total = calculateProposalTotals(proposal).total;
+
+              return (
+                <tr key={proposal.id} onClick={() => onOpen(proposal.id)}>
+                  <td>{proposal.proposalNumber}</td>
+                  <td>
+                    <strong>{proposal.client?.companyName}</strong>
+                    <span>{proposal.client?.contactName}</span>
+                  </td>
+                  <td>{proposal.project?.name}</td>
+                  <td>{formatOptionLabel(proposal.proposalType ?? proposal.type)}</td>
+                  <td onClick={(event) => event.stopPropagation()}>
+                    <select value={proposal.status} onChange={(event) => onStatusChange(proposal, event.target.value)}>
+                      {PROPOSAL_STATUSES.map((status) => (
+                        <option key={status} value={status}>
+                          {formatOptionLabel(status)}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>{formatCurrency(total)}</td>
+                  <td>{formatDisplayDate(proposal.proposalDate)}</td>
+                  <td>{formatDisplayDate(proposal.validUntil)}</td>
+                  <td>
+                    <div className="table-actions" onClick={(event) => event.stopPropagation()}>
+                      <button type="button" onClick={() => onOpen(proposal.id)}>
+                        Open
+                      </button>
+                      <button type="button" onClick={() => onDuplicate(proposal)}>
+                        Duplicate
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {filteredProposals.length === 0 ? <p className="empty-list-message">No saved proposals match those filters.</p> : null}
+    </section>
+  );
+}
+
+function PrintRouteToolbar({ onBackToList, onPrint }) {
+  return (
+    <div className="print-route-toolbar no-print">
+      <button type="button" onClick={onBackToList}>
+        Back to proposals
+      </button>
+      <button type="button" onClick={onPrint}>
+        Print / Save PDF
+      </button>
+    </div>
+  );
+}
+
+function ProposalActionBar({
+  isPrintView,
+  proposal,
+  saveMessage,
+  onBackToList,
+  onDuplicate,
+  onOpenPrintView,
+  onSave,
+  onStatusChange,
+}) {
+  return (
+    <section className="proposal-action-bar no-print">
+      <div>
+        <p>{proposal.proposalNumber}</p>
+        <h2>{proposal.project?.name || "Untitled Proposal"}</h2>
+        {saveMessage ? <span>{saveMessage}</span> : null}
+      </div>
+      <div className="proposal-actions">
+        <label>
+          <span>Status</span>
+          <select value={proposal.status} onChange={(event) => onStatusChange(event.target.value)}>
+            {PROPOSAL_STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {formatOptionLabel(status)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="button" onClick={onBackToList}>
+          Back to List
+        </button>
+        {!isPrintView ? (
+          <button type="button" onClick={onSave}>
+            Save Draft
+          </button>
+        ) : null}
+        <button type="button" onClick={onDuplicate}>
+          Duplicate
+        </button>
+        {!isPrintView ? (
+          <button type="button" onClick={onOpenPrintView}>
+            Print View
+          </button>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -243,6 +575,7 @@ function ProposalEditor({
           onChange={onChange}
           options={PROPOSAL_TYPES}
         />
+        <EditorField label="Status" path="status" value={proposal.status} onChange={onChange} options={PROPOSAL_STATUSES} />
         <EditorField label="Proposal Number" path="proposalNumber" value={proposal.proposalNumber} onChange={onChange} />
         <EditorField
           label="Proposal Date"
@@ -1276,12 +1609,182 @@ function PageFooter({ company, companyCredentials, compact = false }) {
   );
 }
 
+function parseRoute(pathname) {
+  const segments = pathname.split("/").filter(Boolean);
+
+  if (segments[0] !== "proposals") {
+    return { view: "list", path: "/proposals" };
+  }
+
+  if (segments.length === 1) {
+    return { view: "list", path: "/proposals" };
+  }
+
+  if (segments[1] === "new") {
+    return { view: "new", path: "/proposals/new" };
+  }
+
+  if (segments[1] && segments[2] === "print") {
+    return { view: "print", id: segments[1], path: `/proposals/${segments[1]}/print` };
+  }
+
+  return { view: "edit", id: segments[1], path: `/proposals/${segments[1]}` };
+}
+
+function getInitialProposalForRoute(route, proposals) {
+  if (route.view === "new") {
+    return createNewProposalDraft(proposals);
+  }
+
+  if (route.id) {
+    const savedProposal = proposals.find((proposal) => proposal.id === route.id);
+
+    if (savedProposal) {
+      return createEditableProposal(savedProposal);
+    }
+  }
+
+  return createEditableProposal(proposals[0] || createSeedProposal());
+}
+
+function loadSavedProposals() {
+  try {
+    const storedValue = window.localStorage.getItem(storageKey);
+
+    if (storedValue) {
+      const parsedValue = JSON.parse(storedValue);
+
+      if (Array.isArray(parsedValue) && parsedValue.length > 0) {
+        return parsedValue.map((proposal) => createEditableProposal(proposal));
+      }
+    }
+  } catch {
+    // Fall through to the seed proposal if local storage is unavailable or malformed.
+  }
+
+  return [createSeedProposal()];
+}
+
+function saveStoredProposals(proposals) {
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(proposals));
+  } catch {
+    // Local saving is best-effort for this phase.
+  }
+}
+
+function createSeedProposal() {
+  return createEditableProposal({
+    ...SEED_PROPOSAL,
+    id: SEED_PROPOSAL.id || createProposalId(),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function createNewProposalDraft(existingProposals) {
+  const today = new Date();
+  const validUntil = new Date(today);
+  validUntil.setDate(validUntil.getDate() + 30);
+
+  return createEditableProposal({
+    ...cloneObject(SEED_PROPOSAL),
+    id: createProposalId(),
+    proposalNumber: getNextProposalNumber(existingProposals, today),
+    status: "draft",
+    proposalDate: formatInputDate(today),
+    validUntil: formatInputDate(validUntil),
+    createdAt: today.toISOString(),
+    updatedAt: today.toISOString(),
+  });
+}
+
+function duplicateProposalDraft(sourceProposal, existingProposals) {
+  const now = new Date();
+  const validUntil = new Date(now);
+  validUntil.setDate(validUntil.getDate() + 30);
+
+  return createEditableProposal({
+    ...cloneObject(sourceProposal),
+    id: createProposalId(),
+    proposalNumber: getNextProposalNumber(existingProposals, now),
+    status: "draft",
+    proposalDate: formatInputDate(now),
+    validUntil: formatInputDate(validUntil),
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+  });
+}
+
+function upsertProposal(proposals, proposal) {
+  const normalizedProposal = createEditableProposal({
+    ...proposal,
+    id: proposal.id || createProposalId(),
+    updatedAt: proposal.updatedAt || new Date().toISOString(),
+  });
+  const otherProposals = proposals.filter((item) => item.id !== normalizedProposal.id);
+
+  return [normalizedProposal, ...otherProposals];
+}
+
+function getNextProposalNumber(proposals, date = new Date()) {
+  const year = date.getFullYear();
+  const nextSequence =
+    proposals.reduce((maxSequence, proposal) => {
+      const match = String(proposal.proposalNumber || "").match(/^LYC-(\d{4})-(\d{4})$/);
+
+      if (!match || Number(match[1]) !== year) {
+        return maxSequence;
+      }
+
+      return Math.max(maxSequence, Number(match[2]));
+    }, 0) + 1;
+
+  return generateProposalNumber(nextSequence, date);
+}
+
+function createProposalId() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+
+  return `proposal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function formatInputDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function formatDisplayDate(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(`${value}T00:00:00`);
+
+  if (Number.isNaN(date.valueOf())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
 function createEditableProposal(seedProposal) {
   const proposal = cloneObject(seedProposal);
   const proposalType = proposal.proposalType ?? proposal.type ?? "commercial";
 
   return {
     ...proposal,
+    id: proposal.id || createProposalId(),
+    status: proposal.status || "draft",
     proposalType,
     type: proposalType,
     concreteSpecs: {
@@ -1292,7 +1795,7 @@ function createEditableProposal(seedProposal) {
       ...getDefaultGcPrime(),
       ...(proposal.gcPrime || {}),
     },
-    lineItems: proposal.lineItems.map((item) => ({
+    lineItems: (proposal.lineItems || []).map((item) => ({
       ...item,
       taxable: item.taxable ?? true,
     })),
