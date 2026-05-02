@@ -1,44 +1,23 @@
 import { useState } from "react";
-import { SEED_PROPOSAL, calculateProposalTotals, formatCurrency } from "./proposalData.js";
+import { PROPOSAL_TYPES, SEED_PROPOSAL, calculateProposalTotals, formatCurrency } from "./proposalData.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
-const proposal = SEED_PROPOSAL;
-const company = proposal.company;
-const companyCredentials = company.credentials.join(" | ");
-const scopeSplitIndex = Math.ceil(proposal.scopeSections.length / 2);
-const scopeLeft = proposal.scopeSections.slice(0, scopeSplitIndex);
-const scopeRight = proposal.scopeSections.slice(scopeSplitIndex);
-const specSplitIndex = Math.ceil(proposal.specifications.length / 2);
-const specsLeft = proposal.specifications.slice(0, specSplitIndex).map(({ item, specification }) => [item, specification]);
-const specsRight = proposal.specifications.slice(specSplitIndex).map(({ item, specification }) => [item, specification]);
-const lineItems = proposal.lineItems.map((item, index) => {
-  const amount = item.amount ?? item.quantity * item.unitPrice;
 
-  return [
-    item.itemNumber ?? String(index + 1),
-    item.description,
-    formatQuantity(item.quantity),
-    item.unit,
-    formatCurrency(item.unitPrice),
-    formatCurrency(amount),
-  ];
-});
-const proposalTotals = calculateProposalTotals(proposal);
-const totalProposalPrice = formatCurrency(proposalTotals.total);
-const exclusions = proposal.exclusions;
-const termsCopy = buildTermsCopy(proposal.terms);
-
-function formatQuantity(value) {
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
-  }).format(value);
-}
-
-function buildTermsCopy(terms) {
-  return `Payment terms: ${terms.payment} ${terms.depositText} ${terms.progressBilling} ${terms.acceptance}`;
-}
+const trustCards = [
+  ["01", "PROVEN RELIABILITY", "On time. On budget. Built to last."],
+  ["02", "QUALITY CRAFTSMANSHIP", "Clean finishes. Sharp details. Premium materials."],
+  ["03", "SAFETY FIRST", "Safe jobsites for your team and ours."],
+  ["04", "BUILT ON INTEGRITY", "Clear communication. Honest work. Local service."],
+];
 
 export default function App() {
+  const [proposalDraft, setProposalDraft] = useState(() => createEditableProposal(SEED_PROPOSAL));
+  const company = proposalDraft.company;
+
+  function updateProposalField(path, value) {
+    setProposalDraft((currentProposal) => updateNestedValue(currentProposal, path, value));
+  }
+
   return (
     <main className="app-shell">
       <style>{`
@@ -57,60 +36,248 @@ export default function App() {
         </button>
       </div>
 
-      <section className="proposal-grid">
-        <ProposalPage className="first-page">
-          <CoverHeader />
-          <CompanyIntro />
-          <ProjectCards />
-          <div className="page-one-feature-block">
-            <PhotoBand />
-            <WhyChoose />
-          </div>
-          <PageFooter compact />
-        </ProposalPage>
-
-        <ProposalPage>
-          <SectionTitle icon="01" title="Scope of Work" />
-          <div className="two-column section-pad">
-            <ScopeColumn groups={scopeLeft} />
-            <ScopeColumn groups={scopeRight} />
-          </div>
-
-          <SectionTitle icon="02" title="Concrete Specifications" className="section-title-spaced" />
-          <div className="two-column spec-grid">
-            <SpecTable rows={specsLeft} />
-            <SpecTable rows={specsRight} />
-          </div>
-
-          <SectionTitle icon="$" title="Pricing" className="section-title-spaced" />
-          <PricingTable items={lineItems} total={totalProposalPrice} />
-
-          <div className="two-column lower-grid">
-            <div>
-              <MiniHeading icon="!" title="Exclusions / Assumptions" />
-              <ul className="bullet-list compact-list">
-                {exclusions.map((item) => (
-                  <li key={item}>
-                    <span />
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div>
-              <MiniHeading icon="✓" title="Terms & Acceptance" />
-              <p className="terms-copy">{termsCopy}</p>
-              <SignatureBlock companyName={company.name} />
-            </div>
-          </div>
-
-          <div className="footer-push">
-            <PageFooter />
-          </div>
-        </ProposalPage>
-      </section>
+      <div className="proposal-workbench">
+        <ProposalEditor proposal={proposalDraft} onChange={updateProposalField} />
+        <div className="preview-pane">
+          <ProposalPreview proposal={proposalDraft} />
+        </div>
+      </div>
     </main>
+  );
+}
+
+function ProposalEditor({ proposal, onChange }) {
+  return (
+    <aside className="editor-panel no-print" aria-label="Proposal editor">
+      <EditorSection title="Proposal Info">
+        <EditorField
+          label="Proposal Type"
+          path="type"
+          value={proposal.type}
+          onChange={onChange}
+          options={PROPOSAL_TYPES}
+        />
+        <EditorField label="Proposal Number" path="proposalNumber" value={proposal.proposalNumber} onChange={onChange} />
+        <EditorField
+          label="Proposal Date"
+          path="proposalDate"
+          type="date"
+          value={proposal.proposalDate}
+          onChange={onChange}
+        />
+        <EditorField
+          label="Expiration Date"
+          path="validUntil"
+          type="date"
+          value={proposal.validUntil}
+          onChange={onChange}
+        />
+      </EditorSection>
+
+      <EditorSection title="Client / Prepared For">
+        <EditorField
+          label="Client / Company Name"
+          path="client.companyName"
+          value={proposal.client.companyName}
+          onChange={onChange}
+        />
+        <EditorField label="Contact Name" path="client.contactName" value={proposal.client.contactName} onChange={onChange} />
+        <EditorField label="Contact Phone" path="client.phone" value={proposal.client.phone} onChange={onChange} />
+        <EditorField label="Contact Email" path="client.email" type="email" value={proposal.client.email} onChange={onChange} />
+        <EditorField
+          label="Billing Address"
+          path="client.billingAddress"
+          value={proposal.client.billingAddress}
+          onChange={onChange}
+          multiline
+        />
+        <EditorField
+          label="Project Address"
+          path="client.projectAddress"
+          value={proposal.client.projectAddress}
+          onChange={onChange}
+          multiline
+        />
+      </EditorSection>
+
+      <EditorSection title="Project Summary">
+        <EditorField label="Project Name" path="project.name" value={proposal.project.name} onChange={onChange} />
+        <EditorField
+          label="Project Location"
+          path="project.location"
+          value={proposal.project.location}
+          onChange={onChange}
+        />
+        <EditorField
+          label="Project Description"
+          path="project.description"
+          value={proposal.project.description}
+          onChange={onChange}
+          multiline
+        />
+        <EditorField
+          label="Project Category"
+          path="project.category"
+          value={proposal.project.category}
+          onChange={onChange}
+        />
+        <EditorField
+          label="Estimated Start Date"
+          path="project.proposedSchedule.startDate"
+          type="date"
+          value={proposal.project.proposedSchedule.startDate}
+          onChange={onChange}
+        />
+        <EditorField
+          label="Estimated Duration"
+          path="project.estimatedDuration"
+          value={proposal.project.estimatedDuration}
+          onChange={onChange}
+        />
+        <EditorField
+          label="Access Notes"
+          path="project.accessNotes"
+          value={proposal.project.accessNotes}
+          onChange={onChange}
+          multiline
+        />
+        <EditorField
+          label="Site Condition Notes"
+          path="project.siteConditionNotes"
+          value={proposal.project.siteConditionNotes}
+          onChange={onChange}
+          multiline
+        />
+        <EditorField
+          label="Schedule Restrictions"
+          path="project.scheduleRestrictions"
+          value={proposal.project.scheduleRestrictions}
+          onChange={onChange}
+          multiline
+        />
+        <EditorField
+          label="Special Requirements"
+          path="project.specialRequirements"
+          value={proposal.project.specialRequirements}
+          onChange={onChange}
+          multiline
+        />
+      </EditorSection>
+    </aside>
+  );
+}
+
+function EditorSection({ title, children }) {
+  return (
+    <section className="editor-section">
+      <h2>{title}</h2>
+      <div className="editor-fields">{children}</div>
+    </section>
+  );
+}
+
+function EditorField({ label, path, value, onChange, type = "text", multiline = false, options }) {
+  const inputId = `field-${path.replaceAll(".", "-")}`;
+
+  return (
+    <label className="editor-field" htmlFor={inputId}>
+      <span>{label}</span>
+      {options ? (
+        <select id={inputId} value={value} onChange={(event) => onChange(path, event.target.value)}>
+          {options.map((option) => (
+            <option key={option} value={option}>
+              {formatOptionLabel(option)}
+            </option>
+          ))}
+        </select>
+      ) : multiline ? (
+        <textarea id={inputId} value={value} rows={3} onChange={(event) => onChange(path, event.target.value)} />
+      ) : (
+        <input id={inputId} type={type} value={value} onChange={(event) => onChange(path, event.target.value)} />
+      )}
+    </label>
+  );
+}
+
+function ProposalPreview({ proposal }) {
+  const company = proposal.company;
+  const companyCredentials = company.credentials.join(" | ");
+  const scopeSplitIndex = Math.ceil(proposal.scopeSections.length / 2);
+  const scopeLeft = proposal.scopeSections.slice(0, scopeSplitIndex);
+  const scopeRight = proposal.scopeSections.slice(scopeSplitIndex);
+  const specSplitIndex = Math.ceil(proposal.specifications.length / 2);
+  const specsLeft = proposal.specifications.slice(0, specSplitIndex).map(({ item, specification }) => [item, specification]);
+  const specsRight = proposal.specifications.slice(specSplitIndex).map(({ item, specification }) => [item, specification]);
+  const lineItems = proposal.lineItems.map((item, index) => {
+    const amount = item.amount ?? item.quantity * item.unitPrice;
+
+    return [
+      item.itemNumber ?? String(index + 1),
+      item.description,
+      formatQuantity(item.quantity),
+      item.unit,
+      formatCurrency(item.unitPrice),
+      formatCurrency(amount),
+    ];
+  });
+  const proposalTotals = calculateProposalTotals(proposal);
+  const totalProposalPrice = formatCurrency(proposalTotals.total);
+  const termsCopy = buildTermsCopy(proposal.terms);
+
+  return (
+    <section className="proposal-grid">
+      <ProposalPage className="first-page">
+        <CoverHeader company={company} />
+        <CompanyIntro company={company} companyCredentials={companyCredentials} />
+        <ProjectCards proposal={proposal} />
+        <div className="page-one-feature-block">
+          <PhotoBand />
+          <WhyChoose />
+        </div>
+        <PageFooter company={company} companyCredentials={companyCredentials} compact />
+      </ProposalPage>
+
+      <ProposalPage>
+        <SectionTitle icon="01" title="Scope of Work" />
+        <div className="two-column section-pad">
+          <ScopeColumn groups={scopeLeft} />
+          <ScopeColumn groups={scopeRight} />
+        </div>
+
+        <SectionTitle icon="02" title="Concrete Specifications" className="section-title-spaced" />
+        <div className="two-column spec-grid">
+          <SpecTable rows={specsLeft} />
+          <SpecTable rows={specsRight} />
+        </div>
+
+        <SectionTitle icon="$" title="Pricing" className="section-title-spaced" />
+        <PricingTable items={lineItems} total={totalProposalPrice} />
+
+        <div className="two-column lower-grid">
+          <div>
+            <MiniHeading icon="!" title="Exclusions / Assumptions" />
+            <ul className="bullet-list compact-list">
+              {proposal.exclusions.map((item) => (
+                <li key={item}>
+                  <span />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <MiniHeading icon={"\u2713"} title="Terms & Acceptance" />
+            <p className="terms-copy">{termsCopy}</p>
+            <SignatureBlock companyName={company.name} />
+          </div>
+        </div>
+
+        <div className="footer-push">
+          <PageFooter company={company} companyCredentials={companyCredentials} />
+        </div>
+      </ProposalPage>
+    </section>
   );
 }
 
@@ -118,7 +285,7 @@ function ProposalPage({ children, className = "" }) {
   return <article className={`proposal-page ${className}`}>{children}</article>;
 }
 
-function LogoSeal({ small = false }) {
+function LogoSeal({ companyName, small = false }) {
   const [logoFailed, setLogoFailed] = useState(false);
 
   return (
@@ -129,24 +296,24 @@ function LogoSeal({ small = false }) {
           <strong>Concrete</strong>
         </div>
       ) : (
-        <img src={logoSrc} alt={`${company.name} logo`} onError={() => setLogoFailed(true)} />
+        <img src={logoSrc} alt={`${companyName} logo`} onError={() => setLogoFailed(true)} />
       )}
     </div>
   );
 }
 
-function CoverHeader() {
+function CoverHeader({ company }) {
   return (
     <header className="cover-header">
       <div className="cover-angle" />
       <div className="cover-inner">
-        <LogoSeal />
+        <LogoSeal companyName={company.name} />
         <div className="cover-copy">
           <h2>Concrete</h2>
           <h2>Proposal</h2>
           <div className="gold-rule wide-rule" />
           <div className="cover-tagline">
-            <span className="star-text">★★★★★</span>
+            <span className="star-text">{"\u2605\u2605\u2605\u2605\u2605"}</span>
             <span>SOLID WORK. STUNNING RESULTS. EVERY YARD COUNTS.</span>
           </div>
         </div>
@@ -155,7 +322,7 @@ function CoverHeader() {
   );
 }
 
-function CompanyIntro() {
+function CompanyIntro({ company, companyCredentials }) {
   const items = [
     ["CO", company.name],
     ["PH", company.phone],
@@ -187,7 +354,7 @@ function CompanyIntro() {
   );
 }
 
-function ProjectCards() {
+function ProjectCards({ proposal }) {
   const { client, project } = proposal;
 
   return (
@@ -196,8 +363,8 @@ function ProjectCards() {
         <p>{client.companyName}</p>
         <p>Attn: {client.contactName}</p>
         <p>{client.title}</p>
-        <p>{client.address}</p>
-        <p>{client.cityStateZip}</p>
+        <p>{client.billingAddress || client.address}</p>
+        <p>{client.projectAddress || client.cityStateZip}</p>
         <p>Phone: {client.phone}</p>
         <p>Email: {client.email}</p>
       </InfoCard>
@@ -205,7 +372,7 @@ function ProjectCards() {
       <InfoCard title="Project Summary" watermark="SCOPE">
         <Field label="Project Name" value={project.name} />
         <Field label="Project Location" value={project.location} />
-        <Field label="Proposed Schedule" value={project.proposedSchedule.display} />
+        <Field label="Proposed Schedule" value={project.estimatedDuration || project.proposedSchedule.display} />
         <p className="description-copy">
           <strong>Description: </strong>
           {project.description}
@@ -255,13 +422,6 @@ function ConcretePhoto({ title, variant }) {
 }
 
 function WhyChoose() {
-  const cards = [
-    ["01", "PROVEN RELIABILITY", "On time. On budget. Built to last."],
-    ["02", "QUALITY CRAFTSMANSHIP", "Clean finishes. Sharp details. Premium materials."],
-    ["03", "SAFETY FIRST", "Safe jobsites for your team and ours."],
-    ["04", "BUILT ON INTEGRITY", "Clear communication. Honest work. Local service."],
-  ];
-
   return (
     <section className="why-choose">
       <div className="why-heading">
@@ -270,7 +430,7 @@ function WhyChoose() {
         <div />
       </div>
       <div className="trust-grid">
-        {cards.map(([icon, title, body]) => (
+        {trustCards.map(([icon, title, body]) => (
           <div key={title} className="trust-card">
             <div>{icon}</div>
             <h4>{title}</h4>
@@ -407,7 +567,7 @@ function SignatureBlock({ companyName }) {
   );
 }
 
-function PageFooter({ compact = false }) {
+function PageFooter({ company, companyCredentials, compact = false }) {
   if (compact) {
     return (
       <footer className="page-footer compact-footer">
@@ -426,7 +586,7 @@ function PageFooter({ compact = false }) {
 
   return (
     <footer className="page-footer full-footer">
-      <LogoSeal small />
+      <LogoSeal companyName={company.name} small />
       <div className="footer-brand">
         <p>{company.name}</p>
         <p>{company.tagline}</p>
@@ -440,4 +600,75 @@ function PageFooter({ compact = false }) {
       </div>
     </footer>
   );
+}
+
+function createEditableProposal(seedProposal) {
+  const proposal = cloneObject(seedProposal);
+
+  return {
+    ...proposal,
+    client: {
+      ...proposal.client,
+      billingAddress: proposal.client.billingAddress ?? proposal.client.address ?? "",
+      projectAddress: proposal.client.projectAddress ?? proposal.client.cityStateZip ?? "",
+    },
+    project: {
+      ...proposal.project,
+      address: proposal.project.address ?? proposal.project.location ?? "",
+      category: proposal.project.category ?? "Commercial flatwork",
+      estimatedDuration: proposal.project.estimatedDuration ?? proposal.project.proposedSchedule?.display ?? "",
+      accessNotes: proposal.project.accessNotes ?? "",
+      siteConditionNotes: proposal.project.siteConditionNotes ?? "",
+      scheduleRestrictions: proposal.project.scheduleRestrictions ?? "",
+      specialRequirements: proposal.project.specialRequirements ?? "",
+      proposedSchedule: {
+        ...(proposal.project.proposedSchedule || {}),
+        startDate: proposal.project.proposedSchedule?.startDate ?? "",
+        display: proposal.project.proposedSchedule?.display ?? "",
+      },
+    },
+  };
+}
+
+function cloneObject(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function updateNestedValue(source, path, value) {
+  const keys = path.split(".");
+  const next = Array.isArray(source) ? [...source] : { ...source };
+  let target = next;
+  let current = source;
+
+  keys.forEach((key, index) => {
+    if (index === keys.length - 1) {
+      target[key] = value;
+      return;
+    }
+
+    const nextSourceValue = current?.[key] || {};
+    const nextTargetValue = Array.isArray(nextSourceValue) ? [...nextSourceValue] : { ...nextSourceValue };
+    target[key] = nextTargetValue;
+    target = nextTargetValue;
+    current = nextSourceValue;
+  });
+
+  return next;
+}
+
+function formatQuantity(value) {
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
+function buildTermsCopy(terms) {
+  return `Payment terms: ${terms.payment} ${terms.depositText} ${terms.progressBilling} ${terms.acceptance}`;
+}
+
+function formatOptionLabel(value) {
+  return value
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }

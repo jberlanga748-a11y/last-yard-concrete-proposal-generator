@@ -100,6 +100,100 @@ h4 {
   transform: translateY(-1px);
 }
 
+.proposal-workbench {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  max-width: 1900px;
+  margin: 0 auto;
+}
+
+.editor-panel {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 16px;
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  border: 1px solid rgba(6, 43, 69, 0.14);
+  border-radius: 12px;
+  background: white;
+  padding: 18px;
+  box-shadow: 0 14px 34px rgba(4, 29, 47, 0.1);
+}
+
+.editor-section {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 16px;
+}
+
+.editor-section:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.editor-section h2 {
+  margin: 0 0 12px;
+  color: var(--blue);
+  font-size: 14px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.editor-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.editor-field {
+  display: grid;
+  gap: 5px;
+}
+
+.editor-field span {
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.editor-field input,
+.editor-field select,
+.editor-field textarea {
+  width: 100%;
+  border: 1px solid #c9d1dc;
+  border-radius: 7px;
+  background: white;
+  color: var(--body);
+  padding: 9px 10px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.editor-field textarea {
+  resize: vertical;
+}
+
+.editor-field input:focus,
+.editor-field select:focus,
+.editor-field textarea:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(6, 43, 69, 0.12);
+  outline: 0;
+}
+
+.preview-pane {
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.preview-pane .proposal-grid {
+  min-width: 1500px;
+  margin: 0;
+}
+
 .proposal-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -907,6 +1001,19 @@ h4 {
 }
 
 @media (max-width: 1180px) {
+  .proposal-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .editor-panel {
+    position: static;
+    max-height: none;
+  }
+
+  .preview-pane .proposal-grid {
+    min-width: 0;
+  }
+
   .proposal-grid {
     grid-template-columns: 1fr;
   }
@@ -1024,6 +1131,20 @@ h4 {
 
   .no-print {
     display: none !important;
+  }
+
+  .proposal-workbench {
+    display: block;
+    max-width: none;
+  }
+
+  .preview-pane {
+    overflow: visible;
+    padding-bottom: 0;
+  }
+
+  .preview-pane .proposal-grid {
+    min-width: 0;
   }
 
   .proposal-grid {
