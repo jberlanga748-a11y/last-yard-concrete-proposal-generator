@@ -2322,6 +2322,8 @@ function ProposalPreview({ proposal }) {
   const visiblePricingSections = appendixPlan.mainPricingSections;
   const structuredPacketPages = buildStructuredPacketPages(proposal);
   const planSheetPages = getEnabledPlanSheets(proposal.planSheets);
+  const hasExtendedPacketPages = structuredPacketPages.length > 0 || appendixPlan.pages.length > 0 || planSheetPages.length > 0;
+  const showCoverGcPrimeNotes = gcPrimeRows.length > 0 && !hasExtendedPacketPages;
   const firstAppendixPageNumber = structuredPacketPages.length + 3;
   const firstPlanSheetPageNumber = structuredPacketPages.length + appendixPlan.pages.length + 3;
 
@@ -2331,7 +2333,7 @@ function ProposalPreview({ proposal }) {
         <CoverHeader company={company} />
         <CompanyIntro company={company} companyCredentials={companyCredentials} />
         <ProjectCards proposal={proposal} />
-        {gcPrimeRows.length > 0 ? <GcPrimeNotes rows={gcPrimeRows} /> : null}
+        {showCoverGcPrimeNotes ? <GcPrimeNotes rows={gcPrimeRows} /> : null}
         <div className="page-one-feature-block">
           <PhotoBand photos={proposal.projectPhotos} />
           <WhyChoose />
