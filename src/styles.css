@@ -188,6 +188,11 @@ h4 {
   gap: 12px;
 }
 
+.scope-builder {
+  display: grid;
+  gap: 12px;
+}
+
 .line-item-card {
   display: grid;
   gap: 10px;
@@ -197,7 +202,17 @@ h4 {
   padding: 12px;
 }
 
+.scope-editor-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
 .line-item-card-header,
+.scope-editor-card-header,
 .line-item-meta {
   display: flex;
   align-items: center;
@@ -205,12 +220,15 @@ h4 {
   gap: 12px;
 }
 
-.line-item-card-header strong {
+.line-item-card-header strong,
+.scope-editor-card-header strong {
   color: var(--blue);
   font-size: 13px;
 }
 
 .line-item-card-header button,
+.scope-editor-card-header button,
+.editor-secondary-button,
 .editor-add-button {
   border-radius: 7px;
   background: var(--blue);
@@ -220,7 +238,14 @@ h4 {
   font-weight: 850;
 }
 
-.line-item-card-header button {
+.line-item-card-header button,
+.scope-editor-card-header button {
+  background: white;
+  color: var(--blue);
+  outline: 1px solid #c9d1dc;
+}
+
+.editor-secondary-button {
   background: white;
   color: var(--blue);
   outline: 1px solid #c9d1dc;
@@ -235,6 +260,28 @@ h4 {
 
 .line-item-description {
   grid-column: span 2;
+}
+
+.scope-bullet-list {
+  display: grid;
+  gap: 8px;
+}
+
+.scope-bullet-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.scope-bullet-row button {
+  border-radius: 7px;
+  background: white;
+  color: var(--blue);
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 850;
+  outline: 1px solid #c9d1dc;
 }
 
 .line-item-meta {

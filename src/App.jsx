@@ -74,6 +74,75 @@ export default function App() {
     });
   }
 
+  function updateScopeSectionTitle(sectionIndex, title) {
+    setProposalDraft((currentProposal) => {
+      const scopeSections = currentProposal.scopeSections.map((section, index) =>
+        index === sectionIndex ? { ...section, title } : section,
+      );
+
+      return { ...currentProposal, scopeSections };
+    });
+  }
+
+  function updateScopeBullet(sectionIndex, bulletIndex, value) {
+    setProposalDraft((currentProposal) => {
+      const scopeSections = currentProposal.scopeSections.map((section, index) => {
+        if (index !== sectionIndex) {
+          return section;
+        }
+
+        const items = section.items.map((item, itemIndex) => (itemIndex === bulletIndex ? value : item));
+        return { ...section, items };
+      });
+
+      return { ...currentProposal, scopeSections };
+    });
+  }
+
+  function addScopeBullet(sectionIndex) {
+    setProposalDraft((currentProposal) => {
+      const scopeSections = currentProposal.scopeSections.map((section, index) =>
+        index === sectionIndex ? { ...section, items: [...section.items, "New scope item"] } : section,
+      );
+
+      return { ...currentProposal, scopeSections };
+    });
+  }
+
+  function removeScopeBullet(sectionIndex, bulletIndex) {
+    setProposalDraft((currentProposal) => {
+      const scopeSections = currentProposal.scopeSections.map((section, index) => {
+        if (index !== sectionIndex) {
+          return section;
+        }
+
+        return { ...section, items: section.items.filter((_, itemIndex) => itemIndex !== bulletIndex) };
+      });
+
+      return { ...currentProposal, scopeSections };
+    });
+  }
+
+  function addScopeSection() {
+    setProposalDraft((currentProposal) => ({
+      ...currentProposal,
+      scopeSections: [
+        ...currentProposal.scopeSections,
+        {
+          title: "New Scope Section",
+          items: ["New scope item"],
+        },
+      ],
+    }));
+  }
+
+  function removeScopeSection(sectionIndex) {
+    setProposalDraft((currentProposal) => ({
+      ...currentProposal,
+      scopeSections: currentProposal.scopeSections.filter((_, index) => index !== sectionIndex),
+    }));
+  }
+
   return (
     <main className="app-shell">
       <style>{`
@@ -100,6 +169,12 @@ export default function App() {
           onFinancialChange={updateFinancialField}
           onLineItemChange={updateLineItem}
           onRemoveLineItem={removeLineItem}
+          onAddScopeBullet={addScopeBullet}
+          onAddScopeSection={addScopeSection}
+          onRemoveScopeBullet={removeScopeBullet}
+          onRemoveScopeSection={removeScopeSection}
+          onScopeBulletChange={updateScopeBullet}
+          onScopeTitleChange={updateScopeSectionTitle}
         />
         <div className="preview-pane">
           <ProposalPreview proposal={proposalDraft} />
@@ -109,7 +184,20 @@ export default function App() {
   );
 }
 
-function ProposalEditor({ proposal, onAddLineItem, onChange, onFinancialChange, onLineItemChange, onRemoveLineItem }) {
+function ProposalEditor({
+  proposal,
+  onAddLineItem,
+  onAddScopeBullet,
+  onAddScopeSection,
+  onChange,
+  onFinancialChange,
+  onLineItemChange,
+  onRemoveLineItem,
+  onRemoveScopeBullet,
+  onRemoveScopeSection,
+  onScopeBulletChange,
+  onScopeTitleChange,
+}) {
   const proposalTotals = calculateProposalTotals(proposal);
 
   return (
@@ -226,6 +314,18 @@ function ProposalEditor({ proposal, onAddLineItem, onChange, onFinancialChange, 
           value={proposal.project.specialRequirements}
           onChange={onChange}
           multiline
+        />
+      </EditorSection>
+
+      <EditorSection title="Scope of Work">
+        <ScopeBuilder
+          scopeSections={proposal.scopeSections}
+          onAddBullet={onAddScopeBullet}
+          onAddSection={onAddScopeSection}
+          onBulletChange={onScopeBulletChange}
+          onRemoveBullet={onRemoveScopeBullet}
+          onRemoveSection={onRemoveScopeSection}
+          onTitleChange={onScopeTitleChange}
         />
       </EditorSection>
 
@@ -369,6 +469,62 @@ function PricingSummary({ totals }) {
         <span>Balance Due</span>
         <strong>{formatCurrency(totals.balanceDue)}</strong>
       </div>
+    </div>
+  );
+}
+
+function ScopeBuilder({
+  scopeSections,
+  onAddBullet,
+  onAddSection,
+  onBulletChange,
+  onRemoveBullet,
+  onRemoveSection,
+  onTitleChange,
+}) {
+  return (
+    <div className="scope-builder">
+      {scopeSections.map((section, sectionIndex) => (
+        <div className="scope-editor-card" key={`${section.title}-${sectionIndex}`}>
+          <div className="scope-editor-card-header">
+            <strong>Scope Section {sectionIndex + 1}</strong>
+            <button type="button" onClick={() => onRemoveSection(sectionIndex)}>
+              Remove
+            </button>
+          </div>
+
+          <EditorField
+            label="Section Title"
+            path={`scopeSections.${sectionIndex}.title`}
+            value={section.title}
+            onChange={(_, value) => onTitleChange(sectionIndex, value)}
+          />
+
+          <div className="scope-bullet-list">
+            {section.items.map((item, bulletIndex) => (
+              <div className="scope-bullet-row" key={`${section.title}-${bulletIndex}`}>
+                <EditorField
+                  label={`Bullet ${bulletIndex + 1}`}
+                  path={`scopeSections.${sectionIndex}.items.${bulletIndex}`}
+                  value={item}
+                  onChange={(_, value) => onBulletChange(sectionIndex, bulletIndex, value)}
+                />
+                <button type="button" onClick={() => onRemoveBullet(sectionIndex, bulletIndex)}>
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <button className="editor-secondary-button" type="button" onClick={() => onAddBullet(sectionIndex)}>
+            Add bullet
+          </button>
+        </div>
+      ))}
+
+      <button className="editor-add-button" type="button" onClick={onAddSection}>
+        Add scope section
+      </button>
     </div>
   );
 }
