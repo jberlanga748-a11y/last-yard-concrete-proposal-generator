@@ -110,6 +110,68 @@ const defaultPlanSheets = [
   },
 ];
 
+const defaultGcPacketTables = {
+  pricingSummary: {
+    enabled: false,
+    presentationNotes: "",
+    rows: [],
+  },
+  scheduleOfValues: {
+    enabled: false,
+    rows: [],
+  },
+  takeoffQuantities: {
+    enabled: false,
+    rows: [],
+  },
+  shadeFootingEstimate: {
+    enabled: false,
+    rows: [],
+  },
+  proposalNotes: {
+    enabled: false,
+    proposalBasis: "",
+    contractScopeControl: "",
+    acceptanceSummary: "",
+    gcPrimeReviewer: "",
+  },
+};
+
+const gcPacketTableLabels = {
+  pricingSummary: "Pricing Summary",
+  proposalNotes: "Proposal Notes / Acceptance Summary",
+  scheduleOfValues: "Schedule of Values",
+  shadeFootingEstimate: "Shade Footing Estimate",
+  takeoffQuantities: "Takeoff Quantities",
+};
+
+const gcPacketRowFields = {
+  scheduleOfValues: [
+    ["item", "Item"],
+    ["description", "Description"],
+    ["pricingBasis", "Pricing Basis"],
+    ["amount", "Amount"],
+  ],
+  takeoffQuantities: [
+    ["item", "Item"],
+    ["quantity", "Quantity"],
+    ["detailSize", "Detail / Size"],
+    ["netCy", "Net CY"],
+    ["cyWithTenPercent", "CY with 10%"],
+    ["priceStatus", "Price / Status"],
+  ],
+  shadeFootingEstimate: [
+    ["column", "Column"],
+    ["columnSize", "Column Size"],
+    ["estimatedSpreadFooting", "Estimated Spread Footing"],
+    ["netCy", "Net CY"],
+    ["estimatedSubtotal", "Estimated Subtotal"],
+    ["estimatedCyWithTenPercent", "Estimated CY with 10%"],
+    ["allowanceAmount", "Allowance Amount"],
+    ["allowanceNote", "Allowance Note"],
+  ],
+};
+
 export default function App() {
   const [companySettings, setCompanySettings] = useState(() => loadCompanySettings());
   const [settingsDraft, setSettingsDraft] = useState(() => loadCompanySettings());
@@ -538,17 +600,91 @@ export default function App() {
     }));
   }
 
+  function updateGcPacketTable(sectionKey, field, value) {
+    setProposalDraft((currentProposal) => {
+      const gcPacketTables = normalizeGcPacketTables(currentProposal.gcPacketTables);
+
+      return {
+        ...currentProposal,
+        gcPacketTables: {
+          ...gcPacketTables,
+          [sectionKey]: {
+            ...gcPacketTables[sectionKey],
+            [field]: value,
+          },
+        },
+      };
+    });
+  }
+
+  function addGcPacketTableRow(sectionKey) {
+    setProposalDraft((currentProposal) => {
+      const gcPacketTables = normalizeGcPacketTables(currentProposal.gcPacketTables);
+
+      return {
+        ...currentProposal,
+        gcPacketTables: {
+          ...gcPacketTables,
+          [sectionKey]: {
+            ...gcPacketTables[sectionKey],
+            enabled: true,
+            rows: [...(gcPacketTables[sectionKey]?.rows || []), createEmptyGcPacketRow(sectionKey)],
+          },
+        },
+      };
+    });
+  }
+
+  function updateGcPacketTableRow(sectionKey, rowIndex, field, value) {
+    setProposalDraft((currentProposal) => {
+      const gcPacketTables = normalizeGcPacketTables(currentProposal.gcPacketTables);
+      const rows = (gcPacketTables[sectionKey]?.rows || []).map((row, index) =>
+        index === rowIndex ? { ...row, [field]: value } : row,
+      );
+
+      return {
+        ...currentProposal,
+        gcPacketTables: {
+          ...gcPacketTables,
+          [sectionKey]: {
+            ...gcPacketTables[sectionKey],
+            rows,
+          },
+        },
+      };
+    });
+  }
+
+  function removeGcPacketTableRow(sectionKey, rowIndex) {
+    setProposalDraft((currentProposal) => {
+      const gcPacketTables = normalizeGcPacketTables(currentProposal.gcPacketTables);
+
+      return {
+        ...currentProposal,
+        gcPacketTables: {
+          ...gcPacketTables,
+          [sectionKey]: {
+            ...gcPacketTables[sectionKey],
+            rows: (gcPacketTables[sectionKey]?.rows || []).filter((_, index) => index !== rowIndex),
+          },
+        },
+      };
+    });
+  }
+
   function fillProposalFromNotes() {
     const parsedNotes = parseProjectNotes(smartPasteNotes);
     const parsedLineItemCount = parsedNotes.lineItems.length + (parsedNotes.values.baseBidLineItem ? 1 : 0);
     const parsedPricingSectionCount = parsedNotes.pricingSectionCount || 0;
     const parsedPlanSheetCount = parsedNotes.planSheetCount || 0;
+    const parsedGcPacketTableCount = parsedNotes.gcPacketTableCount || 0;
 
     if (
       parsedNotes.fields.length === 0 &&
       parsedNotes.lineItems.length === 0 &&
       parsedPricingSectionCount === 0 &&
       parsedPlanSheetCount === 0 &&
+      parsedGcPacketTableCount === 0 &&
       parsedNotes.sectionsCaptured.length === 0
     ) {
       setSmartPasteResult({
@@ -556,6 +692,7 @@ export default function App() {
         lineItemCount: 0,
         pricingSectionCount: 0,
         planSheetCount: 0,
+        gcPacketTableCount: 0,
         sectionsCaptured: [],
         warnings: parsedNotes.warnings.length > 0 ? parsedNotes.warnings : ["No clearly labeled proposal fields were found."],
       });
@@ -568,6 +705,7 @@ export default function App() {
       lineItemCount: parsedLineItemCount,
       pricingSectionCount: parsedPricingSectionCount,
       planSheetCount: parsedPlanSheetCount,
+      gcPacketTableCount: parsedGcPacketTableCount,
       sectionsCaptured: parsedNotes.sectionsCaptured,
       warnings: parsedNotes.warnings,
     });
@@ -679,6 +817,10 @@ export default function App() {
                 onAddPlanSheet={addPlanSheet}
                 onPlanSheetChange={updatePlanSheet}
                 onRemovePlanSheet={removePlanSheet}
+                onAddGcPacketTableRow={addGcPacketTableRow}
+                onGcPacketTableChange={updateGcPacketTable}
+                onGcPacketTableRowChange={updateGcPacketTableRow}
+                onRemoveGcPacketTableRow={removeGcPacketTableRow}
                 onSmartPasteFill={fillProposalFromNotes}
                 onSmartPasteNotesChange={setSmartPasteNotes}
                 smartPasteNotes={smartPasteNotes}
@@ -1045,6 +1187,10 @@ function ProposalEditor({
   onAddPlanSheet,
   onPlanSheetChange,
   onRemovePlanSheet,
+  onAddGcPacketTableRow,
+  onGcPacketTableChange,
+  onGcPacketTableRowChange,
+  onRemoveGcPacketTableRow,
   onSmartPasteFill,
   onSmartPasteNotesChange,
   validation,
@@ -1195,6 +1341,16 @@ function ProposalEditor({
         />
       </EditorSection>
 
+      <EditorSection title="GC Packet Tables">
+        <GcPacketTablesEditor
+          gcPacketTables={proposal.gcPacketTables}
+          onAddRow={onAddGcPacketTableRow}
+          onChange={onGcPacketTableChange}
+          onRemoveRow={onRemoveGcPacketTableRow}
+          onRowChange={onGcPacketTableRowChange}
+        />
+      </EditorSection>
+
       <EditorSection title="Scope of Work">
         <ScopeBuilder
           scopeSections={proposal.scopeSections}
@@ -1295,6 +1451,7 @@ function SmartPasteSummary({ result }) {
         <li>{result.lineItemCount} line items added</li>
         <li>{result.pricingSectionCount || 0} alternates / allowances added</li>
         <li>{result.planSheetCount || 0} plan / takeoff pages updated</li>
+        <li>{result.gcPacketTableCount || 0} structured GC tables updated</li>
         <li>{(result.sectionsCaptured || []).length} sections captured</li>
         {result.fields.length > 0 ? <li>Updated: {result.fields.join(", ")}</li> : null}
         {(result.sectionsCaptured || []).length > 0 ? <li>Captured: {result.sectionsCaptured.join(", ")}</li> : null}
@@ -1649,6 +1806,150 @@ function PlanSheetEditor({ planSheets, onAddPlanSheet, onPlanSheetChange, onRemo
 
       <button className="editor-add-button" type="button" onClick={onAddPlanSheet}>
         Add plan / takeoff page
+      </button>
+    </div>
+  );
+}
+
+function GcPacketTablesEditor({ gcPacketTables, onAddRow, onChange, onRemoveRow, onRowChange }) {
+  const tables = normalizeGcPacketTables(gcPacketTables);
+
+  return (
+    <div className="gc-packet-table-editor">
+      <p className="smart-paste-help">
+        Enable structured GC handoff tables for full packet proposals. These pages print after the proposal summary.
+      </p>
+
+      <div className="packet-editor-card">
+        <PacketEditorHeader
+          checked={tables.pricingSummary.enabled}
+          label={gcPacketTableLabels.pricingSummary}
+          onChange={(checked) => onChange("pricingSummary", "enabled", checked)}
+        />
+        <EditorField
+          label="Presentation Notes"
+          path="gcPacketTables.pricingSummary.presentationNotes"
+          value={tables.pricingSummary.presentationNotes}
+          onChange={(_, value) => onChange("pricingSummary", "presentationNotes", value)}
+          multiline
+        />
+      </div>
+
+      <EditablePacketTable
+        sectionKey="scheduleOfValues"
+        title={gcPacketTableLabels.scheduleOfValues}
+        table={tables.scheduleOfValues}
+        onAddRow={onAddRow}
+        onChange={onChange}
+        onRemoveRow={onRemoveRow}
+        onRowChange={onRowChange}
+      />
+
+      <EditablePacketTable
+        sectionKey="takeoffQuantities"
+        title={gcPacketTableLabels.takeoffQuantities}
+        table={tables.takeoffQuantities}
+        onAddRow={onAddRow}
+        onChange={onChange}
+        onRemoveRow={onRemoveRow}
+        onRowChange={onRowChange}
+      />
+
+      <EditablePacketTable
+        sectionKey="shadeFootingEstimate"
+        title={gcPacketTableLabels.shadeFootingEstimate}
+        table={tables.shadeFootingEstimate}
+        onAddRow={onAddRow}
+        onChange={onChange}
+        onRemoveRow={onRemoveRow}
+        onRowChange={onRowChange}
+      />
+
+      <div className="packet-editor-card">
+        <PacketEditorHeader
+          checked={tables.proposalNotes.enabled}
+          label={gcPacketTableLabels.proposalNotes}
+          onChange={(checked) => onChange("proposalNotes", "enabled", checked)}
+        />
+        <EditorField
+          label="Proposal Basis"
+          path="gcPacketTables.proposalNotes.proposalBasis"
+          value={tables.proposalNotes.proposalBasis}
+          onChange={(_, value) => onChange("proposalNotes", "proposalBasis", value)}
+          multiline
+        />
+        <EditorField
+          label="Contract Scope Control"
+          path="gcPacketTables.proposalNotes.contractScopeControl"
+          value={tables.proposalNotes.contractScopeControl}
+          onChange={(_, value) => onChange("proposalNotes", "contractScopeControl", value)}
+          multiline
+        />
+        <EditorField
+          label="Acceptance Summary"
+          path="gcPacketTables.proposalNotes.acceptanceSummary"
+          value={tables.proposalNotes.acceptanceSummary}
+          onChange={(_, value) => onChange("proposalNotes", "acceptanceSummary", value)}
+          multiline
+        />
+        <EditorField
+          label="GC / Prime Reviewer Line"
+          path="gcPacketTables.proposalNotes.gcPrimeReviewer"
+          value={tables.proposalNotes.gcPrimeReviewer}
+          onChange={(_, value) => onChange("proposalNotes", "gcPrimeReviewer", value)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PacketEditorHeader({ checked, label, onChange }) {
+  return (
+    <div className="packet-editor-header">
+      <strong>{label}</strong>
+      <label className="editor-check">
+        <input checked={Boolean(checked)} type="checkbox" onChange={(event) => onChange(event.target.checked)} />
+        <span>Include page</span>
+      </label>
+    </div>
+  );
+}
+
+function EditablePacketTable({ sectionKey, title, table, onAddRow, onChange, onRemoveRow, onRowChange }) {
+  const fields = gcPacketRowFields[sectionKey] || [];
+
+  return (
+    <div className="packet-editor-card">
+      <PacketEditorHeader
+        checked={table.enabled}
+        label={title}
+        onChange={(checked) => onChange(sectionKey, "enabled", checked)}
+      />
+      <div className="packet-row-list">
+        {table.rows.map((row, rowIndex) => (
+          <div className="packet-row-card" key={row.id || `${sectionKey}-${rowIndex}`}>
+            <div className="line-item-card-header">
+              <strong>Row {rowIndex + 1}</strong>
+              <button type="button" onClick={() => onRemoveRow(sectionKey, rowIndex)}>
+                Remove
+              </button>
+            </div>
+            <div className="packet-row-grid">
+              {fields.map(([field, label]) => (
+                <EditorField
+                  key={field}
+                  label={label}
+                  path={`gcPacketTables.${sectionKey}.rows.${rowIndex}.${field}`}
+                  value={row[field] ?? ""}
+                  onChange={(_, value) => onRowChange(sectionKey, rowIndex, field, value)}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <button className="editor-add-button" type="button" onClick={() => onAddRow(sectionKey)}>
+        Add {title.toLowerCase()} row
       </button>
     </div>
   );
@@ -2019,8 +2320,10 @@ function ProposalPreview({ proposal }) {
   const totalProposalPrice = formatCurrency(proposalTotals.total);
   const termsCopy = buildTermsCopy(proposal.terms);
   const visiblePricingSections = appendixPlan.mainPricingSections;
+  const structuredPacketPages = buildStructuredPacketPages(proposal);
   const planSheetPages = getEnabledPlanSheets(proposal.planSheets);
-  const firstPlanSheetPageNumber = appendixPlan.pages.length + 3;
+  const firstAppendixPageNumber = structuredPacketPages.length + 3;
+  const firstPlanSheetPageNumber = structuredPacketPages.length + appendixPlan.pages.length + 3;
 
   return (
     <section className="proposal-grid">
@@ -2082,12 +2385,22 @@ function ProposalPreview({ proposal }) {
         </div>
       </ProposalPage>
 
+      {structuredPacketPages.map((page, index) => (
+        <StructuredPacketPage
+          company={company}
+          key={page.key}
+          page={page}
+          pageNumber={index + 3}
+          projectName={proposal.project?.name}
+        />
+      ))}
+
       {appendixPlan.pages.map((page, index) => (
         <AppendixPage
           company={company}
           key={`appendix-page-${index}`}
           page={page}
-          pageNumber={index + 3}
+          pageNumber={firstAppendixPageNumber + index}
           projectName={proposal.project?.name}
         />
       ))}
@@ -2119,6 +2432,93 @@ function GcPrimeNotes({ rows }) {
         </div>
       </InfoCard>
     </section>
+  );
+}
+
+function StructuredPacketPage({ company, page, pageNumber, projectName }) {
+  return (
+    <ProposalPage className="structured-packet-page">
+      <header className="structured-packet-header">
+        <div>
+          <p>{company.name}</p>
+          <h2>{page.title}</h2>
+        </div>
+        <div>
+          <span>Project</span>
+          <strong>{projectName || "GC Packet"}</strong>
+        </div>
+      </header>
+
+      <div className="structured-packet-body">
+        <div className="structured-accent" />
+        {page.kind === "proposalNotes" ? (
+          <StructuredNotesPage page={page} />
+        ) : (
+          <StructuredTablePage page={page} />
+        )}
+      </div>
+
+      <footer className="structured-packet-footer">
+        <span>{projectName || "Proposal packet"}</span>
+        <span>{company.name}</span>
+        <span>Packet Page {pageNumber}</span>
+      </footer>
+    </ProposalPage>
+  );
+}
+
+function StructuredTablePage({ page }) {
+  return (
+    <>
+      {page.notes ? <p className="structured-packet-note">{page.notes}</p> : null}
+      <table className={`structured-packet-table ${page.kind}`}>
+        <thead>
+          <tr>
+            {page.columns.map((column) => (
+              <th key={column.key}>{column.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {page.rows.map((row, index) => (
+            <tr key={row.id || `${page.key}-row-${index}`}>
+              {page.columns.map((column) => (
+                <td key={column.key}>{formatStructuredCell(row[column.key])}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  );
+}
+
+function StructuredNotesPage({ page }) {
+  return (
+    <div className="structured-notes-grid">
+      {page.sections.map((section) => (
+        <section className="structured-note-card" key={section.title}>
+          <h3>{section.title}</h3>
+          <StructuredText text={section.text} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function StructuredText({ text }) {
+  const lines = splitAppendixText(text);
+
+  if (lines.length === 0) {
+    return <p>Not provided.</p>;
+  }
+
+  return (
+    <>
+      {lines.map((line, index) => (
+        <p key={`${line}-${index}`}>{line}</p>
+      ))}
+    </>
   );
 }
 
@@ -3265,6 +3665,94 @@ function isDefaultPlanSheet(sheet = {}) {
   return defaultPlanSheets.some((defaultSheet) => getPlanSheetMatchKey(defaultSheet) === matchKey);
 }
 
+function normalizeGcPacketTables(gcPacketTables = {}) {
+  return {
+    pricingSummary: {
+      ...defaultGcPacketTables.pricingSummary,
+      ...(gcPacketTables.pricingSummary || {}),
+      rows: normalizeGcPacketRows("pricingSummary", gcPacketTables.pricingSummary?.rows),
+    },
+    scheduleOfValues: {
+      ...defaultGcPacketTables.scheduleOfValues,
+      ...(gcPacketTables.scheduleOfValues || {}),
+      rows: normalizeGcPacketRows("scheduleOfValues", gcPacketTables.scheduleOfValues?.rows),
+    },
+    takeoffQuantities: {
+      ...defaultGcPacketTables.takeoffQuantities,
+      ...(gcPacketTables.takeoffQuantities || {}),
+      rows: normalizeGcPacketRows("takeoffQuantities", gcPacketTables.takeoffQuantities?.rows),
+    },
+    shadeFootingEstimate: {
+      ...defaultGcPacketTables.shadeFootingEstimate,
+      ...(gcPacketTables.shadeFootingEstimate || {}),
+      rows: normalizeGcPacketRows("shadeFootingEstimate", gcPacketTables.shadeFootingEstimate?.rows),
+    },
+    proposalNotes: {
+      ...defaultGcPacketTables.proposalNotes,
+      ...(gcPacketTables.proposalNotes || {}),
+    },
+  };
+}
+
+function normalizeGcPacketRows(sectionKey, rows = []) {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  return rows.map((row) => ({
+    ...createEmptyGcPacketRow(sectionKey),
+    ...row,
+    id: row.id || createProposalId(),
+  }));
+}
+
+function createEmptyGcPacketRow(sectionKey) {
+  const baseRow = { id: createProposalId() };
+
+  if (sectionKey === "scheduleOfValues") {
+    return {
+      ...baseRow,
+      item: "",
+      description: "",
+      pricingBasis: "",
+      amount: "",
+    };
+  }
+
+  if (sectionKey === "takeoffQuantities") {
+    return {
+      ...baseRow,
+      item: "",
+      quantity: "",
+      detailSize: "",
+      netCy: "",
+      cyWithTenPercent: "",
+      priceStatus: "",
+    };
+  }
+
+  if (sectionKey === "shadeFootingEstimate") {
+    return {
+      ...baseRow,
+      column: "",
+      columnSize: "",
+      estimatedSpreadFooting: "",
+      netCy: "",
+      estimatedSubtotal: "",
+      estimatedCyWithTenPercent: "",
+      allowanceAmount: "",
+      allowanceNote: "",
+    };
+  }
+
+  return {
+    ...baseRow,
+    label: "",
+    amount: "",
+    note: "",
+  };
+}
+
 function normalizeScopeSections(scopeSections = []) {
   if (!Array.isArray(scopeSections)) {
     return [];
@@ -3319,6 +3807,7 @@ function createEditableProposal(seedProposal) {
     scopeSections: normalizeScopeSections(proposal.scopeSections),
     projectPhotos: normalizeProjectPhotos(proposal.projectPhotos),
     planSheets: normalizePlanSheets(proposal.planSheets),
+    gcPacketTables: normalizeGcPacketTables(proposal.gcPacketTables),
     concreteSpecs: {
       ...getDefaultConcreteSpecs(),
       ...(proposal.concreteSpecs || {}),
@@ -3410,6 +3899,188 @@ function getVisiblePricingSections(pricingSections = []) {
       hasTextValue(section.amount) ||
       section.included,
   );
+}
+
+function buildStructuredPacketPages(proposal) {
+  const tables = normalizeGcPacketTables(proposal.gcPacketTables);
+  const pages = [];
+
+  if (tables.pricingSummary.enabled) {
+    pages.push({
+      key: "structured-pricing-summary",
+      kind: "pricing-summary",
+      title: "Pricing Summary",
+      columns: [
+        { key: "label", label: "Item" },
+        { key: "amount", label: "Amount" },
+        { key: "note", label: "Presentation Notes" },
+      ],
+      rows: buildStructuredPricingSummaryRows(proposal, tables.pricingSummary.rows),
+      notes: tables.pricingSummary.presentationNotes,
+    });
+  }
+
+  paginateStructuredRows(
+    pages,
+    "scheduleOfValues",
+    tables.scheduleOfValues,
+    "Schedule of Values",
+    [
+      { key: "item", label: "Item" },
+      { key: "description", label: "Description" },
+      { key: "pricingBasis", label: "Pricing Basis" },
+      { key: "amount", label: "Amount" },
+    ],
+    18,
+  );
+
+  paginateStructuredRows(
+    pages,
+    "takeoffQuantities",
+    tables.takeoffQuantities,
+    "Takeoff Quantities",
+    [
+      { key: "item", label: "Item" },
+      { key: "quantity", label: "Quantity" },
+      { key: "detailSize", label: "Detail / Size" },
+      { key: "netCy", label: "Net CY" },
+      { key: "cyWithTenPercent", label: "CY with 10%" },
+      { key: "priceStatus", label: "Price / Status" },
+    ],
+    16,
+  );
+
+  paginateStructuredRows(
+    pages,
+    "shadeFootingEstimate",
+    tables.shadeFootingEstimate,
+    "Shade Footing Estimate",
+    [
+      { key: "column", label: "Column" },
+      { key: "columnSize", label: "Column Size" },
+      { key: "estimatedSpreadFooting", label: "Estimated Spread Footing" },
+      { key: "netCy", label: "Net CY" },
+      { key: "estimatedSubtotal", label: "Estimated Subtotal" },
+      { key: "estimatedCyWithTenPercent", label: "Estimated CY with 10%" },
+      { key: "allowanceAmount", label: "Allowance Amount" },
+      { key: "allowanceNote", label: "Allowance Note" },
+    ],
+    12,
+  );
+
+  if (tables.proposalNotes.enabled) {
+    pages.push({
+      key: "structured-proposal-notes",
+      kind: "proposalNotes",
+      title: "Proposal Notes / Acceptance Summary",
+      sections: [
+        { title: "Proposal Basis", text: tables.proposalNotes.proposalBasis },
+        { title: "Contract Scope Control", text: tables.proposalNotes.contractScopeControl },
+        { title: "Acceptance Summary", text: tables.proposalNotes.acceptanceSummary },
+        { title: "GC / Prime Reviewer", text: tables.proposalNotes.gcPrimeReviewer },
+      ],
+    });
+  }
+
+  return pages;
+}
+
+function paginateStructuredRows(pages, kind, table, title, columns, rowsPerPage) {
+  if (!table.enabled || table.rows.length === 0) {
+    return;
+  }
+
+  const rowChunks = chunkArray(table.rows, rowsPerPage);
+
+  rowChunks.forEach((rows, index) => {
+    pages.push({
+      key: `structured-${kind}-${index}`,
+      kind,
+      title: rowChunks.length > 1 ? `${title} (${index + 1})` : title,
+      columns,
+      rows,
+    });
+  });
+}
+
+function buildStructuredPricingSummaryRows(proposal, customRows = []) {
+  const visibleCustomRows = normalizeGcPacketRows("pricingSummary", customRows).filter(
+    (row) => hasTextValue(row.label) || hasTextValue(row.amount) || hasTextValue(row.note),
+  );
+
+  if (visibleCustomRows.length > 0) {
+    return visibleCustomRows;
+  }
+
+  const totals = calculateProposalTotals(proposal);
+  const pricingSections = getVisiblePricingSections(proposal.pricingSections);
+  const allowances = pricingSections.filter((section) => section.type === "allowance");
+  const addAlternates = pricingSections.filter((section) => section.type === "add_alternate");
+  const shadeAllowance = findPricingSectionByText(allowances, ["shade", "footing"]);
+  const interfaceAllowance = findPricingSectionByText(allowances, ["interface", "rfi", "clarification"]);
+  const allowanceTotal = allowances.reduce((sum, section) => sum + Math.abs(toEditableNumber(section.amount)), 0);
+  const baseWithAllowances = totals.baseBid + allowanceTotal;
+
+  return [
+    { id: "base-concrete-work", label: "Base Concrete Work", amount: formatCurrency(totals.baseBid), note: "Base bid concrete scope." },
+    {
+      id: "estimated-shade-footings",
+      label: "Estimated Shade Footings",
+      amount: shadeAllowance ? formatPricingSectionAmount(shadeAllowance) : "",
+      note: shadeAllowance?.description || "Allowance if applicable.",
+    },
+    {
+      id: "interface-rfi-allowance",
+      label: "Interface / RFI Allowance",
+      amount: interfaceAllowance ? formatPricingSectionAmount(interfaceAllowance) : "",
+      note: interfaceAllowance?.description || "Allowance if applicable.",
+    },
+    {
+      id: "base-with-allowances",
+      label: "Base with Allowances",
+      amount: formatCurrency(baseWithAllowances),
+      note: "Base bid plus listed allowances.",
+    },
+    {
+      id: "add-alternate-01",
+      label: "Add Alternate 01",
+      amount: addAlternates[0] ? formatPricingSectionAmount(addAlternates[0]) : "",
+      note: addAlternates[0]?.label || "",
+    },
+    {
+      id: "add-alternate-02",
+      label: "Add Alternate 02",
+      amount: addAlternates[1] ? formatPricingSectionAmount(addAlternates[1]) : "",
+      note: addAlternates[1]?.label || "",
+    },
+    {
+      id: "total-if-all-accepted",
+      label: "Total if all accepted",
+      amount: formatCurrency(totals.totalIfAllAlternatesAccepted),
+      note: "For presentation only; final accepted scope controls contract total.",
+    },
+  ];
+}
+
+function findPricingSectionByText(sections, keywords) {
+  return sections.find((section) => {
+    const text = `${section.label || ""} ${section.description || ""}`.toLowerCase();
+    return keywords.some((keyword) => text.includes(keyword));
+  });
+}
+
+function chunkArray(items, chunkSize) {
+  const chunks = [];
+
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+
+  return chunks;
+}
+
+function formatStructuredCell(value) {
+  return hasTextValue(value) ? value : "-";
 }
 
 function formatPricingSectionAmount(section) {
@@ -3748,7 +4419,11 @@ function formatOptionLabel(value) {
     gc_prime: "GC / Prime Contractor",
     plan_takeoff_sheet: "Plan Takeoff Sheet",
     public_municipal: "Public / Municipal",
+    pricing_summary: "Pricing Summary",
+    proposal_notes: "Proposal Notes",
+    schedule_of_values: "Schedule of Values",
     shade_footing_estimate: "Shade Footing Estimate",
+    takeoff_quantities: "Takeoff Quantities",
     unit_price: "Unit Price",
   };
 
@@ -3948,6 +4623,7 @@ function parseProjectNotes(notes) {
   const lineItems = parseSmartPasteLineItems(sections.lineItems || [], warnings);
   const pricingParse = parseSmartPastePricingSections(sections.pricingSections || [], warnings);
   const planSheetParse = normalizeSmartPastePlanSheets(sections.planSheets || []);
+  const gcPacketTableParse = parseSmartPasteGcPacketTables(sections, warnings);
 
   if (pricingParse.baseBidLineItem) {
     values.baseBidLineItem = pricingParse.baseBidLineItem;
@@ -3969,6 +4645,11 @@ function parseProjectNotes(notes) {
     fields.push("plan sheets / takeoff pages");
   }
 
+  if (gcPacketTableParse.count > 0) {
+    values.gcPacketTables = gcPacketTableParse.tables;
+    fields.push("structured GC packet tables");
+  }
+
   if ((sections.lineItems || []).length > 0 && lineItems.length === 0) {
     warnings.push("Line items were found, but none matched Description | Quantity | Unit | Unit Price.");
   }
@@ -3982,6 +4663,7 @@ function parseProjectNotes(notes) {
     lineItems,
     pricingSectionCount: pricingParse.sections.length,
     planSheetCount: planSheetParse.length,
+    gcPacketTableCount: gcPacketTableParse.count,
     sectionsCaptured: getCapturedSmartPasteLabels(sections),
     values,
     warnings: [...new Set(warnings)],
@@ -4098,6 +4780,10 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     nextProposal.planSheets = mergePlanSheets(nextProposal.planSheets, values.planSheets);
   }
 
+  if (values.gcPacketTables) {
+    nextProposal.gcPacketTables = mergeGcPacketTables(nextProposal.gcPacketTables, values.gcPacketTables);
+  }
+
   return nextProposal;
 }
 
@@ -4120,6 +4806,14 @@ function collectSmartPasteSections(notes) {
     "concreteSpecs",
     "pricingSections",
     "planSheets",
+    "pricingSummary",
+    "scheduleOfValues",
+    "takeoffQuantities",
+    "shadeFootingEstimate",
+    "acceptanceSummary",
+    "proposalBasis",
+    "contractScopeControl",
+    "gcPrimeReviewer",
   ]);
   const textCaptureKeys = new Set([
     "rfiClarifications",
@@ -4176,7 +4870,7 @@ function collectSmartPasteSections(notes) {
       return;
     }
 
-    if (isSmartPricingLine(line)) {
+    if (activeKey !== "pricingSummary" && isSmartPricingLine(line)) {
       activeKey = "pricingSections";
       activePlanSheetIndex = -1;
       recordSmartPasteSection(sections, "pricingSections");
@@ -4255,14 +4949,6 @@ function getSmartPlanSheetHeading(label) {
   if (normalizedLabel.startsWith("l602 fence") || normalizedLabel.startsWith("l602 site furnishing")) {
     return {
       ...getPlanHeadingFromCodeOrTitle("l602", rawLabel, "detail_notes"),
-      calculationTitle: rawLabel,
-      noteField: "calculationNotes",
-    };
-  }
-
-  if (normalizedLabel.startsWith("shade footing estimate")) {
-    return {
-      ...getPlanHeadingFromCodeOrTitle("shade-footing-estimate", rawLabel, "shade_footing_estimate"),
       calculationTitle: rawLabel,
       noteField: "calculationNotes",
     };
@@ -4392,31 +5078,41 @@ function getSmartPasteLabelKey(label) {
     "addenda acknowledged": "addendaAcknowledged",
     "addendum acknowledged": "addendaAcknowledged",
     address: "billingAddress",
+    "acceptance summary": "acceptanceSummary",
     allowances: "pricingSections",
     alternates: "pricingSections",
     assumptions: "assumptions",
     client: "clientCompany",
     "concrete specs": "concreteSpecs",
     contact: "contactName",
+    "contract scope control": "contractScopeControl",
     email: "clientEmail",
     exclusions: "exclusions",
     "gc / prime notes": "gcPrimeNotes",
+    "gc / prime reviewer": "gcPrimeReviewer",
     "gc prime notes": "gcPrimeNotes",
+    "gc prime reviewer": "gcPrimeReviewer",
     "line items": "lineItems",
     "line item": "lineItems",
     location: "projectLocation",
     phone: "clientPhone",
     "prepared for": "clientCompany",
+    "pricing summary": "pricingSummary",
     project: "projectName",
     "project address": "projectAddress",
     "project location": "projectLocation",
     "project name": "projectName",
+    "proposal notes / acceptance summary": "proposalNotes",
     "proposal notes": "proposalNotes",
+    "proposal basis": "proposalBasis",
     "proposal type": "proposalType",
     "rfi / clarification": "rfiClarifications",
     "rfis / clarifications": "rfiClarifications",
     schedule: "schedule",
+    "schedule of values": "scheduleOfValues",
     scope: "scope",
+    "shade footing estimate": "shadeFootingEstimate",
+    "takeoff quantities": "takeoffQuantities",
     terms: "terms",
     "total if all accepted": "pricingSections",
     "total if all alternates accepted": "pricingSections",
@@ -4430,6 +5126,7 @@ function isSmartPasteSectionHeading(label, key) {
   const sectionHeadingLabels = new Set([
     "addenda acknowledged",
     "addendum acknowledged",
+    "acceptance summary",
     "allowances",
     "alternates",
     "assumptions",
@@ -4439,10 +5136,19 @@ function isSmartPasteSectionHeading(label, key) {
     "gc prime notes",
     "line item",
     "line items",
+    "pricing summary",
+    "proposal notes / acceptance summary",
     "proposal notes",
+    "proposal basis",
+    "contract scope control",
+    "gc / prime reviewer",
+    "gc prime reviewer",
     "rfi / clarification",
     "rfis / clarifications",
+    "schedule of values",
     "scope",
+    "shade footing estimate",
+    "takeoff quantities",
     "terms",
   ]);
 
@@ -4462,6 +5168,7 @@ function recordSmartPasteSection(sections, key) {
 function getCapturedSmartPasteLabels(sections) {
   const labels = {
     addendaAcknowledged: "Addenda Acknowledged",
+    acceptanceSummary: "Acceptance Summary",
     assumptions: "Assumptions",
     billingAddress: "Billing Address",
     clientCompany: "Client",
@@ -4469,19 +5176,26 @@ function getCapturedSmartPasteLabels(sections) {
     clientPhone: "Client Phone",
     concreteSpecs: "Concrete Specs",
     contactName: "Contact",
+    contractScopeControl: "Contract Scope Control",
     exclusions: "Exclusions",
     gcPrimeNotes: "GC / Prime Notes",
+    gcPrimeReviewer: "GC / Prime Reviewer",
     lineItems: "Line Items",
     planSheets: "Plan Sheets / Takeoff Pages",
+    pricingSummary: "Pricing Summary",
     pricingSections: "Alternates / Allowances",
     projectAddress: "Project Address",
     projectLocation: "Project Location",
     projectName: "Project",
+    proposalBasis: "Proposal Basis",
     proposalNotes: "Proposal Notes",
     proposalType: "Proposal Type",
     rfiClarifications: "RFIs / Clarifications",
     schedule: "Schedule",
+    scheduleOfValues: "Schedule of Values",
     scope: "Scope",
+    shadeFootingEstimate: "Shade Footing Estimate",
+    takeoffQuantities: "Takeoff Quantities",
     terms: "Terms",
   };
 
@@ -4504,6 +5218,174 @@ function appendSmartPasteSection(sections, key, value) {
 
 function getSectionText(sections, key) {
   return (sections[key] || []).join("\n").trim();
+}
+
+function parseSmartPasteGcPacketTables(sections, warnings) {
+  const tables = normalizeGcPacketTables();
+  let count = 0;
+
+  const pricingSummaryRows = parseSmartPastePricingSummaryRows(sections.pricingSummary || [], warnings);
+  const pricingSummaryNotes = getPricingSummaryPresentationNotes(sections.pricingSummary || []);
+
+  if (pricingSummaryRows.length > 0 || hasTextValue(pricingSummaryNotes)) {
+    tables.pricingSummary = {
+      ...tables.pricingSummary,
+      enabled: true,
+      rows: pricingSummaryRows,
+      presentationNotes: pricingSummaryNotes,
+    };
+    count += 1;
+  }
+
+  const sovRows = parseSmartPasteStructuredRows("scheduleOfValues", sections.scheduleOfValues || [], warnings);
+
+  if (sovRows.length > 0) {
+    tables.scheduleOfValues = {
+      ...tables.scheduleOfValues,
+      enabled: true,
+      rows: sovRows,
+    };
+    count += 1;
+  }
+
+  const takeoffRows = parseSmartPasteStructuredRows("takeoffQuantities", sections.takeoffQuantities || [], warnings);
+
+  if (takeoffRows.length > 0) {
+    tables.takeoffQuantities = {
+      ...tables.takeoffQuantities,
+      enabled: true,
+      rows: takeoffRows,
+    };
+    count += 1;
+  }
+
+  const shadeRows = parseSmartPasteStructuredRows("shadeFootingEstimate", sections.shadeFootingEstimate || [], warnings);
+
+  if (shadeRows.length > 0) {
+    tables.shadeFootingEstimate = {
+      ...tables.shadeFootingEstimate,
+      enabled: true,
+      rows: shadeRows,
+    };
+    count += 1;
+  }
+
+  const proposalBasis = getSectionText(sections, "proposalNotes");
+  const explicitProposalBasis = getSectionText(sections, "proposalBasis");
+  const contractScopeControl = getSectionText(sections, "contractScopeControl");
+  const acceptanceSummary = getSectionText(sections, "acceptanceSummary");
+  const gcPrimeReviewer = getSectionText(sections, "gcPrimeReviewer");
+
+  if (
+    hasTextValue(proposalBasis) ||
+    hasTextValue(explicitProposalBasis) ||
+    hasTextValue(contractScopeControl) ||
+    hasTextValue(acceptanceSummary) ||
+    hasTextValue(gcPrimeReviewer)
+  ) {
+    tables.proposalNotes = {
+      ...tables.proposalNotes,
+      enabled: true,
+      proposalBasis: explicitProposalBasis || proposalBasis,
+      contractScopeControl,
+      acceptanceSummary,
+      gcPrimeReviewer,
+    };
+    count += 1;
+  }
+
+  return { count, tables };
+}
+
+function parseSmartPastePricingSummaryRows(lines = [], warnings) {
+  return lines
+    .map((line) => {
+      if (!hasTextValue(line) || /^presentation notes?\s*:/i.test(line)) {
+        return null;
+      }
+
+      const pipeParts = line.split("|").map((part) => part.trim()).filter(Boolean);
+
+      if (pipeParts.length >= 2) {
+        return {
+          id: createProposalId(),
+          label: pipeParts[0],
+          amount: pipeParts[1],
+          note: pipeParts.slice(2).join(" | "),
+        };
+      }
+
+      const colonMatch = line.match(/^([^:]+):\s*(.+)$/);
+
+      if (colonMatch) {
+        return {
+          id: createProposalId(),
+          label: colonMatch[1].trim(),
+          amount: colonMatch[2].trim(),
+          note: "",
+        };
+      }
+
+      warnings.push(`Skipped pricing summary row "${line}" because it did not use Item | Amount | Notes.`);
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function getPricingSummaryPresentationNotes(lines = []) {
+  return lines
+    .map((line) => String(line || "").trim())
+    .filter((line) => /^presentation notes?\s*:/i.test(line))
+    .map((line) => line.replace(/^presentation notes?\s*:\s*/i, ""))
+    .join("\n");
+}
+
+function parseSmartPasteStructuredRows(sectionKey, lines = [], warnings) {
+  const fields = gcPacketRowFields[sectionKey] || [];
+
+  return lines
+    .map((line) => {
+      const parts = String(line || "")
+        .split("|")
+        .map((part) => part.trim())
+        .filter(Boolean);
+
+      if (parts.length < fields.length) {
+        if (hasTextValue(line)) {
+          warnings.push(`Skipped ${gcPacketTableLabels[sectionKey]} row "${line}" because it did not include ${fields.length} pipe-separated values.`);
+        }
+
+        return null;
+      }
+
+      return fields.reduce(
+        (row, [field], index) => ({
+          ...row,
+          [field]: parts[index] || "",
+        }),
+        { id: createProposalId() },
+      );
+    })
+    .filter(Boolean);
+}
+
+function mergeGcPacketTables(currentTables = {}, parsedTables = {}) {
+  const mergedTables = normalizeGcPacketTables(currentTables);
+  const incomingTables = normalizeGcPacketTables(parsedTables);
+
+  Object.keys(defaultGcPacketTables).forEach((sectionKey) => {
+    if (!incomingTables[sectionKey]?.enabled) {
+      return;
+    }
+
+    mergedTables[sectionKey] = {
+      ...mergedTables[sectionKey],
+      ...incomingTables[sectionKey],
+      enabled: true,
+    };
+  });
+
+  return mergedTables;
 }
 
 function normalizeSmartPastePlanSheets(planSheets = []) {

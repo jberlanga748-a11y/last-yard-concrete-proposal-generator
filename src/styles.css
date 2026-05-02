@@ -671,6 +671,53 @@ h4 {
   gap: 10px;
 }
 
+.gc-packet-table-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.packet-editor-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.packet-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.packet-editor-header strong {
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.packet-row-list {
+  display: grid;
+  gap: 10px;
+}
+
+.packet-row-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 10px;
+}
+
+.packet-row-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .scope-builder {
   display: grid;
   gap: 12px;
@@ -2238,6 +2285,157 @@ h4 {
   font-weight: 850;
 }
 
+.structured-packet-page {
+  min-height: 1055px;
+  overflow: hidden;
+}
+
+.structured-packet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  background: var(--navy);
+  color: white;
+  padding: 28px 34px;
+}
+
+.structured-packet-header p,
+.structured-packet-header span {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.structured-packet-header h2 {
+  margin-top: 5px;
+  color: white;
+  font-size: 28px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.structured-packet-header strong {
+  display: block;
+  max-width: 280px;
+  margin-top: 5px;
+  font-size: 14px;
+  text-align: right;
+}
+
+.structured-packet-body {
+  flex: 1;
+  padding: 28px 34px;
+}
+
+.structured-accent {
+  width: 165px;
+  height: 3px;
+  margin-bottom: 18px;
+  background: var(--gold);
+}
+
+.structured-packet-note {
+  margin-bottom: 14px;
+  border-left: 3px solid var(--gold);
+  background: #f8fafc;
+  padding: 8px 12px;
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.structured-packet-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--body);
+  font-size: 11px;
+}
+
+.structured-packet-table th {
+  background: var(--blue);
+  color: white;
+  padding: 8px;
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.structured-packet-table td {
+  border: 1px solid var(--line);
+  padding: 8px;
+  vertical-align: top;
+}
+
+.structured-packet-table tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.structured-packet-table.pricing-summary th:nth-child(2),
+.structured-packet-table.pricing-summary td:nth-child(2),
+.structured-packet-table.scheduleOfValues th:last-child,
+.structured-packet-table.scheduleOfValues td:last-child,
+.structured-packet-table.takeoffQuantities th:nth-child(n + 4),
+.structured-packet-table.takeoffQuantities td:nth-child(n + 4),
+.structured-packet-table.shadeFootingEstimate th:nth-child(n + 4),
+.structured-packet-table.shadeFootingEstimate td:nth-child(n + 4) {
+  text-align: right;
+}
+
+.structured-notes-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.structured-note-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  padding: 16px;
+}
+
+.structured-note-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.structured-note-card h3::after {
+  content: "";
+  height: 2px;
+  flex: 1;
+  background: var(--gold);
+}
+
+.structured-note-card p {
+  margin-top: 10px;
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.structured-packet-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  padding: 12px 34px;
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 850;
+}
+
 @media (max-width: 1180px) {
   .proposal-workbench {
     grid-template-columns: 1fr;
@@ -2318,7 +2516,8 @@ h4 {
   .full-footer,
   .footer-details,
   .plan-sheet-editor-grid,
-  .plan-sheet-upload-row {
+  .plan-sheet-upload-row,
+  .packet-row-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2635,6 +2834,84 @@ h4 {
 
   .plan-sheet-footer {
     padding: 8px 26px;
+    font-size: 8px;
+  }
+
+  .proposal-page.structured-packet-page {
+    width: 8.5in;
+    height: 11in;
+    min-height: 11in;
+    max-height: 11in;
+    overflow: hidden;
+  }
+
+  .structured-packet-header {
+    padding: 20px 28px;
+  }
+
+  .structured-packet-header h2 {
+    font-size: 22px;
+  }
+
+  .structured-packet-header p,
+  .structured-packet-header span {
+    font-size: 8.5px;
+  }
+
+  .structured-packet-header strong {
+    font-size: 10.5px;
+  }
+
+  .structured-packet-body {
+    padding: 20px 28px;
+  }
+
+  .structured-accent {
+    width: 128px;
+    height: 2px;
+    margin-bottom: 12px;
+  }
+
+  .structured-packet-note {
+    margin-bottom: 10px;
+    padding: 6px 9px;
+    font-size: 9px;
+    line-height: 1.3;
+  }
+
+  .structured-packet-table {
+    font-size: 8.2px;
+  }
+
+  .structured-packet-table th {
+    padding: 5px;
+    font-size: 6.8px;
+  }
+
+  .structured-packet-table td {
+    padding: 5px;
+  }
+
+  .structured-notes-grid {
+    gap: 10px;
+  }
+
+  .structured-note-card {
+    padding: 10px;
+  }
+
+  .structured-note-card h3 {
+    font-size: 9.5px;
+  }
+
+  .structured-note-card p {
+    margin-top: 6px;
+    font-size: 8.6px;
+    line-height: 1.3;
+  }
+
+  .structured-packet-footer {
+    padding: 8px 28px;
     font-size: 8px;
   }
 
