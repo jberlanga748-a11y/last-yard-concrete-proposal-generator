@@ -11,6 +11,7 @@ import {
 
 const logoSrc = "/assets/last-yard-logo.jpg";
 const storageKey = "last-yard-proposals-v1";
+const companySettingsStorageKey = "last-yard-company-settings-v1";
 
 const trustCards = [
   ["01", "PROVEN RELIABILITY", "On time. On budget. Built to last."],
@@ -20,10 +21,13 @@ const trustCards = [
 ];
 
 export default function App() {
-  const [savedProposals, setSavedProposals] = useState(() => loadSavedProposals());
+  const [companySettings, setCompanySettings] = useState(() => loadCompanySettings());
+  const [settingsDraft, setSettingsDraft] = useState(() => loadCompanySettings());
+  const [settingsMessage, setSettingsMessage] = useState("");
+  const [savedProposals, setSavedProposals] = useState(() => loadSavedProposals(loadCompanySettings()));
   const [route, setRoute] = useState(() => parseRoute(window.location.pathname));
   const [proposalDraft, setProposalDraft] = useState(() =>
-    getInitialProposalForRoute(parseRoute(window.location.pathname), loadSavedProposals()),
+    getInitialProposalForRoute(parseRoute(window.location.pathname), loadSavedProposals(loadCompanySettings()), loadCompanySettings()),
   );
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -31,10 +35,15 @@ export default function App() {
   const company = proposalDraft.company;
   const isListView = route.view === "list";
   const isPrintView = route.view === "print";
+  const isSettingsView = route.view === "settings";
 
   useEffect(() => {
     saveStoredProposals(savedProposals);
   }, [savedProposals]);
+
+  useEffect(() => {
+    saveCompanySettings(companySettings);
+  }, [companySettings]);
 
   useEffect(() => {
     if (window.location.pathname !== route.path) {
@@ -48,13 +57,13 @@ export default function App() {
       setRoute(nextRoute);
 
       if (nextRoute.view !== "list") {
-        setProposalDraft(getInitialProposalForRoute(nextRoute, savedProposals));
+        setProposalDraft(getInitialProposalForRoute(nextRoute, savedProposals, companySettings));
       }
     }
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [savedProposals]);
+  }, [companySettings, savedProposals]);
 
   useEffect(() => {
     setSaveMessage("");
@@ -82,8 +91,10 @@ export default function App() {
     window.history[method]({}, "", path);
     setRoute(nextRoute);
 
-    if (nextRoute.view !== "list") {
-      setProposalDraft(options.proposal ? createEditableProposal(options.proposal) : getInitialProposalForRoute(nextRoute, savedProposals));
+    if (nextRoute.view !== "list" && nextRoute.view !== "settings") {
+      setProposalDraft(
+        options.proposal ? createEditableProposal(options.proposal) : getInitialProposalForRoute(nextRoute, savedProposals, companySettings),
+      );
     }
   }
 
@@ -97,8 +108,28 @@ export default function App() {
   }
 
   function createNewProposal() {
-    const proposal = createNewProposalDraft(savedProposals);
+    const proposal = createNewProposalDraft(savedProposals, companySettings);
     navigate("/proposals/new", { proposal });
+  }
+
+  function updateSettingsDraft(field, value) {
+    setSettingsDraft((currentSettings) => ({
+      ...currentSettings,
+      [field]: value,
+    }));
+  }
+
+  function saveSettings() {
+    const normalizedSettings = normalizeCompanySettings(settingsDraft);
+    setCompanySettings(normalizedSettings);
+    setSettingsDraft(normalizedSettings);
+    setSettingsMessage("Company settings saved locally.");
+  }
+
+  function resetSettingsDraft() {
+    const defaults = getDefaultCompanySettings();
+    setSettingsDraft(defaults);
+    setSettingsMessage("Company settings reset to Last Yard defaults. Save to keep these defaults.");
   }
 
   function saveCurrentProposal() {
@@ -290,6 +321,9 @@ export default function App() {
             <button type="button" onClick={createNewProposal}>
               New Proposal
             </button>
+            <button type="button" onClick={() => navigate("/settings")}>
+              Company Settings
+            </button>
             {!isListView ? (
               <button type="button" onClick={() => window.print()}>
                 Print / Save PDF
@@ -299,7 +333,16 @@ export default function App() {
         </div>
       ) : null}
 
-      {isListView ? (
+      {isSettingsView ? (
+        <CompanySettingsView
+          message={settingsMessage}
+          settings={settingsDraft}
+          onBackToList={() => navigate("/proposals")}
+          onChange={updateSettingsDraft}
+          onReset={resetSettingsDraft}
+          onSave={saveSettings}
+        />
+      ) : isListView ? (
         <ProposalListView
           proposals={savedProposals}
           searchQuery={searchQuery}
@@ -308,6 +351,7 @@ export default function App() {
           onDuplicate={duplicateCurrentProposal}
           onOpen={openProposal}
           onSearchChange={setSearchQuery}
+          onOpenSettings={() => navigate("/settings")}
           onStatusFilterChange={setStatusFilter}
           onStatusChange={(proposal, status) => {
             const updatedProposal = { ...proposal, status, updatedAt: new Date().toISOString() };
@@ -367,6 +411,7 @@ function ProposalListView({
   onCreateNew,
   onDuplicate,
   onOpen,
+  onOpenSettings,
   onSearchChange,
   onStatusChange,
   onStatusFilterChange,
@@ -396,6 +441,9 @@ function ProposalListView({
         </div>
         <button type="button" onClick={onCreateNew}>
           New Proposal
+        </button>
+        <button type="button" onClick={onOpenSettings}>
+          Company Settings
         </button>
       </div>
 
@@ -480,6 +528,105 @@ function ProposalListView({
       </div>
 
       {filteredProposals.length === 0 ? <p className="empty-list-message">No saved proposals match those filters.</p> : null}
+    </section>
+  );
+}
+
+function CompanySettingsView({ message, settings, onBackToList, onChange, onReset, onSave }) {
+  function handleLogoUpload(file) {
+    if (!file) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => onChange("logoPath", String(reader.result || ""));
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <section className="company-settings-panel no-print">
+      <div className="list-toolbar">
+        <div>
+          <p className="list-kicker">Last Yard defaults</p>
+          <h2>Company Settings</h2>
+          {message ? <span className="settings-message">{message}</span> : null}
+        </div>
+        <div className="settings-actions">
+          <button type="button" onClick={onBackToList}>
+            Back to Proposals
+          </button>
+          <button type="button" onClick={onReset}>
+            Reset Defaults
+          </button>
+          <button type="button" onClick={onSave}>
+            Save Settings
+          </button>
+        </div>
+      </div>
+
+      <div className="settings-grid">
+        <EditorField label="Company Name" path="settings.companyName" value={settings.companyName} onChange={(_, value) => onChange("companyName", value)} />
+        <EditorField label="Phone" path="settings.phone" value={settings.phone} onChange={(_, value) => onChange("phone", value)} />
+        <EditorField label="Email" path="settings.email" type="email" value={settings.email} onChange={(_, value) => onChange("email", value)} />
+        <EditorField label="CCB Number" path="settings.license" value={settings.license} onChange={(_, value) => onChange("license", value)} />
+        <EditorField
+          label="Licensed / Bonded / Insured Text"
+          path="settings.credentialsText"
+          value={settings.credentialsText}
+          onChange={(_, value) => onChange("credentialsText", value)}
+        />
+        <EditorField label="Service Area" path="settings.serviceArea" value={settings.serviceArea} onChange={(_, value) => onChange("serviceArea", value)} />
+        <EditorField
+          label="Logo Path"
+          path="settings.logoPath"
+          value={settings.logoPath}
+          onChange={(_, value) => onChange("logoPath", value)}
+        />
+        <label className="editor-field">
+          <span>Logo Upload</span>
+          <input type="file" accept="image/*" onChange={(event) => handleLogoUpload(event.target.files?.[0])} />
+        </label>
+        <EditorField
+          label="Default Proposal Expiration Days"
+          path="settings.defaultProposalExpirationDays"
+          type="number"
+          value={settings.defaultProposalExpirationDays}
+          onChange={(_, value) => onChange("defaultProposalExpirationDays", value)}
+        />
+        <EditorField
+          label="Default Payment Terms"
+          path="settings.defaultPaymentTerms"
+          value={settings.defaultPaymentTerms}
+          onChange={(_, value) => onChange("defaultPaymentTerms", value)}
+        />
+        <div className="settings-wide-field">
+          <EditorField
+            label="Default Exclusions"
+            path="settings.defaultExclusions"
+            value={settings.defaultExclusions}
+            onChange={(_, value) => onChange("defaultExclusions", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Default Warranty Note"
+            path="settings.defaultWarrantyNote"
+            value={settings.defaultWarrantyNote}
+            onChange={(_, value) => onChange("defaultWarrantyNote", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Default Signature Block"
+            path="settings.defaultSignatureBlock"
+            value={settings.defaultSignatureBlock}
+            onChange={(_, value) => onChange("defaultSignatureBlock", value)}
+            multiline
+          />
+        </div>
+      </div>
     </section>
   );
 }
@@ -1292,7 +1439,7 @@ function ProposalPage({ children, className = "" }) {
   return <article className={`proposal-page ${className}`}>{children}</article>;
 }
 
-function LogoSeal({ companyName, small = false }) {
+function LogoSeal({ companyName, logoPath = logoSrc, small = false }) {
   const [logoFailed, setLogoFailed] = useState(false);
 
   return (
@@ -1303,7 +1450,7 @@ function LogoSeal({ companyName, small = false }) {
           <strong>Concrete</strong>
         </div>
       ) : (
-        <img src={logoSrc} alt={`${companyName} logo`} onError={() => setLogoFailed(true)} />
+        <img src={logoPath || logoSrc} alt={`${companyName} logo`} onError={() => setLogoFailed(true)} />
       )}
     </div>
   );
@@ -1314,7 +1461,7 @@ function CoverHeader({ company }) {
     <header className="cover-header">
       <div className="cover-angle" />
       <div className="cover-inner">
-        <LogoSeal companyName={company.name} />
+        <LogoSeal companyName={company.name} logoPath={company.logoPath} />
         <div className="cover-copy">
           <h2>Concrete</h2>
           <h2>Proposal</h2>
@@ -1593,7 +1740,7 @@ function PageFooter({ company, companyCredentials, compact = false }) {
 
   return (
     <footer className="page-footer full-footer">
-      <LogoSeal companyName={company.name} small />
+      <LogoSeal companyName={company.name} logoPath={company.logoPath} small />
       <div className="footer-brand">
         <p>{company.name}</p>
         <p>{company.tagline}</p>
@@ -1611,6 +1758,10 @@ function PageFooter({ company, companyCredentials, compact = false }) {
 
 function parseRoute(pathname) {
   const segments = pathname.split("/").filter(Boolean);
+
+  if (segments[0] === "settings") {
+    return { view: "settings", path: "/settings" };
+  }
 
   if (segments[0] !== "proposals") {
     return { view: "list", path: "/proposals" };
@@ -1631,9 +1782,9 @@ function parseRoute(pathname) {
   return { view: "edit", id: segments[1], path: `/proposals/${segments[1]}` };
 }
 
-function getInitialProposalForRoute(route, proposals) {
+function getInitialProposalForRoute(route, proposals, companySettings = getDefaultCompanySettings()) {
   if (route.view === "new") {
-    return createNewProposalDraft(proposals);
+    return createNewProposalDraft(proposals, companySettings);
   }
 
   if (route.id) {
@@ -1644,10 +1795,10 @@ function getInitialProposalForRoute(route, proposals) {
     }
   }
 
-  return createEditableProposal(proposals[0] || createSeedProposal());
+  return createEditableProposal(proposals[0] || createSeedProposal(companySettings));
 }
 
-function loadSavedProposals() {
+function loadSavedProposals(companySettings = getDefaultCompanySettings()) {
   try {
     const storedValue = window.localStorage.getItem(storageKey);
 
@@ -1662,7 +1813,7 @@ function loadSavedProposals() {
     // Fall through to the seed proposal if local storage is unavailable or malformed.
   }
 
-  return [createSeedProposal()];
+  return [createSeedProposal(companySettings)];
 }
 
 function saveStoredProposals(proposals) {
@@ -1673,22 +1824,44 @@ function saveStoredProposals(proposals) {
   }
 }
 
-function createSeedProposal() {
+function loadCompanySettings() {
+  try {
+    const storedValue = window.localStorage.getItem(companySettingsStorageKey);
+
+    if (storedValue) {
+      return normalizeCompanySettings(JSON.parse(storedValue));
+    }
+  } catch {
+    // Fall through to Last Yard defaults if settings are unavailable or malformed.
+  }
+
+  return getDefaultCompanySettings();
+}
+
+function saveCompanySettings(settings) {
+  try {
+    window.localStorage.setItem(companySettingsStorageKey, JSON.stringify(settings));
+  } catch {
+    // Local settings are best-effort for this phase.
+  }
+}
+
+function createSeedProposal(companySettings = getDefaultCompanySettings()) {
   return createEditableProposal({
-    ...SEED_PROPOSAL,
+    ...applyCompanySettingsToProposal(SEED_PROPOSAL, companySettings, new Date(SEED_PROPOSAL.proposalDate)),
     id: SEED_PROPOSAL.id || createProposalId(),
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
 }
 
-function createNewProposalDraft(existingProposals) {
+function createNewProposalDraft(existingProposals, companySettings = getDefaultCompanySettings()) {
   const today = new Date();
   const validUntil = new Date(today);
-  validUntil.setDate(validUntil.getDate() + 30);
+  validUntil.setDate(validUntil.getDate() + getExpirationDays(companySettings));
 
   return createEditableProposal({
-    ...cloneObject(SEED_PROPOSAL),
+    ...applyCompanySettingsToProposal(SEED_PROPOSAL, companySettings, today),
     id: createProposalId(),
     proposalNumber: getNextProposalNumber(existingProposals, today),
     status: "draft",
@@ -1777,6 +1950,105 @@ function formatDisplayDate(value) {
   }).format(date);
 }
 
+function getDefaultCompanySettings() {
+  const company = SEED_PROPOSAL.company;
+
+  return {
+    companyName: company.name,
+    phone: company.phone,
+    email: company.email,
+    logoPath: logoSrc,
+    license: company.license,
+    credentialsText: company.credentials.join(" | "),
+    serviceArea: company.serviceArea,
+    defaultProposalExpirationDays: 30,
+    defaultPaymentTerms: SEED_PROPOSAL.terms.payment,
+    defaultExclusions: SEED_PROPOSAL.exclusions.join("\n"),
+    defaultWarrantyNote: "",
+    defaultSignatureBlock: SEED_PROPOSAL.terms.acceptance,
+  };
+}
+
+function normalizeCompanySettings(settings = {}) {
+  const defaults = getDefaultCompanySettings();
+
+  return {
+    ...defaults,
+    ...settings,
+    companyName: hasTextValue(settings.companyName) ? settings.companyName : defaults.companyName,
+    phone: hasTextValue(settings.phone) ? settings.phone : defaults.phone,
+    email: hasTextValue(settings.email) ? settings.email : defaults.email,
+    logoPath: hasTextValue(settings.logoPath) ? settings.logoPath : defaults.logoPath,
+    license: hasTextValue(settings.license) ? settings.license : defaults.license,
+    credentialsText: hasTextValue(settings.credentialsText) ? settings.credentialsText : defaults.credentialsText,
+    serviceArea: hasTextValue(settings.serviceArea) ? settings.serviceArea : defaults.serviceArea,
+    defaultProposalExpirationDays: getExpirationDays(settings),
+    defaultPaymentTerms: hasTextValue(settings.defaultPaymentTerms)
+      ? settings.defaultPaymentTerms
+      : defaults.defaultPaymentTerms,
+    defaultExclusions: hasTextValue(settings.defaultExclusions) ? settings.defaultExclusions : defaults.defaultExclusions,
+    defaultWarrantyNote: settings.defaultWarrantyNote ?? defaults.defaultWarrantyNote,
+    defaultSignatureBlock: hasTextValue(settings.defaultSignatureBlock)
+      ? settings.defaultSignatureBlock
+      : defaults.defaultSignatureBlock,
+  };
+}
+
+function applyCompanySettingsToProposal(sourceProposal, settings, proposalDate = new Date()) {
+  const normalizedSettings = normalizeCompanySettings(settings);
+  const nextProposal = cloneObject(sourceProposal);
+  const validUntil = new Date(proposalDate);
+  validUntil.setDate(validUntil.getDate() + getExpirationDays(normalizedSettings));
+
+  return {
+    ...nextProposal,
+    company: {
+      ...nextProposal.company,
+      name: normalizedSettings.companyName,
+      phone: normalizedSettings.phone,
+      email: normalizedSettings.email,
+      logoPath: normalizedSettings.logoPath || logoSrc,
+      license: normalizedSettings.license,
+      credentials: parseCredentials(normalizedSettings.credentialsText),
+      serviceArea: normalizedSettings.serviceArea,
+    },
+    validUntil: formatInputDate(validUntil),
+    exclusions: parseMultilineList(normalizedSettings.defaultExclusions),
+    terms: {
+      ...nextProposal.terms,
+      payment: normalizedSettings.defaultPaymentTerms,
+      acceptance: normalizedSettings.defaultSignatureBlock,
+      signatureBlock: normalizedSettings.defaultSignatureBlock,
+      warrantyNote: normalizedSettings.defaultWarrantyNote,
+    },
+  };
+}
+
+function getExpirationDays(settings = {}) {
+  const fallbackDays = getDefaultCompanySettings().defaultProposalExpirationDays;
+  const numericValue = Number.parseInt(settings.defaultProposalExpirationDays, 10);
+
+  return Number.isFinite(numericValue) && numericValue > 0 ? numericValue : fallbackDays;
+}
+
+function parseCredentials(value) {
+  const credentials = String(value || "")
+    .split("|")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return credentials.length > 0 ? credentials : getDefaultCompanySettings().credentialsText.split(" | ");
+}
+
+function parseMultilineList(value) {
+  const items = String(value || "")
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  return items.length > 0 ? items : [...SEED_PROPOSAL.exclusions];
+}
+
 function createEditableProposal(seedProposal) {
   const proposal = cloneObject(seedProposal);
   const proposalType = proposal.proposalType ?? proposal.type ?? "commercial";
@@ -1787,6 +2059,14 @@ function createEditableProposal(seedProposal) {
     status: proposal.status || "draft",
     proposalType,
     type: proposalType,
+    company: {
+      ...SEED_PROPOSAL.company,
+      ...(proposal.company || {}),
+      logoPath: proposal.company?.logoPath || logoSrc,
+      credentials: Array.isArray(proposal.company?.credentials)
+        ? proposal.company.credentials
+        : parseCredentials(proposal.company?.credentials || getDefaultCompanySettings().credentialsText),
+    },
     concreteSpecs: {
       ...getDefaultConcreteSpecs(),
       ...(proposal.concreteSpecs || {}),
