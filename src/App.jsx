@@ -20,6 +20,12 @@ const trustCards = [
   ["04", "BUILT ON INTEGRITY", "Clear communication. Honest work. Local service."],
 ];
 
+const defaultProjectPhotos = [
+  { label: "Architectural Steps", src: "" },
+  { label: "Finished Flatwork", src: "" },
+  { label: "Control Joints", src: "" },
+];
+
 export default function App() {
   const [companySettings, setCompanySettings] = useState(() => loadCompanySettings());
   const [settingsDraft, setSettingsDraft] = useState(() => loadCompanySettings());
@@ -300,6 +306,16 @@ export default function App() {
     }));
   }
 
+  function updateProjectPhoto(index, updates) {
+    setProposalDraft((currentProposal) => {
+      const projectPhotos = normalizeProjectPhotos(currentProposal.projectPhotos).map((photo, photoIndex) =>
+        photoIndex === index ? { ...photo, ...updates } : photo,
+      );
+
+      return { ...currentProposal, projectPhotos };
+    });
+  }
+
   return (
     <main className={`app-shell ${isPrintView ? "print-route-shell" : ""}`}>
       <style>{`
@@ -392,6 +408,7 @@ export default function App() {
                 onScopeTitleChange={updateScopeSectionTitle}
                 onConcreteSpecChange={updateConcreteSpec}
                 onGcPrimeChange={updateGcPrimeField}
+                onProjectPhotoChange={updateProjectPhoto}
               />
             )}
             <div className="preview-pane">
@@ -708,6 +725,7 @@ function ProposalEditor({
   onScopeTitleChange,
   onConcreteSpecChange,
   onGcPrimeChange,
+  onProjectPhotoChange,
 }) {
   const proposalTotals = calculateProposalTotals(proposal);
   const isGcPrime = proposal.proposalType === "gc_prime";
@@ -828,6 +846,10 @@ function ProposalEditor({
           onChange={onChange}
           multiline
         />
+      </EditorSection>
+
+      <EditorSection title="Project Photos">
+        <ProjectPhotoEditor photos={proposal.projectPhotos} onPhotoChange={onProjectPhotoChange} />
       </EditorSection>
 
       <EditorSection title="Scope of Work">
@@ -992,6 +1014,47 @@ function PricingSummary({ totals }) {
         <span>Balance Due</span>
         <strong>{formatCurrency(totals.balanceDue)}</strong>
       </div>
+    </div>
+  );
+}
+
+function ProjectPhotoEditor({ photos, onPhotoChange }) {
+  const photoSlots = normalizeProjectPhotos(photos);
+
+  function handleUpload(index, file) {
+    if (!file) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => onPhotoChange(index, { src: String(reader.result || "") });
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div className="project-photo-editor">
+      {photoSlots.map((photo, index) => (
+        <div className="project-photo-card" key={`project-photo-${index}`}>
+          <div className="project-photo-preview">
+            {photo.src ? <img src={photo.src} alt={photo.label || `Project photo ${index + 1}`} /> : <span>Photo {index + 1}</span>}
+          </div>
+          <EditorField
+            label={`Photo ${index + 1} Caption`}
+            path={`projectPhotos.${index}.label`}
+            value={photo.label}
+            onChange={(_, value) => onPhotoChange(index, { label: value })}
+          />
+          <label className="editor-field">
+            <span>Photo {index + 1} Upload</span>
+            <input type="file" accept="image/*" onChange={(event) => handleUpload(index, event.target.files?.[0])} />
+          </label>
+          {photo.src ? (
+            <button className="editor-secondary-button" type="button" onClick={() => onPhotoChange(index, { src: "" })}>
+              Remove photo
+            </button>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }
@@ -1368,7 +1431,7 @@ function ProposalPreview({ proposal }) {
         <ProjectCards proposal={proposal} />
         {gcPrimeRows.length > 0 ? <GcPrimeNotes rows={gcPrimeRows} /> : null}
         <div className="page-one-feature-block">
-          <PhotoBand />
+          <PhotoBand photos={proposal.projectPhotos} />
           <WhyChoose />
         </div>
         <PageFooter company={company} companyCredentials={companyCredentials} compact />
@@ -1556,20 +1619,24 @@ function Field({ label, value }) {
   );
 }
 
-function PhotoBand() {
+function PhotoBand({ photos = defaultProjectPhotos }) {
+  const photoSlots = normalizeProjectPhotos(photos);
+
   return (
     <section className="photo-band">
-      <ConcretePhoto title="Architectural Steps" variant="one" />
-      <ConcretePhoto title="Finished Flatwork" variant="two" />
-      <ConcretePhoto title="Control Joints" variant="three" />
+      {photoSlots.map((photo, index) => (
+        <ConcretePhoto key={`preview-photo-${index}`} photo={photo} variant={["one", "two", "three"][index]} />
+      ))}
     </section>
   );
 }
 
-function ConcretePhoto({ title, variant }) {
+function ConcretePhoto({ photo, variant }) {
+  const title = photo?.label || defaultProjectPhotos[0].label;
+
   return (
     <div className={`concrete-photo ${variant}`}>
-      <div className="photo-texture" />
+      {photo?.src ? <img src={photo.src} alt={title} /> : <div className="photo-texture" />}
       <div className="photo-caption">{title}</div>
     </div>
   );
@@ -2049,6 +2116,17 @@ function parseMultilineList(value) {
   return items.length > 0 ? items : [...SEED_PROPOSAL.exclusions];
 }
 
+function normalizeProjectPhotos(photos = []) {
+  return defaultProjectPhotos.map((defaultPhoto, index) => {
+    const photo = Array.isArray(photos) ? photos[index] || {} : {};
+
+    return {
+      label: hasTextValue(photo.label) ? photo.label : defaultPhoto.label,
+      src: hasTextValue(photo.src) ? photo.src : "",
+    };
+  });
+}
+
 function createEditableProposal(seedProposal) {
   const proposal = cloneObject(seedProposal);
   const proposalType = proposal.proposalType ?? proposal.type ?? "commercial";
@@ -2067,6 +2145,7 @@ function createEditableProposal(seedProposal) {
         ? proposal.company.credentials
         : parseCredentials(proposal.company?.credentials || getDefaultCompanySettings().credentialsText),
     },
+    projectPhotos: normalizeProjectPhotos(proposal.projectPhotos),
     concreteSpecs: {
       ...getDefaultConcreteSpecs(),
       ...(proposal.concreteSpecs || {}),
