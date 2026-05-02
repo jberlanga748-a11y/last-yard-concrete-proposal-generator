@@ -143,6 +143,16 @@ export default function App() {
     }));
   }
 
+  function updateConcreteSpec(field, value) {
+    setProposalDraft((currentProposal) => ({
+      ...currentProposal,
+      concreteSpecs: {
+        ...currentProposal.concreteSpecs,
+        [field]: value,
+      },
+    }));
+  }
+
   return (
     <main className="app-shell">
       <style>{`
@@ -175,6 +185,7 @@ export default function App() {
           onRemoveScopeSection={removeScopeSection}
           onScopeBulletChange={updateScopeBullet}
           onScopeTitleChange={updateScopeSectionTitle}
+          onConcreteSpecChange={updateConcreteSpec}
         />
         <div className="preview-pane">
           <ProposalPreview proposal={proposalDraft} />
@@ -197,6 +208,7 @@ function ProposalEditor({
   onRemoveScopeSection,
   onScopeBulletChange,
   onScopeTitleChange,
+  onConcreteSpecChange,
 }) {
   const proposalTotals = calculateProposalTotals(proposal);
 
@@ -327,6 +339,10 @@ function ProposalEditor({
           onRemoveSection={onRemoveScopeSection}
           onTitleChange={onScopeTitleChange}
         />
+      </EditorSection>
+
+      <EditorSection title="Concrete Specifications">
+        <ConcreteSpecsEditor concreteSpecs={proposal.concreteSpecs} onChange={onConcreteSpecChange} />
       </EditorSection>
 
       <EditorSection title="Pricing">
@@ -529,6 +545,116 @@ function ScopeBuilder({
   );
 }
 
+function ConcreteSpecsEditor({ concreteSpecs, onChange }) {
+  return (
+    <div className="concrete-spec-editor">
+      <div className="editor-spec-grid">
+        <EditorField
+          label="Estimated Square Feet"
+          path="concreteSpecs.estimatedSquareFeet"
+          value={concreteSpecs.estimatedSquareFeet}
+          onChange={(_, value) => onChange("estimatedSquareFeet", value)}
+        />
+        <EditorField
+          label="Estimated Cubic Yards"
+          path="concreteSpecs.estimatedCubicYards"
+          value={concreteSpecs.estimatedCubicYards}
+          onChange={(_, value) => onChange("estimatedCubicYards", value)}
+        />
+        <EditorField
+          label="Thickness"
+          path="concreteSpecs.thickness"
+          value={concreteSpecs.thickness}
+          onChange={(_, value) => onChange("thickness", value)}
+        />
+        <EditorField
+          label="PSI"
+          path="concreteSpecs.psi"
+          value={concreteSpecs.psi}
+          onChange={(_, value) => onChange("psi", value)}
+        />
+        <EditorField
+          label="Slump"
+          path="concreteSpecs.slump"
+          value={concreteSpecs.slump}
+          onChange={(_, value) => onChange("slump", value)}
+        />
+        <EditorField
+          label="Air Entrainment"
+          path="concreteSpecs.airEntrainment"
+          value={concreteSpecs.airEntrainment}
+          onChange={(_, value) => onChange("airEntrainment", value)}
+        />
+      </div>
+
+      <div className="editor-check-row">
+        <label className="editor-check">
+          <input
+            checked={Boolean(concreteSpecs.fiberMesh)}
+            type="checkbox"
+            onChange={(event) => onChange("fiberMesh", event.target.checked)}
+          />
+          <span>Fiber mesh</span>
+        </label>
+        <label className="editor-check">
+          <input
+            checked={Boolean(concreteSpecs.pumpRequired)}
+            type="checkbox"
+            onChange={(event) => onChange("pumpRequired", event.target.checked)}
+          />
+          <span>Pump required</span>
+        </label>
+      </div>
+
+      <EditorField
+        label="Rebar / Mesh Details"
+        path="concreteSpecs.rebarMeshDetails"
+        value={concreteSpecs.rebarMeshDetails}
+        onChange={(_, value) => onChange("rebarMeshDetails", value)}
+        multiline
+      />
+      <EditorField
+        label="Finish Type"
+        path="concreteSpecs.finishType"
+        value={concreteSpecs.finishType}
+        onChange={(_, value) => onChange("finishType", value)}
+      />
+      <EditorField
+        label="Control Joint Spacing"
+        path="concreteSpecs.controlJointSpacing"
+        value={concreteSpecs.controlJointSpacing}
+        onChange={(_, value) => onChange("controlJointSpacing", value)}
+      />
+      <EditorField
+        label="Saw Cut Timing"
+        path="concreteSpecs.sawCutTiming"
+        value={concreteSpecs.sawCutTiming}
+        onChange={(_, value) => onChange("sawCutTiming", value)}
+      />
+      <EditorField
+        label="Cure / Sealer Notes"
+        path="concreteSpecs.cureSealerNotes"
+        value={concreteSpecs.cureSealerNotes}
+        onChange={(_, value) => onChange("cureSealerNotes", value)}
+        multiline
+      />
+      <EditorField
+        label="Concrete Supplier"
+        path="concreteSpecs.concreteSupplier"
+        value={concreteSpecs.concreteSupplier}
+        onChange={(_, value) => onChange("concreteSupplier", value)}
+      />
+      <EditorField
+        label="Truck Access Notes"
+        path="concreteSpecs.truckAccessNotes"
+        value={concreteSpecs.truckAccessNotes}
+        onChange={(_, value) => onChange("truckAccessNotes", value)}
+        multiline
+      />
+    </div>
+  );
+}
+
 function EditorSection({ title, children }) {
   return (
     <section className="editor-section">
@@ -567,11 +693,12 @@ function ProposalPreview({ proposal }) {
   const scopeSplitIndex = Math.ceil(proposal.scopeSections.length / 2);
   const scopeLeft = proposal.scopeSections.slice(0, scopeSplitIndex);
   const scopeRight = proposal.scopeSections.slice(scopeSplitIndex);
-  const specSplitIndex = Math.ceil(proposal.specifications.length / 2);
-  const specsLeft = proposal.specifications.slice(0, specSplitIndex).map(({ item, specification }) => [item, specification]);
-  const specsRight = proposal.specifications.slice(specSplitIndex).map(({ item, specification }) => [item, specification]);
+  const specRows = buildConcreteSpecRows(proposal.concreteSpecs);
+  const specSplitIndex = Math.ceil(specRows.length / 2);
+  const specsLeft = specRows.slice(0, specSplitIndex);
+  const specsRight = specRows.slice(specSplitIndex);
   const lineItems = proposal.lineItems.map((item, index) => {
-    const amount = item.amount ?? item.quantity * item.unitPrice;
+    const amount = item.amount ?? toEditableNumber(item.quantity) * toEditableNumber(item.unitPrice);
 
     return [
       item.itemNumber ?? String(index + 1),
@@ -969,6 +1096,10 @@ function createEditableProposal(seedProposal) {
 
   return {
     ...proposal,
+    concreteSpecs: {
+      ...getDefaultConcreteSpecs(),
+      ...(proposal.concreteSpecs || {}),
+    },
     lineItems: proposal.lineItems.map((item) => ({
       ...item,
       taxable: item.taxable ?? true,
@@ -1037,6 +1168,62 @@ function formatOptionLabel(value) {
     .split("_")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+function buildConcreteSpecRows(concreteSpecs = {}) {
+  return [
+    ["Estimated Square Feet", concreteSpecs.estimatedSquareFeet],
+    ["Estimated Cubic Yards", concreteSpecs.estimatedCubicYards],
+    ["Thickness", concreteSpecs.thickness],
+    ["Concrete Strength", concreteSpecs.psi],
+    ["Slump", concreteSpecs.slump],
+    ["Air Entrainment", concreteSpecs.airEntrainment],
+    ["Fiber Mesh", formatBooleanSpec(concreteSpecs.fiberMesh)],
+    ["Rebar / Mesh", concreteSpecs.rebarMeshDetails],
+    ["Finishes", concreteSpecs.finishType],
+    ["Control Joint Spacing", concreteSpecs.controlJointSpacing],
+    ["Saw Cut Timing", concreteSpecs.sawCutTiming],
+    ["Cure / Sealer Notes", concreteSpecs.cureSealerNotes],
+    ["Concrete Supplier", concreteSpecs.concreteSupplier],
+    ["Pump Required", formatBooleanSpec(concreteSpecs.pumpRequired)],
+    ["Truck Access Notes", concreteSpecs.truckAccessNotes],
+  ].filter(([, value]) => hasSpecValue(value));
+}
+
+function formatBooleanSpec(value) {
+  if (typeof value !== "boolean") {
+    return value;
+  }
+
+  return value ? "Yes" : "No";
+}
+
+function hasSpecValue(value) {
+  if (typeof value === "boolean") {
+    return true;
+  }
+
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function getDefaultConcreteSpecs() {
+  return {
+    estimatedSquareFeet: "",
+    estimatedCubicYards: "",
+    thickness: "",
+    psi: "",
+    slump: "",
+    airEntrainment: "",
+    fiberMesh: false,
+    rebarMeshDetails: "",
+    finishType: "",
+    controlJointSpacing: "",
+    sawCutTiming: "",
+    cureSealerNotes: "",
+    concreteSupplier: "",
+    pumpRequired: false,
+    truckAccessNotes: "",
+  };
 }
 
 function toEditableNumber(value) {

@@ -130,6 +130,23 @@ export const SEED_PROPOSAL = {
       "Provide labor, materials, equipment, and supervision for concrete flatwork including site prep, sidewalks, curb and gutter, and associated finishes as shown on the plans and specifications.",
   },
   scopeSections: DEFAULT_SCOPE_SECTIONS,
+  concreteSpecs: {
+    estimatedSquareFeet: "",
+    estimatedCubicYards: "",
+    thickness: "4 in sidewalks / 5 in pads",
+    psi: "4,000 PSI @ 28 days",
+    slump: "4 in +/- 1 in",
+    airEntrainment: "5% - 7%",
+    fiberMesh: false,
+    rebarMeshDetails: "Per plan",
+    finishType: "Broom / troweled",
+    controlJointSpacing: "Sawcut - 1/4 slab depth",
+    sawCutTiming: "",
+    cureSealerNotes: "Minimum 7 days",
+    concreteSupplier: "Local ready-mix",
+    pumpRequired: false,
+    truckAccessNotes: "",
+  },
   specifications: DEFAULT_CONCRETE_SPECIFICATIONS,
   lineItems: [
     {
