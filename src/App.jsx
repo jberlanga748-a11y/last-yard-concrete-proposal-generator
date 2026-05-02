@@ -191,9 +191,12 @@ export default function App() {
   const [smartPasteResult, setSmartPasteResult] = useState(null);
   const [backupMessage, setBackupMessage] = useState("");
   const company = proposalDraft.company;
+  const isDashboardView = route.view === "dashboard";
   const isListView = route.view === "list";
   const isPrintView = route.view === "print";
   const isSettingsView = route.view === "settings";
+  const isBackupView = route.view === "backup";
+  const isProposalDraftView = route.view === "new" || route.view === "edit";
   const proposalValidation = validateProposalCompleteness(proposalDraft);
 
   useEffect(() => {
@@ -215,7 +218,7 @@ export default function App() {
       const nextRoute = parseRoute(window.location.pathname);
       setRoute(nextRoute);
 
-      if (nextRoute.view !== "list") {
+      if (isProposalRouteView(nextRoute.view)) {
         setProposalDraft(getInitialProposalForRoute(nextRoute, savedProposals, companySettings));
       }
     }
@@ -235,7 +238,7 @@ export default function App() {
     function handlePrintShortcut(event) {
       const isPrintShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p";
 
-      if (!isPrintShortcut || isListView || isSettingsView) {
+      if (!isPrintShortcut || isDashboardView || isListView || isSettingsView || isBackupView) {
         return;
       }
 
@@ -249,7 +252,7 @@ export default function App() {
 
     window.addEventListener("keydown", handlePrintShortcut);
     return () => window.removeEventListener("keydown", handlePrintShortcut);
-  }, [isListView, isSettingsView, proposalDraft]);
+  }, [isBackupView, isDashboardView, isListView, isSettingsView, proposalDraft]);
 
   useEffect(() => {
     if (validationNotice && proposalValidation.errors.length === 0) {
@@ -291,7 +294,7 @@ export default function App() {
     window.history[method]({}, "", path);
     setRoute(nextRoute);
 
-    if (nextRoute.view !== "list" && nextRoute.view !== "settings") {
+    if (isProposalRouteView(nextRoute.view)) {
       setProposalDraft(
         options.proposal ? createEditableProposal(options.proposal) : getInitialProposalForRoute(nextRoute, savedProposals, companySettings),
       );
@@ -309,6 +312,11 @@ export default function App() {
 
   function createNewProposal() {
     const proposal = createNewProposalDraft(savedProposals, companySettings);
+    navigate("/proposals/new", { proposal });
+  }
+
+  function createNewGcPacket() {
+    const proposal = createNewGcPacketDraft(savedProposals, companySettings);
     navigate("/proposals/new", { proposal });
   }
 
@@ -367,6 +375,10 @@ export default function App() {
     navigate(`/proposals/${proposalDraft.id}/print`, { proposal: proposalDraft });
   }
 
+  function openProposalPrintView(proposal) {
+    navigate(`/proposals/${proposal.id}/print`, { proposal });
+  }
+
   function duplicateCurrentProposal(proposal = proposalDraft) {
     const duplicate = duplicateProposalDraft(proposal, savedProposals);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, duplicate));
@@ -379,6 +391,15 @@ export default function App() {
     setProposalDraft(updatedProposal);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
     setSaveMessage(`Marked as ${formatOptionLabel(status)}.`);
+  }
+
+  function exportProposalBackup(proposal = proposalDraft) {
+    try {
+      downloadJsonFile(createProposalExport(proposal), getCurrentProposalBackupFileName(proposal));
+      setBackupMessage(`Exported ${proposal.proposalNumber || "proposal"}.`);
+    } catch (error) {
+      setBackupMessage(`Export failed: ${error.message}`);
+    }
   }
 
   function updateLineItem(index, field, value) {
@@ -718,8 +739,7 @@ export default function App() {
   function exportBackup(type) {
     try {
       if (type === "current") {
-        downloadJsonFile(createProposalExport(proposalDraft), getCurrentProposalBackupFileName(proposalDraft));
-        setBackupMessage(`Exported ${proposalDraft.proposalNumber || "current proposal"}.`);
+        exportProposalBackup(proposalDraft);
         return;
       }
 
@@ -829,7 +849,7 @@ export default function App() {
 
   const backupTools = (
     <BackupRestorePanel
-      canExportCurrent={!isListView && !isSettingsView}
+      canExportCurrent={isProposalDraftView}
       message={backupMessage}
       onExport={exportBackup}
       onImport={importBackup}
@@ -845,31 +865,30 @@ export default function App() {
       `}</style>
 
       {!isPrintView ? (
-        <div className="print-bar no-print">
-          <div>
-            <p className="eyebrow">{company.name}</p>
-            <h1>Proposal Generator</h1>
-          </div>
-          <div className="app-header-actions">
-            <button type="button" onClick={() => navigate("/proposals")}>
-              Proposals
-            </button>
-            <button type="button" onClick={createNewProposal}>
-              New Proposal
-            </button>
-            <button type="button" onClick={() => navigate("/settings")}>
-              Company Settings
-            </button>
-            {!isListView && !isSettingsView ? (
-              <button type="button" onClick={printCurrentProposal}>
-                Print / Save PDF
-              </button>
-            ) : null}
-          </div>
-        </div>
+        <AppChrome
+          companyName={company.name}
+          currentView={route.view}
+          onNavigate={navigate}
+          onNewGcPacket={createNewGcPacket}
+          onNewProposal={createNewProposal}
+        />
       ) : null}
 
-      {isSettingsView ? (
+      <div className={isPrintView ? "" : "app-content"}>
+      {isDashboardView ? (
+        <DashboardView
+          proposals={savedProposals}
+          onCreateGcPacket={createNewGcPacket}
+          onCreateProposal={createNewProposal}
+          onExportBackup={() => navigate("/backup")}
+          onOpen={openProposal}
+          onOpenList={() => navigate("/proposals")}
+          onOpenPrint={openProposalPrintView}
+          onOpenSettings={() => navigate("/settings")}
+        />
+      ) : isBackupView ? (
+        <BackupView backupTools={backupTools} onBackToDashboard={() => navigate("/dashboard")} />
+      ) : isSettingsView ? (
         <CompanySettingsView
           backupTools={backupTools}
           message={settingsMessage}
@@ -887,7 +906,9 @@ export default function App() {
           statusFilter={statusFilter}
           onCreateNew={createNewProposal}
           onDuplicate={duplicateCurrentProposal}
+          onExportProposal={exportProposalBackup}
           onOpen={openProposal}
+          onPrint={openProposalPrintView}
           onSearchChange={setSearchQuery}
           onOpenSettings={() => navigate("/settings")}
           onStatusFilterChange={setStatusFilter}
@@ -963,8 +984,209 @@ export default function App() {
           </div>
         </>
       )}
+      </div>
     </main>
   );
+}
+
+function AppChrome({ companyName, currentView, onNavigate, onNewGcPacket, onNewProposal }) {
+  const activeView = ["new", "edit", "print"].includes(currentView) ? "list" : currentView;
+  const navItems = [
+    ["dashboard", "Dashboard", () => onNavigate("/dashboard")],
+    ["list", "Proposals", () => onNavigate("/proposals")],
+    ["settings", "Company Settings", () => onNavigate("/settings")],
+    ["backup", "Backup / Restore", () => onNavigate("/backup")],
+  ];
+
+  return (
+    <header className="app-chrome no-print">
+      <div className="app-brand">
+        <div className="app-brand-mark">LY</div>
+        <div>
+          <p>{companyName}</p>
+          <h1>Proposal Generator</h1>
+        </div>
+      </div>
+      <nav className="app-nav" aria-label="Primary navigation">
+        {navItems.map(([view, label, action]) => (
+          <button className={activeView === view ? "active" : ""} key={view} type="button" onClick={action}>
+            {label}
+          </button>
+        ))}
+      </nav>
+      <div className="app-quick-actions">
+        <button type="button" onClick={onNewProposal}>
+          New Proposal
+        </button>
+        <button className="gold-action" type="button" onClick={onNewGcPacket}>
+          New GC Packet
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function DashboardView({
+  proposals,
+  onCreateGcPacket,
+  onCreateProposal,
+  onExportBackup,
+  onOpen,
+  onOpenList,
+  onOpenPrint,
+  onOpenSettings,
+}) {
+  const stats = buildDashboardStats(proposals);
+  const recentProposals = getRecentProposals(proposals);
+
+  return (
+    <section className="dashboard-panel no-print">
+      <div className="dashboard-hero">
+        <div>
+          <p className="list-kicker">Production dashboard</p>
+          <h2>Last Yard Proposal Workspace</h2>
+          <p>Track local proposals, GC packets, backup status, and print-ready concrete proposal packets.</p>
+        </div>
+        <div className="dashboard-actions">
+          <button type="button" onClick={onCreateProposal}>
+            New Proposal
+          </button>
+          <button className="gold-action" type="button" onClick={onCreateGcPacket}>
+            New GC Packet
+          </button>
+          <button type="button" onClick={onOpenList}>
+            Open Proposals
+          </button>
+          <button type="button" onClick={onOpenSettings}>
+            Company Settings
+          </button>
+          <button type="button" onClick={onExportBackup}>
+            Backup Tools
+          </button>
+        </div>
+      </div>
+
+      <div className="dashboard-stat-grid">
+        {stats.cards.map((card) => (
+          <div className="dashboard-stat-card" key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+          </div>
+        ))}
+      </div>
+
+      <div className="dashboard-summary-grid">
+        <div className="dashboard-summary-card">
+          <span>Total Proposed Value</span>
+          <strong>{formatCurrency(stats.totalValue)}</strong>
+        </div>
+        <div className="dashboard-summary-card">
+          <span>Full GC Packets</span>
+          <strong>{stats.fullPacketCount}</strong>
+        </div>
+        <div className="dashboard-summary-card">
+          <span>Last Updated Proposal</span>
+          <strong>{stats.lastUpdated ? stats.lastUpdated.project?.name || stats.lastUpdated.proposalNumber : "None yet"}</strong>
+          {stats.lastUpdated ? <small>{formatDashboardDate(stats.lastUpdated.updatedAt || stats.lastUpdated.createdAt || stats.lastUpdated.proposalDate)}</small> : null}
+        </div>
+      </div>
+
+      <div className="recent-proposals-card">
+        <div className="recent-heading">
+          <div>
+            <p className="list-kicker">Recent work</p>
+            <h3>Recent Proposals</h3>
+          </div>
+          <button type="button" onClick={onOpenList}>
+            View All
+          </button>
+        </div>
+
+        {recentProposals.length > 0 ? (
+          <div className="recent-list">
+            {recentProposals.map((proposal) => (
+              <ProposalSummaryRow
+                key={proposal.id}
+                proposal={proposal}
+                onOpen={onOpen}
+                onPrint={onOpenPrint}
+                compact
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="empty-list-message">No proposals yet. Start with a standard proposal or a full GC packet.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function BackupView({ backupTools, onBackToDashboard }) {
+  return (
+    <section className="backup-page-panel no-print">
+      <div className="list-toolbar">
+        <div>
+          <p className="list-kicker">Local backup center</p>
+          <h2>Backup / Restore</h2>
+        </div>
+        <button type="button" onClick={onBackToDashboard}>
+          Back to Dashboard
+        </button>
+      </div>
+      {backupTools}
+    </section>
+  );
+}
+
+function ProposalSummaryRow({ compact = false, onDuplicate, onExport, onOpen, onPrint, proposal }) {
+  const total = calculateProposalTotals(proposal).total;
+  const packetMode = getPacketModeLabel(proposal);
+
+  return (
+    <div className={`proposal-summary-row ${compact ? "compact" : ""}`}>
+      <div className="proposal-summary-main">
+        <strong>{proposal.proposalNumber || "No proposal #"}</strong>
+        <span>{proposal.project?.name || "Untitled project"}</span>
+        <small>{proposal.client?.companyName || proposal.client?.contactName || "No client entered"}</small>
+      </div>
+      <div className="proposal-summary-meta">
+        <Badge>{formatOptionLabel(proposal.proposalType ?? proposal.type)}</Badge>
+        <Badge className={packetMode === "Full GC Packet" ? "packet-full" : "packet-summary"}>{packetMode}</Badge>
+        <StatusBadge status={proposal.status} />
+      </div>
+      <div className="proposal-summary-total">
+        <strong>{formatCurrency(total)}</strong>
+        <small>{formatDashboardDate(proposal.updatedAt || proposal.createdAt || proposal.proposalDate)}</small>
+      </div>
+      <div className="proposal-summary-actions">
+        <button type="button" onClick={() => onOpen(proposal.id)}>
+          Open
+        </button>
+        <button type="button" onClick={() => onPrint(proposal)}>
+          Print
+        </button>
+        {onDuplicate ? (
+          <button type="button" onClick={() => onDuplicate(proposal)}>
+            Duplicate
+          </button>
+        ) : null}
+        {onExport ? (
+          <button type="button" onClick={() => onExport(proposal)}>
+            Export
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function Badge({ children, className = "" }) {
+  return <span className={`app-badge ${className}`}>{children}</span>;
+}
+
+function StatusBadge({ status }) {
+  return <Badge className={`status-${status || "draft"}`}>{formatOptionLabel(status || "draft")}</Badge>;
 }
 
 function BackupRestorePanel({ canExportCurrent = false, message = "", onExport, onImport }) {
@@ -1045,8 +1267,10 @@ function ProposalListView({
   statusFilter,
   onCreateNew,
   onDuplicate,
+  onExportProposal,
   onOpen,
   onOpenSettings,
+  onPrint,
   onSearchChange,
   onStatusChange,
   onStatusFilterChange,
@@ -1115,16 +1339,17 @@ function ProposalListView({
               <th>Client</th>
               <th>Project</th>
               <th>Type</th>
+              <th>Packet</th>
               <th>Status</th>
               <th>Total</th>
-              <th>Proposal Date</th>
-              <th>Expiration</th>
+              <th>Updated</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {filteredProposals.map((proposal) => {
               const total = calculateProposalTotals(proposal).total;
+              const packetMode = getPacketModeLabel(proposal);
 
               return (
                 <tr key={proposal.id} onClick={() => onOpen(proposal.id)}>
@@ -1135,7 +1360,13 @@ function ProposalListView({
                   </td>
                   <td>{proposal.project?.name}</td>
                   <td>{formatOptionLabel(proposal.proposalType ?? proposal.type)}</td>
+                  <td>
+                    <Badge className={packetMode === "Full GC Packet" ? "packet-full" : "packet-summary"}>
+                      {packetMode}
+                    </Badge>
+                  </td>
                   <td onClick={(event) => event.stopPropagation()}>
+                    <StatusBadge status={proposal.status} />
                     <select value={proposal.status} onChange={(event) => onStatusChange(proposal, event.target.value)}>
                       {PROPOSAL_STATUSES.map((status) => (
                         <option key={status} value={status}>
@@ -1145,15 +1376,20 @@ function ProposalListView({
                     </select>
                   </td>
                   <td>{formatCurrency(total)}</td>
-                  <td>{formatDisplayDate(proposal.proposalDate)}</td>
-                  <td>{formatDisplayDate(proposal.validUntil)}</td>
+                  <td>{formatDashboardDate(proposal.updatedAt || proposal.createdAt || proposal.proposalDate)}</td>
                   <td>
                     <div className="table-actions" onClick={(event) => event.stopPropagation()}>
                       <button type="button" onClick={() => onOpen(proposal.id)}>
                         Open
                       </button>
+                      <button type="button" onClick={() => onPrint(proposal)}>
+                        Print
+                      </button>
                       <button type="button" onClick={() => onDuplicate(proposal)}>
                         Duplicate
+                      </button>
+                      <button type="button" onClick={() => onExportProposal(proposal)}>
+                        Export
                       </button>
                     </div>
                   </td>
@@ -3496,6 +3732,14 @@ function PageFooter({ company, companyCredentials, compact = false }) {
 function parseRoute(pathname) {
   const segments = pathname.split("/").filter(Boolean);
 
+  if (segments.length === 0 || segments[0] === "dashboard") {
+    return { view: "dashboard", path: "/dashboard" };
+  }
+
+  if (segments[0] === "backup") {
+    return { view: "backup", path: "/backup" };
+  }
+
   if (segments[0] === "settings") {
     return { view: "settings", path: "/settings" };
   }
@@ -3517,6 +3761,10 @@ function parseRoute(pathname) {
   }
 
   return { view: "edit", id: segments[1], path: `/proposals/${segments[1]}` };
+}
+
+function isProposalRouteView(view) {
+  return view === "new" || view === "edit" || view === "print";
 }
 
 function getInitialProposalForRoute(route, proposals, companySettings = getDefaultCompanySettings()) {
@@ -3809,6 +4057,36 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
   });
 }
 
+function createNewGcPacketDraft(existingProposals, companySettings = getDefaultCompanySettings()) {
+  const baseProposal = createNewProposalDraft(existingProposals, companySettings);
+  const gcPacketTables = normalizeGcPacketTables(baseProposal.gcPacketTables);
+
+  return createEditableProposal({
+    ...baseProposal,
+    proposalType: "gc_prime",
+    type: "gc_prime",
+    project: {
+      ...baseProposal.project,
+      category: "GC / Prime concrete packet",
+    },
+    gcPacketTables: {
+      ...gcPacketTables,
+      pricingSummary: {
+        ...gcPacketTables.pricingSummary,
+        enabled: true,
+      },
+      proposalNotes: {
+        ...gcPacketTables.proposalNotes,
+        enabled: true,
+        proposalBasis: "Proposal based on provided plans, addenda, and listed clarifications.",
+        contractScopeControl: "Accepted bid form, exclusions, and clarifications control final contract scope.",
+        acceptanceSummary: "GC to identify accepted alternates and allowances before contract execution.",
+        gcPrimeReviewer: "Reviewed by: ______________________________ Date: __________",
+      },
+    },
+  });
+}
+
 function duplicateProposalDraft(sourceProposal, existingProposals) {
   const now = new Date();
   const validUntil = new Date(now);
@@ -3885,6 +4163,76 @@ function formatDisplayDate(value) {
     day: "numeric",
     year: "numeric",
   }).format(date);
+}
+
+function formatDashboardDate(value) {
+  if (!value) {
+    return "Not saved";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.valueOf())) {
+    return formatDisplayDate(value) || value;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
+function buildDashboardStats(proposals = []) {
+  const statusCounts = PROPOSAL_STATUSES.reduce(
+    (counts, status) => ({
+      ...counts,
+      [status]: proposals.filter((proposal) => proposal.status === status).length,
+    }),
+    {},
+  );
+  const totalValue = proposals.reduce((sum, proposal) => sum + calculateProposalTotals(proposal).total, 0);
+  const lastUpdated = getRecentProposals(proposals, 1)[0] || null;
+
+  return {
+    cards: [
+      { label: "Total Proposals", value: proposals.length },
+      { label: "Draft", value: statusCounts.draft || 0 },
+      { label: "Sent", value: statusCounts.sent || 0 },
+      { label: "Approved", value: statusCounts.approved || 0 },
+      { label: "Rejected", value: statusCounts.rejected || 0 },
+      { label: "Expired", value: statusCounts.expired || 0 },
+    ],
+    fullPacketCount: proposals.filter((proposal) => getPacketModeLabel(proposal) === "Full GC Packet").length,
+    lastUpdated,
+    totalValue,
+  };
+}
+
+function getRecentProposals(proposals = [], limit = 5) {
+  return [...proposals]
+    .sort((a, b) => getProposalTimestamp(b) - getProposalTimestamp(a))
+    .slice(0, limit);
+}
+
+function getProposalTimestamp(proposal = {}) {
+  const value = proposal.updatedAt || proposal.createdAt || proposal.proposalDate || "";
+  const date = new Date(value);
+
+  return Number.isNaN(date.valueOf()) ? 0 : date.valueOf();
+}
+
+function getPacketModeLabel(proposal = {}) {
+  return hasFullPacketContent(proposal) ? "Full GC Packet" : "Summary";
+}
+
+function hasFullPacketContent(proposal = {}) {
+  const gcPacketTables = normalizeGcPacketTables(proposal.gcPacketTables);
+  const hasStructuredTables = Object.values(gcPacketTables).some((table) => table.enabled);
+  const hasPlanSheets = getEnabledPlanSheets(proposal.planSheets).length > 0;
+  const hasAppendix = buildAppendixPlan(createEditableProposal(proposal)).pages.length > 0;
+
+  return proposal.proposalType === "gc_prime" || proposal.type === "gc_prime" || hasStructuredTables || hasPlanSheets || hasAppendix;
 }
 
 function getDefaultCompanySettings() {
