@@ -1685,6 +1685,7 @@ function CompanyIntro({ company, companyCredentials }) {
 
 function ProjectCards({ proposal }) {
   const { client, project } = proposal;
+  const proposalType = formatOptionLabel(proposal.proposalType ?? proposal.type);
 
   return (
     <section className="project-cards">
@@ -1699,6 +1700,10 @@ function ProjectCards({ proposal }) {
       </InfoCard>
 
       <InfoCard title="Project Summary" watermark="SCOPE">
+        <Field label="Proposal #" value={proposal.proposalNumber} />
+        <Field label="Proposal Date" value={formatDisplayDate(proposal.proposalDate)} />
+        <Field label="Expiration" value={formatDisplayDate(proposal.validUntil)} />
+        <Field label="Proposal Type" value={proposalType} />
         <Field label="Project Name" value={project.name} />
         <Field label="Project Location" value={project.location} />
         <Field label="Proposed Schedule" value={project.estimatedDuration || project.proposedSchedule.display} />
@@ -2239,8 +2244,26 @@ function normalizeProjectPhotos(photos = []) {
   });
 }
 
+function normalizeScopeSections(scopeSections = []) {
+  if (!Array.isArray(scopeSections)) {
+    return [];
+  }
+
+  return scopeSections.map((section) => ({
+    title: section?.title ?? "",
+    items: Array.isArray(section?.items) ? section.items : [],
+  }));
+}
+
+function normalizeTextList(items = []) {
+  return Array.isArray(items) ? items : [];
+}
+
 function createEditableProposal(seedProposal) {
-  const proposal = cloneObject(seedProposal);
+  const proposal = cloneObject(seedProposal || {});
+  const client = proposal.client || {};
+  const project = proposal.project || {};
+  const proposedSchedule = project.proposedSchedule || {};
   const proposalType = proposal.proposalType ?? proposal.type ?? "commercial";
 
   return {
@@ -2257,6 +2280,7 @@ function createEditableProposal(seedProposal) {
         ? proposal.company.credentials
         : parseCredentials(proposal.company?.credentials || getDefaultCompanySettings().credentialsText),
     },
+    scopeSections: normalizeScopeSections(proposal.scopeSections),
     projectPhotos: normalizeProjectPhotos(proposal.projectPhotos),
     concreteSpecs: {
       ...getDefaultConcreteSpecs(),
@@ -2266,28 +2290,43 @@ function createEditableProposal(seedProposal) {
       ...getDefaultGcPrime(),
       ...(proposal.gcPrime || {}),
     },
+    financials: {
+      taxRate: 0,
+      discountAmount: 0,
+      depositRate: SEED_PROPOSAL.financials.depositRate,
+      ...(proposal.financials || {}),
+    },
+    exclusions: normalizeTextList(proposal.exclusions),
+    assumptions: normalizeTextList(proposal.assumptions),
+    terms: {
+      payment: "",
+      depositText: "",
+      progressBilling: "",
+      acceptance: "",
+      ...(proposal.terms || {}),
+    },
     lineItems: (proposal.lineItems || []).map((item) => ({
       ...item,
       taxable: item.taxable ?? true,
     })),
     client: {
-      ...proposal.client,
-      billingAddress: proposal.client.billingAddress ?? proposal.client.address ?? "",
-      projectAddress: proposal.client.projectAddress ?? proposal.client.cityStateZip ?? "",
+      ...client,
+      billingAddress: client.billingAddress ?? client.address ?? "",
+      projectAddress: client.projectAddress ?? client.cityStateZip ?? "",
     },
     project: {
-      ...proposal.project,
-      address: proposal.project.address ?? proposal.project.location ?? "",
-      category: proposal.project.category ?? "Commercial flatwork",
-      estimatedDuration: proposal.project.estimatedDuration ?? proposal.project.proposedSchedule?.display ?? "",
-      accessNotes: proposal.project.accessNotes ?? "",
-      siteConditionNotes: proposal.project.siteConditionNotes ?? "",
-      scheduleRestrictions: proposal.project.scheduleRestrictions ?? "",
-      specialRequirements: proposal.project.specialRequirements ?? "",
+      ...project,
+      address: project.address ?? project.location ?? "",
+      category: project.category ?? "Commercial flatwork",
+      estimatedDuration: project.estimatedDuration ?? proposedSchedule.display ?? "",
+      accessNotes: project.accessNotes ?? "",
+      siteConditionNotes: project.siteConditionNotes ?? "",
+      scheduleRestrictions: project.scheduleRestrictions ?? "",
+      specialRequirements: project.specialRequirements ?? "",
       proposedSchedule: {
-        ...(proposal.project.proposedSchedule || {}),
-        startDate: proposal.project.proposedSchedule?.startDate ?? "",
-        display: proposal.project.proposedSchedule?.display ?? "",
+        ...proposedSchedule,
+        startDate: proposedSchedule.startDate ?? "",
+        display: proposedSchedule.display ?? "",
       },
     },
   };
@@ -2326,7 +2365,15 @@ function formatQuantity(value) {
 }
 
 function buildTermsCopy(terms) {
-  return `Payment terms: ${terms.payment} ${terms.depositText} ${terms.progressBilling} ${terms.acceptance}`;
+  const normalizedTerms = terms || {};
+  const copyParts = [
+    normalizedTerms.payment,
+    normalizedTerms.depositText,
+    normalizedTerms.progressBilling,
+    normalizedTerms.acceptance,
+  ].filter(hasTextValue);
+
+  return copyParts.length > 0 ? `Payment terms: ${copyParts.join(" ")}` : "";
 }
 
 function formatOptionLabel(value) {
