@@ -4850,6 +4850,12 @@ function collectSmartPasteSections(notes) {
 
       if (planSubheading && activePlanSheetIndex >= 0) {
         activeKey = "planSheets";
+
+        if (planSubheading.metadataField) {
+          setSmartPastePlanSheetMetadata(sections, activePlanSheetIndex, planSubheading.metadataField, labelMatch[2]);
+          return;
+        }
+
         activePlanSheetField = planSubheading.noteField;
         setSmartPastePlanSheetTitle(sections, activePlanSheetIndex, planSubheading);
         appendSmartPastePlanSheetNote(sections, activePlanSheetIndex, activePlanSheetField, labelMatch[2]);
@@ -4988,6 +4994,14 @@ function getSmartPlanSheetSubheading(label) {
   const rawLabel = String(label || "").trim();
   const normalizedLabel = rawLabel.toLowerCase().replace(/\s+/g, " ");
 
+  if (normalizedLabel === "sheet subtitle") {
+    return { metadataField: "subtitle" };
+  }
+
+  if (normalizedLabel === "calculation box title") {
+    return { metadataField: "calculationTitle" };
+  }
+
   if (/^clarifications?$/.test(normalizedLabel)) {
     return { noteField: "clarificationNotes" };
   }
@@ -5036,6 +5050,16 @@ function setSmartPastePlanSheetTitle(sections, index, subheading) {
   }
 
   sections.planSheets[index].calculationTitle = subheading.calculationTitle;
+}
+
+function setSmartPastePlanSheetMetadata(sections, index, field, value) {
+  const textValue = String(value || "").trim();
+
+  if (!textValue || !sections.planSheets?.[index]) {
+    return;
+  }
+
+  sections.planSheets[index][field] = textValue;
 }
 
 function appendSmartPastePlanSheetNote(sections, index, field, value) {
@@ -5344,31 +5368,65 @@ function getPricingSummaryPresentationNotes(lines = []) {
 
 function parseSmartPasteStructuredRows(sectionKey, lines = [], warnings) {
   const fields = gcPacketRowFields[sectionKey] || [];
+  const rows = [];
+  const sectionNotes = [];
 
-  return lines
-    .map((line) => {
-      const parts = String(line || "")
-        .split("|")
-        .map((part) => part.trim())
-        .filter(Boolean);
+  lines.forEach((line) => {
+    const metadata = getSmartPasteStructuredMetadata(sectionKey, line);
 
-      if (parts.length < fields.length) {
-        if (hasTextValue(line)) {
-          warnings.push(`Skipped ${gcPacketTableLabels[sectionKey]} row "${line}" because it did not include ${fields.length} pipe-separated values.`);
-        }
+    if (metadata.isMetadata) {
+      if (hasTextValue(metadata.note)) {
+        sectionNotes.push(metadata.note);
+      }
+      return;
+    }
 
-        return null;
+    const parts = String(line || "")
+      .split("|")
+      .map((part) => part.trim())
+      .filter(Boolean);
+
+    if (parts.length < fields.length) {
+      if (hasTextValue(line)) {
+        warnings.push(`Skipped ${gcPacketTableLabels[sectionKey]} row "${line}" because it did not include ${fields.length} pipe-separated values.`);
       }
 
-      return fields.reduce(
+      return;
+    }
+
+    rows.push(
+      fields.reduce(
         (row, [field], index) => ({
           ...row,
           [field]: parts[index] || "",
         }),
         { id: createProposalId() },
-      );
-    })
-    .filter(Boolean);
+      ),
+    );
+  });
+
+  if (sectionKey === "shadeFootingEstimate" && rows.length > 0 && sectionNotes.length > 0) {
+    const lastRow = rows[rows.length - 1];
+    lastRow.allowanceNote = [lastRow.allowanceNote, ...sectionNotes].filter(hasTextValue).join(" ");
+  }
+
+  return rows;
+}
+
+function getSmartPasteStructuredMetadata(sectionKey, line) {
+  const match = String(line || "").trim().match(/^([^:]+):\s*(.*)$/);
+
+  if (!match) {
+    return { isMetadata: false, note: "" };
+  }
+
+  const label = match[1].trim().toLowerCase().replace(/\s+/g, " ");
+
+  if (sectionKey === "shadeFootingEstimate" && label === "allowance note") {
+    return { isMetadata: true, note: match[2].trim() };
+  }
+
+  return { isMetadata: false, note: "" };
 }
 
 function mergeGcPacketTables(currentTables = {}, parsedTables = {}) {
