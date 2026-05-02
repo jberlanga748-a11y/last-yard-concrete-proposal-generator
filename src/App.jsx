@@ -14,6 +14,8 @@ import {
 const logoSrc = "/assets/last-yard-logo.jpg";
 const storageKey = "last-yard-proposals-v1";
 const companySettingsStorageKey = "last-yard-company-settings-v1";
+const backupVersion = "1.0";
+const backupSource = "Last Yard Proposal Generator";
 
 const trustCards = [
   ["shield", "PROVEN RELIABILITY", "On time. On budget. Built to last."],
@@ -187,6 +189,7 @@ export default function App() {
   const [validationNotice, setValidationNotice] = useState("");
   const [smartPasteNotes, setSmartPasteNotes] = useState("");
   const [smartPasteResult, setSmartPasteResult] = useState(null);
+  const [backupMessage, setBackupMessage] = useState("");
   const company = proposalDraft.company;
   const isListView = route.view === "list";
   const isPrintView = route.view === "print";
@@ -225,6 +228,7 @@ export default function App() {
     setSaveMessage("");
     setValidationNotice("");
     setSmartPasteResult(null);
+    setBackupMessage("");
   }, [route.path]);
 
   useEffect(() => {
@@ -711,6 +715,127 @@ export default function App() {
     });
   }
 
+  function exportBackup(type) {
+    try {
+      if (type === "current") {
+        downloadJsonFile(createProposalExport(proposalDraft), getCurrentProposalBackupFileName(proposalDraft));
+        setBackupMessage(`Exported ${proposalDraft.proposalNumber || "current proposal"}.`);
+        return;
+      }
+
+      if (type === "all") {
+        downloadJsonFile(createAllProposalsExport(savedProposals), getAllProposalsBackupFileName());
+        setBackupMessage(`Exported ${savedProposals.length} proposals.`);
+        return;
+      }
+
+      if (type === "settings") {
+        downloadJsonFile(createCompanySettingsExport(companySettings), getCompanySettingsBackupFileName());
+        setBackupMessage("Exported company settings.");
+        return;
+      }
+
+      if (type === "full") {
+        downloadJsonFile(createFullAppBackup(savedProposals, companySettings), getFullBackupFileName());
+        setBackupMessage(`Exported full app backup with ${savedProposals.length} proposals and company settings.`);
+      }
+    } catch (error) {
+      setBackupMessage(`Export failed: ${error.message}`);
+    }
+  }
+
+  async function importBackup(type, mode, file) {
+    if (!file) {
+      setBackupMessage("Choose a JSON backup file before importing.");
+      return;
+    }
+
+    try {
+      const importedJson = await readJsonFile(file);
+
+      if (type === "proposal") {
+        const importedProposal = parseSingleProposalImport(importedJson, savedProposals);
+        const nextProposals = upsertProposal(savedProposals, importedProposal);
+
+        setSavedProposals(nextProposals);
+        setProposalDraft(importedProposal);
+        setBackupMessage(`Imported proposal ${importedProposal.proposalNumber || importedProposal.id}.`);
+        return;
+      }
+
+      if (type === "all") {
+        const importedProposals = parseProposalCollectionImport(importedJson);
+        const nextProposals = mergeOrReplaceImportedProposals(importedProposals, savedProposals, mode, "all proposals");
+
+        if (!nextProposals) {
+          setBackupMessage("Import cancelled.");
+          return;
+        }
+
+        setSavedProposals(nextProposals);
+        syncDraftAfterProposalRestore(nextProposals);
+        setBackupMessage(`${mode === "replace" ? "Replaced" : "Merged"} ${importedProposals.length} imported proposals.`);
+        return;
+      }
+
+      if (type === "settings") {
+        const importedSettings = parseCompanySettingsImport(importedJson);
+
+        setCompanySettings(importedSettings);
+        setSettingsDraft(importedSettings);
+        setBackupMessage("Imported company settings. New proposals will use the restored defaults.");
+        return;
+      }
+
+      if (type === "full") {
+        const importedBackup = parseFullAppBackupImport(importedJson);
+        const nextProposals = mergeOrReplaceImportedProposals(
+          importedBackup.proposals,
+          savedProposals,
+          mode,
+          "the full app backup",
+        );
+
+        if (!nextProposals) {
+          setBackupMessage("Import cancelled.");
+          return;
+        }
+
+        setSavedProposals(nextProposals);
+        setCompanySettings(importedBackup.companySettings);
+        setSettingsDraft(importedBackup.companySettings);
+        syncDraftAfterProposalRestore(nextProposals);
+        setBackupMessage(
+          `${mode === "replace" ? "Restored" : "Merged"} full backup with ${importedBackup.proposals.length} proposals and company settings.`,
+        );
+      }
+    } catch (error) {
+      setBackupMessage(`Import failed: ${error.message}`);
+    }
+  }
+
+  function syncDraftAfterProposalRestore(nextProposals) {
+    const currentMatch = nextProposals.find((proposal) => proposal.id === proposalDraft.id);
+
+    if (currentMatch) {
+      setProposalDraft(currentMatch);
+      return;
+    }
+
+    if (!isListView && !isSettingsView && nextProposals.length > 0) {
+      navigate(`/proposals/${nextProposals[0].id}`, { proposal: nextProposals[0], replace: true });
+    }
+  }
+
+  const backupTools = (
+    <BackupRestorePanel
+      canExportCurrent={!isListView && !isSettingsView}
+      message={backupMessage}
+      onExport={exportBackup}
+      onImport={importBackup}
+    />
+  );
+
   return (
     <main className={`app-shell ${isPrintView ? "print-route-shell" : ""}`}>
       <style>{`
@@ -746,6 +871,7 @@ export default function App() {
 
       {isSettingsView ? (
         <CompanySettingsView
+          backupTools={backupTools}
           message={settingsMessage}
           settings={settingsDraft}
           onBackToList={() => navigate("/proposals")}
@@ -755,6 +881,7 @@ export default function App() {
         />
       ) : isListView ? (
         <ProposalListView
+          backupTools={backupTools}
           proposals={savedProposals}
           searchQuery={searchQuery}
           statusFilter={statusFilter}
@@ -792,6 +919,7 @@ export default function App() {
               onStatusChange={updateCurrentStatus}
             />
           )}
+          {!isPrintView ? backupTools : null}
 
           <div className={`proposal-workbench ${isPrintView ? "print-route-view" : ""}`}>
             {isPrintView ? null : (
@@ -839,7 +967,79 @@ export default function App() {
   );
 }
 
+function BackupRestorePanel({ canExportCurrent = false, message = "", onExport, onImport }) {
+  const [importType, setImportType] = useState("proposal");
+  const [importMode, setImportMode] = useState("merge");
+  const [importFile, setImportFile] = useState(null);
+  const showMergeMode = importType === "all" || importType === "full";
+
+  return (
+    <section className="backup-panel no-print">
+      <div>
+        <p className="list-kicker">Backup / Restore</p>
+        <h3>LocalStorage Backup Tools</h3>
+        <p className="backup-help">Export JSON backups or restore proposals, company settings, and full app data.</p>
+        {message ? <span className="backup-message">{message}</span> : null}
+      </div>
+
+      <div className="backup-grid">
+        <div className="backup-card">
+          <h4>Export</h4>
+          <div className="backup-button-grid">
+            {canExportCurrent ? (
+              <button type="button" onClick={() => onExport("current")}>
+                Export Current Proposal
+              </button>
+            ) : null}
+            <button type="button" onClick={() => onExport("all")}>
+              Export All Proposals
+            </button>
+            <button type="button" onClick={() => onExport("settings")}>
+              Export Company Settings
+            </button>
+            <button type="button" onClick={() => onExport("full")}>
+              Export Full App Backup
+            </button>
+          </div>
+        </div>
+
+        <div className="backup-card">
+          <h4>Import</h4>
+          <div className="backup-import-grid">
+            <label>
+              <span>Import Type</span>
+              <select value={importType} onChange={(event) => setImportType(event.target.value)}>
+                <option value="proposal">One Proposal JSON</option>
+                <option value="all">All Proposals JSON</option>
+                <option value="settings">Company Settings JSON</option>
+                <option value="full">Full App Backup JSON</option>
+              </select>
+            </label>
+            {showMergeMode ? (
+              <label>
+                <span>Import Mode</span>
+                <select value={importMode} onChange={(event) => setImportMode(event.target.value)}>
+                  <option value="merge">Merge with Existing</option>
+                  <option value="replace">Replace Existing</option>
+                </select>
+              </label>
+            ) : null}
+            <label className="backup-file-field">
+              <span>JSON File</span>
+              <input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] || null)} />
+            </label>
+            <button type="button" onClick={() => onImport(importType, showMergeMode ? importMode : "merge", importFile)}>
+              Import Selected Backup
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ProposalListView({
+  backupTools,
   proposals,
   searchQuery,
   statusFilter,
@@ -905,6 +1105,8 @@ function ProposalListView({
         </label>
       </div>
 
+      {backupTools}
+
       <div className="proposal-table-wrap">
         <table className="proposal-list-table">
           <thead>
@@ -967,7 +1169,7 @@ function ProposalListView({
   );
 }
 
-function CompanySettingsView({ message, settings, onBackToList, onChange, onReset, onSave }) {
+function CompanySettingsView({ backupTools, message, settings, onBackToList, onChange, onReset, onSave }) {
   function handleLogoUpload(file) {
     if (!file) {
       return;
@@ -998,6 +1200,8 @@ function CompanySettingsView({ message, settings, onBackToList, onChange, onRese
           </button>
         </div>
       </div>
+
+      {backupTools}
 
       <div className="settings-grid">
         <EditorField label="Company Name" path="settings.companyName" value={settings.companyName} onChange={(_, value) => onChange("companyName", value)} />
@@ -3377,6 +3581,206 @@ function saveCompanySettings(settings) {
   } catch {
     // Local settings are best-effort for this phase.
   }
+}
+
+function createProposalExport(proposal) {
+  return {
+    backupVersion,
+    exportedAt: new Date().toISOString(),
+    source: backupSource,
+    type: "proposal",
+    proposal: cloneObject(proposal),
+  };
+}
+
+function createAllProposalsExport(proposals) {
+  return {
+    backupVersion,
+    exportedAt: new Date().toISOString(),
+    source: backupSource,
+    type: "all_proposals",
+    storageKey,
+    proposals: cloneObject(proposals),
+  };
+}
+
+function createCompanySettingsExport(settings) {
+  return {
+    backupVersion,
+    exportedAt: new Date().toISOString(),
+    source: backupSource,
+    type: "company_settings",
+    storageKey: companySettingsStorageKey,
+    companySettings: cloneObject(settings),
+  };
+}
+
+function createFullAppBackup(proposals, settings) {
+  return {
+    backupVersion,
+    exportedAt: new Date().toISOString(),
+    source: backupSource,
+    type: "full_app_backup",
+    storageKeys: {
+      proposals: storageKey,
+      companySettings: companySettingsStorageKey,
+    },
+    proposals: cloneObject(proposals),
+    companySettings: cloneObject(settings),
+  };
+}
+
+function downloadJsonFile(payload, fileName) {
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+}
+
+function readJsonFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onerror = () => reject(new Error("Could not read the selected file."));
+    reader.onload = () => {
+      try {
+        resolve(JSON.parse(String(reader.result || "")));
+      } catch {
+        reject(new Error("The selected file is not valid JSON."));
+      }
+    };
+    reader.readAsText(file);
+  });
+}
+
+function parseSingleProposalImport(importedJson, existingProposals = []) {
+  const proposal = importedJson?.proposal || importedJson;
+
+  if (!isPlainObject(proposal) || !isProposalLike(proposal)) {
+    throw new Error("This file does not look like a proposal backup.");
+  }
+
+  return resolveImportedProposalIdentity(createEditableProposal(proposal), existingProposals);
+}
+
+function parseProposalCollectionImport(importedJson) {
+  const proposals = Array.isArray(importedJson) ? importedJson : importedJson?.proposals;
+
+  if (!Array.isArray(proposals)) {
+    throw new Error("This file does not include a proposals array.");
+  }
+
+  const normalizedProposals = proposals.filter(isProposalLike).map((proposal) => createEditableProposal(proposal));
+
+  if (normalizedProposals.length === 0) {
+    throw new Error("No valid proposals were found in the selected file.");
+  }
+
+  return normalizedProposals;
+}
+
+function parseCompanySettingsImport(importedJson) {
+  const settings = importedJson?.companySettings || importedJson;
+
+  if (!isPlainObject(settings)) {
+    throw new Error("This file does not include company settings.");
+  }
+
+  return normalizeCompanySettings(settings);
+}
+
+function parseFullAppBackupImport(importedJson) {
+  if (!isPlainObject(importedJson) || (!Array.isArray(importedJson.proposals) && !isPlainObject(importedJson.companySettings))) {
+    throw new Error("This file does not look like a full app backup.");
+  }
+
+  return {
+    proposals: parseProposalCollectionImport(importedJson),
+    companySettings: parseCompanySettingsImport(importedJson.companySettings || importedJson),
+  };
+}
+
+function mergeOrReplaceImportedProposals(importedProposals, existingProposals, mode, label) {
+  if (mode === "replace") {
+    const confirmed = window.confirm(`Replace existing proposals with ${label}? This cannot be undone unless you have a backup.`);
+
+    if (!confirmed) {
+      return null;
+    }
+
+    return importedProposals.map((proposal) => createEditableProposal(proposal));
+  }
+
+  return importedProposals.reduce((proposals, proposal) => {
+    const resolvedProposal = resolveImportedProposalIdentity(createEditableProposal(proposal), proposals);
+    return upsertProposal(proposals, resolvedProposal);
+  }, existingProposals);
+}
+
+function resolveImportedProposalIdentity(proposal, existingProposals = []) {
+  const existingIds = new Set(existingProposals.map((item) => item.id));
+  const existingNumbers = new Set(existingProposals.map((item) => item.proposalNumber).filter(Boolean));
+  const importedProposal = createEditableProposal({
+    ...proposal,
+    updatedAt: new Date().toISOString(),
+  });
+
+  if (!importedProposal.id || existingIds.has(importedProposal.id)) {
+    importedProposal.id = createProposalId();
+  }
+
+  if (!importedProposal.proposalNumber || existingNumbers.has(importedProposal.proposalNumber)) {
+    importedProposal.proposalNumber = getNextProposalNumber(existingProposals, new Date(importedProposal.proposalDate || Date.now()));
+  }
+
+  return importedProposal;
+}
+
+function isProposalLike(value) {
+  return (
+    isPlainObject(value) &&
+    (isPlainObject(value.client) ||
+      isPlainObject(value.project) ||
+      Array.isArray(value.lineItems) ||
+      hasTextValue(value.proposalNumber) ||
+      hasTextValue(value.id))
+  );
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function getBackupDateStamp() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getCurrentProposalBackupFileName(proposal) {
+  return `Last_Yard_Proposal_${sanitizeFileName(proposal.proposalNumber || "Current")}.json`;
+}
+
+function getAllProposalsBackupFileName() {
+  return `Last_Yard_All_Proposals_Backup_${getBackupDateStamp()}.json`;
+}
+
+function getCompanySettingsBackupFileName() {
+  return `Last_Yard_Company_Settings_${getBackupDateStamp()}.json`;
+}
+
+function getFullBackupFileName() {
+  return `Last_Yard_Full_Backup_${getBackupDateStamp()}.json`;
+}
+
+function sanitizeFileName(value) {
+  return String(value || "Backup")
+    .replace(/[^a-z0-9_-]+/gi, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function createSeedProposal(companySettings = getDefaultCompanySettings()) {
