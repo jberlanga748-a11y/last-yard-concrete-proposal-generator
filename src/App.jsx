@@ -7,6 +7,7 @@ import {
   calculateProposalTotals,
   formatCurrency,
   generateProposalNumber,
+  validateProposalCompleteness,
 } from "./proposalData.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
@@ -38,10 +39,12 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [saveMessage, setSaveMessage] = useState("");
+  const [validationNotice, setValidationNotice] = useState("");
   const company = proposalDraft.company;
   const isListView = route.view === "list";
   const isPrintView = route.view === "print";
   const isSettingsView = route.view === "settings";
+  const proposalValidation = validateProposalCompleteness(proposalDraft);
 
   useEffect(() => {
     saveStoredProposals(savedProposals);
@@ -73,7 +76,46 @@ export default function App() {
 
   useEffect(() => {
     setSaveMessage("");
+    setValidationNotice("");
   }, [route.path]);
+
+  useEffect(() => {
+    function handlePrintShortcut(event) {
+      const isPrintShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p";
+
+      if (!isPrintShortcut || isListView || isSettingsView) {
+        return;
+      }
+
+      const currentValidation = validateProposalCompleteness(proposalDraft);
+
+      if (currentValidation.errors.length > 0) {
+        event.preventDefault();
+        setValidationNotice("Fix required fields before printing.");
+      }
+    }
+
+    window.addEventListener("keydown", handlePrintShortcut);
+    return () => window.removeEventListener("keydown", handlePrintShortcut);
+  }, [isListView, isSettingsView, proposalDraft]);
+
+  useEffect(() => {
+    if (validationNotice && proposalValidation.errors.length === 0) {
+      setValidationNotice("");
+    }
+  }, [proposalValidation.errors.length, validationNotice]);
+
+  function canCompleteProposal(action) {
+    const currentValidation = validateProposalCompleteness(proposalDraft);
+
+    if (currentValidation.errors.length > 0) {
+      setValidationNotice(`Fix required fields before ${action}.`);
+      return false;
+    }
+
+    setValidationNotice("");
+    return true;
+  }
 
   function updateProposalField(path, value) {
     setProposalDraft((currentProposal) => {
@@ -139,6 +181,10 @@ export default function App() {
   }
 
   function saveCurrentProposal() {
+    if (!canCompleteProposal("saving")) {
+      return;
+    }
+
     const proposalToSave = createEditableProposal({
       ...proposalDraft,
       updatedAt: new Date().toISOString(),
@@ -151,6 +197,22 @@ export default function App() {
     if (route.view === "new") {
       navigate(`/proposals/${proposalToSave.id}`, { proposal: proposalToSave, replace: true });
     }
+  }
+
+  function printCurrentProposal() {
+    if (!canCompleteProposal("printing")) {
+      return;
+    }
+
+    window.print();
+  }
+
+  function openPrintView() {
+    if (!canCompleteProposal("opening the print view")) {
+      return;
+    }
+
+    navigate(`/proposals/${proposalDraft.id}/print`, { proposal: proposalDraft });
   }
 
   function duplicateCurrentProposal(proposal = proposalDraft) {
@@ -340,8 +402,8 @@ export default function App() {
             <button type="button" onClick={() => navigate("/settings")}>
               Company Settings
             </button>
-            {!isListView ? (
-              <button type="button" onClick={() => window.print()}>
+            {!isListView && !isSettingsView ? (
+              <button type="button" onClick={printCurrentProposal}>
                 Print / Save PDF
               </button>
             ) : null}
@@ -377,7 +439,14 @@ export default function App() {
       ) : (
         <>
           {isPrintView ? (
-            <PrintRouteToolbar onBackToList={() => navigate("/proposals")} onPrint={() => window.print()} />
+            <>
+              <PrintRouteToolbar onBackToList={() => navigate("/proposals")} onPrint={printCurrentProposal} />
+              <ValidationPanel
+                className="print-route-validation"
+                notice={validationNotice}
+                validation={proposalValidation}
+              />
+            </>
           ) : (
             <ProposalActionBar
               isPrintView={isPrintView}
@@ -385,7 +454,7 @@ export default function App() {
               saveMessage={saveMessage}
               onBackToList={() => navigate("/proposals")}
               onDuplicate={() => duplicateCurrentProposal(proposalDraft)}
-              onOpenPrintView={() => navigate(`/proposals/${proposalDraft.id}/print`, { proposal: proposalDraft })}
+              onOpenPrintView={openPrintView}
               onSave={saveCurrentProposal}
               onStatusChange={updateCurrentStatus}
             />
@@ -409,6 +478,8 @@ export default function App() {
                 onConcreteSpecChange={updateConcreteSpec}
                 onGcPrimeChange={updateGcPrimeField}
                 onProjectPhotoChange={updateProjectPhoto}
+                validation={proposalValidation}
+                validationNotice={validationNotice}
               />
             )}
             <div className="preview-pane">
@@ -710,6 +781,43 @@ function ProposalActionBar({
   );
 }
 
+function ValidationPanel({ className = "", notice = "", validation }) {
+  const errors = validation?.errors || [];
+  const warnings = validation?.warnings || [];
+
+  if (!notice && errors.length === 0 && warnings.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className={`validation-panel no-print ${className}`} aria-live="polite">
+      {notice ? <p className="validation-notice">{notice}</p> : null}
+
+      {errors.length > 0 ? (
+        <div className="validation-group validation-errors">
+          <h3>Required Before Save / Print</h3>
+          <ul>
+            {errors.map((error) => (
+              <li key={error}>{error}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {warnings.length > 0 ? (
+        <div className="validation-group validation-warnings">
+          <h3>Warnings</h3>
+          <ul>
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ProposalEditor({
   proposal,
   onAddLineItem,
@@ -726,12 +834,16 @@ function ProposalEditor({
   onConcreteSpecChange,
   onGcPrimeChange,
   onProjectPhotoChange,
+  validation,
+  validationNotice,
 }) {
   const proposalTotals = calculateProposalTotals(proposal);
   const isGcPrime = proposal.proposalType === "gc_prime";
 
   return (
     <aside className="editor-panel no-print" aria-label="Proposal editor">
+      <ValidationPanel notice={validationNotice} validation={validation} />
+
       <EditorSection title="Proposal Info">
         <EditorField
           label="Proposal Type"

@@ -322,6 +322,11 @@ h4 {
   font-weight: 850;
 }
 
+.print-route-validation {
+  max-width: 740px;
+  margin: 0 auto 18px;
+}
+
 .print-route-view {
   --print-route-scale: 1;
   display: block;
@@ -368,6 +373,48 @@ h4 {
   background: white;
   padding: 18px;
   box-shadow: 0 14px 34px rgba(4, 29, 47, 0.1);
+}
+
+.validation-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #c9d1dc;
+  border-left: 4px solid var(--blue);
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.validation-notice {
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.validation-group h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.validation-group ul {
+  display: grid;
+  gap: 4px;
+  margin: 7px 0 0;
+  padding-left: 17px;
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.validation-errors h3 {
+  color: #991b1b;
+}
+
+.validation-warnings h3 {
+  color: #8a5a10;
 }
 
 .editor-section {

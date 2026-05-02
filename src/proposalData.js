@@ -311,6 +311,81 @@ export function validateRequiredFields(proposal) {
   };
 }
 
+export function validateProposalCompleteness(proposal) {
+  const errors = [];
+  const warnings = [];
+
+  if (!proposal) {
+    return {
+      isValid: false,
+      errors: ["Open or create a proposal before saving or printing."],
+      warnings,
+    };
+  }
+
+  if (!hasText(proposal.client?.companyName) && !hasText(proposal.client?.contactName)) {
+    errors.push("Add a client/company name or contact name.");
+  }
+
+  if (!hasText(proposal.project?.name)) {
+    errors.push("Add a project name.");
+  }
+
+  if (!hasText(proposal.client?.projectAddress) && !hasText(proposal.project?.address) && !hasText(proposal.project?.location)) {
+    errors.push("Add a project address or project location.");
+  }
+
+  if (!hasUsableScopeSections(proposal.scopeSections)) {
+    errors.push("Add at least one scope section.");
+  }
+
+  if (!hasUsableLineItems(proposal.lineItems)) {
+    errors.push("Add at least one pricing line item.");
+  }
+
+  if (!hasText(proposal.proposalDate)) {
+    errors.push("Add a proposal date.");
+  }
+
+  if (!hasText(proposal.validUntil)) {
+    errors.push("Add an expiration date.");
+  }
+
+  if (!hasText(proposal.client?.email)) {
+    warnings.push("Client email is missing.");
+  }
+
+  if (!hasText(proposal.client?.phone)) {
+    warnings.push("Client phone is missing.");
+  }
+
+  if (!hasTextList(proposal.exclusions)) {
+    warnings.push("Exclusions are missing.");
+  }
+
+  if (!hasTerms(proposal.terms)) {
+    warnings.push("Terms are missing.");
+  }
+
+  if (!hasConcreteSpecs(proposal.concreteSpecs)) {
+    warnings.push("Concrete specifications are missing.");
+  }
+
+  if (!hasProjectPhotos(proposal.projectPhotos)) {
+    warnings.push("Project photos are missing.");
+  }
+
+  if ((proposal.proposalType ?? proposal.type) === "gc_prime" && !hasGcPrimeDetails(proposal.gcPrime)) {
+    warnings.push("GC / Prime contractor fields are missing.");
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+    warnings,
+  };
+}
+
 function getLineItemAmount(item) {
   if (item.amount !== undefined) {
     return toNumber(item.amount);
@@ -382,4 +457,51 @@ function requireAllowed(errors, value, allowedValues, fieldName) {
   if (!allowedValues.includes(value)) {
     errors.push(`${fieldName} must be one of: ${allowedValues.join(", ")}.`);
   }
+}
+
+function hasText(value) {
+  return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function hasTextList(value) {
+  return Array.isArray(value) && value.some((item) => hasText(item));
+}
+
+function hasUsableScopeSections(scopeSections) {
+  return (
+    Array.isArray(scopeSections) &&
+    scopeSections.some((section) => hasText(section?.title) || (Array.isArray(section?.items) && section.items.some((item) => hasText(item))))
+  );
+}
+
+function hasUsableLineItems(lineItems) {
+  return Array.isArray(lineItems) && lineItems.some((item) => hasText(item?.description));
+}
+
+function hasTerms(terms = {}) {
+  return hasText(terms.payment) || hasText(terms.depositText) || hasText(terms.progressBilling) || hasText(terms.acceptance);
+}
+
+function hasConcreteSpecs(concreteSpecs = {}) {
+  return Object.values(concreteSpecs).some((value) => {
+    if (typeof value === "boolean") {
+      return value === true;
+    }
+
+    return hasText(value);
+  });
+}
+
+function hasProjectPhotos(projectPhotos) {
+  return Array.isArray(projectPhotos) && projectPhotos.some((photo) => hasText(photo?.src));
+}
+
+function hasGcPrimeDetails(gcPrime = {}) {
+  return Object.values(gcPrime).some((value) => {
+    if (typeof value === "boolean") {
+      return value === true;
+    }
+
+    return hasText(value);
+  });
 }
