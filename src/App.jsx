@@ -40,6 +40,8 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [saveMessage, setSaveMessage] = useState("");
   const [validationNotice, setValidationNotice] = useState("");
+  const [smartPasteNotes, setSmartPasteNotes] = useState("");
+  const [smartPasteResult, setSmartPasteResult] = useState(null);
   const company = proposalDraft.company;
   const isListView = route.view === "list";
   const isPrintView = route.view === "print";
@@ -77,6 +79,7 @@ export default function App() {
   useEffect(() => {
     setSaveMessage("");
     setValidationNotice("");
+    setSmartPasteResult(null);
   }, [route.path]);
 
   useEffect(() => {
@@ -378,6 +381,26 @@ export default function App() {
     });
   }
 
+  function fillProposalFromNotes() {
+    const parsedNotes = parseProjectNotes(smartPasteNotes);
+
+    if (parsedNotes.fields.length === 0 && parsedNotes.lineItems.length === 0) {
+      setSmartPasteResult({
+        fields: [],
+        lineItemCount: 0,
+        warnings: parsedNotes.warnings.length > 0 ? parsedNotes.warnings : ["No clearly labeled proposal fields were found."],
+      });
+      return;
+    }
+
+    setProposalDraft((currentProposal) => createEditableProposal(applyParsedNotesToProposal(currentProposal, parsedNotes)));
+    setSmartPasteResult({
+      fields: parsedNotes.fields,
+      lineItemCount: parsedNotes.lineItems.length,
+      warnings: parsedNotes.warnings,
+    });
+  }
+
   return (
     <main className={`app-shell ${isPrintView ? "print-route-shell" : ""}`}>
       <style>{`
@@ -478,6 +501,10 @@ export default function App() {
                 onConcreteSpecChange={updateConcreteSpec}
                 onGcPrimeChange={updateGcPrimeField}
                 onProjectPhotoChange={updateProjectPhoto}
+                onSmartPasteFill={fillProposalFromNotes}
+                onSmartPasteNotesChange={setSmartPasteNotes}
+                smartPasteNotes={smartPasteNotes}
+                smartPasteResult={smartPasteResult}
                 validation={proposalValidation}
                 validationNotice={validationNotice}
               />
@@ -834,8 +861,12 @@ function ProposalEditor({
   onConcreteSpecChange,
   onGcPrimeChange,
   onProjectPhotoChange,
+  onSmartPasteFill,
+  onSmartPasteNotesChange,
   validation,
   validationNotice,
+  smartPasteNotes,
+  smartPasteResult,
 }) {
   const proposalTotals = calculateProposalTotals(proposal);
   const isGcPrime = proposal.proposalType === "gc_prime";
@@ -843,6 +874,13 @@ function ProposalEditor({
   return (
     <aside className="editor-panel no-print" aria-label="Proposal editor">
       <ValidationPanel notice={validationNotice} validation={validation} />
+
+      <SmartPastePanel
+        notes={smartPasteNotes}
+        result={smartPasteResult}
+        onFill={onSmartPasteFill}
+        onNotesChange={onSmartPasteNotesChange}
+      />
 
       <EditorSection title="Proposal Info">
         <EditorField
@@ -1021,6 +1059,53 @@ function ProposalEditor({
         <PricingSummary totals={proposalTotals} />
       </EditorSection>
     </aside>
+  );
+}
+
+function SmartPastePanel({ notes, result, onFill, onNotesChange }) {
+  return (
+    <EditorSection title="Paste Project Notes">
+      <p className="smart-paste-help">
+        Paste rough bid notes, takeoff notes, or GC scope notes. Review all fields before sending.
+      </p>
+      <label className="editor-field" htmlFor="smart-paste-notes">
+        <span>Project Notes</span>
+        <textarea
+          id="smart-paste-notes"
+          value={notes}
+          rows={8}
+          placeholder="Project: Settlemier Park Renovation&#10;Location: Woodburn, OR&#10;Prepared for: ABC Prime Contractors&#10;Line items:&#10;Site Prep & Excavation | 1 | LS | 3250"
+          onChange={(event) => onNotesChange(event.target.value)}
+        />
+      </label>
+      <button className="editor-add-button" type="button" onClick={onFill}>
+        Fill Proposal From Notes
+      </button>
+      {result ? <SmartPasteSummary result={result} /> : null}
+    </EditorSection>
+  );
+}
+
+function SmartPasteSummary({ result }) {
+  return (
+    <div className="smart-paste-summary" aria-live="polite">
+      <strong>Smart Paste Summary</strong>
+      <ul>
+        <li>{result.fields.length} fields updated</li>
+        <li>{result.lineItemCount} line items added</li>
+        {result.fields.length > 0 ? <li>Updated: {result.fields.join(", ")}</li> : null}
+      </ul>
+      {result.warnings.length > 0 ? (
+        <div className="smart-paste-warnings">
+          <span>Warnings</span>
+          <ul>
+            {result.warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -2640,6 +2725,322 @@ function getDefaultGcPrime() {
     changeOrderProcess: "",
     rfiClarificationNotes: "",
   };
+}
+
+function parseProjectNotes(notes) {
+  const sections = collectSmartPasteSections(notes);
+  const values = {};
+  const fields = [];
+  const warnings = [];
+
+  function setTextValue(key, sectionKey, label) {
+    const value = getSectionText(sections, sectionKey);
+
+    if (!hasTextValue(value)) {
+      return;
+    }
+
+    values[key] = value;
+    fields.push(label);
+  }
+
+  setTextValue("projectName", "projectName", "project name");
+  setTextValue("projectLocation", "projectLocation", "project location");
+  setTextValue("clientCompany", "clientCompany", "client/company");
+  setTextValue("contactName", "contactName", "contact name");
+  setTextValue("clientPhone", "clientPhone", "client phone");
+  setTextValue("clientEmail", "clientEmail", "client email");
+  setTextValue("billingAddress", "billingAddress", "billing address");
+  setTextValue("projectAddress", "projectAddress", "project address");
+  setTextValue("schedule", "schedule", "schedule");
+  setTextValue("terms", "terms", "terms");
+
+  const proposalType = normalizeSmartProposalType(getSectionText(sections, "proposalType"));
+
+  if (proposalType) {
+    values.proposalType = proposalType;
+    fields.push("proposal type");
+  }
+
+  const scopeItems = splitSmartPasteList(getSectionText(sections, "scope"));
+
+  if (scopeItems.length > 0) {
+    values.scopeItems = scopeItems;
+    fields.push("scope");
+  }
+
+  const exclusions = splitSmartPasteList(getSectionText(sections, "exclusions"));
+
+  if (exclusions.length > 0) {
+    values.exclusions = exclusions;
+    fields.push("exclusions");
+  }
+
+  const assumptions = splitSmartPasteList(getSectionText(sections, "assumptions"));
+
+  if (assumptions.length > 0) {
+    values.assumptions = assumptions;
+    fields.push("assumptions");
+  }
+
+  const lineItems = parseSmartPasteLineItems(sections.lineItems || [], warnings);
+
+  if ((sections.lineItems || []).length > 0 && lineItems.length === 0) {
+    warnings.push("Line items were found, but none matched Description | Quantity | Unit | Unit Price.");
+  }
+
+  if (fields.length === 0 && lineItems.length === 0 && hasTextValue(notes)) {
+    warnings.push("Use clear labels like Project:, Prepared for:, Scope:, or Line items: for best results.");
+  }
+
+  return {
+    fields: [...new Set(fields)],
+    lineItems,
+    values,
+    warnings: [...new Set(warnings)],
+  };
+}
+
+function applyParsedNotesToProposal(proposal, parsedNotes) {
+  const nextProposal = cloneObject(proposal);
+  const values = parsedNotes.values;
+
+  if (values.projectName) {
+    nextProposal.project.name = values.projectName;
+  }
+
+  if (values.projectLocation) {
+    nextProposal.project.location = values.projectLocation;
+  }
+
+  if (values.clientCompany) {
+    nextProposal.client.companyName = values.clientCompany;
+  }
+
+  if (values.contactName) {
+    nextProposal.client.contactName = values.contactName;
+  }
+
+  if (values.clientPhone) {
+    nextProposal.client.phone = values.clientPhone;
+  }
+
+  if (values.clientEmail) {
+    nextProposal.client.email = values.clientEmail;
+  }
+
+  if (values.billingAddress) {
+    nextProposal.client.billingAddress = values.billingAddress;
+    nextProposal.client.address = values.billingAddress;
+  }
+
+  if (values.projectAddress) {
+    nextProposal.client.projectAddress = values.projectAddress;
+    nextProposal.project.address = values.projectAddress;
+  }
+
+  if (values.schedule) {
+    nextProposal.project.estimatedDuration = values.schedule;
+    nextProposal.project.proposedSchedule = {
+      ...(nextProposal.project.proposedSchedule || {}),
+      display: values.schedule,
+    };
+  }
+
+  if (values.proposalType) {
+    nextProposal.proposalType = values.proposalType;
+    nextProposal.type = values.proposalType;
+  }
+
+  if (values.scopeItems) {
+    nextProposal.scopeSections = [
+      {
+        title: "Scope of Work",
+        items: values.scopeItems,
+      },
+    ];
+  }
+
+  if (values.exclusions) {
+    nextProposal.exclusions = values.exclusions;
+  }
+
+  if (values.assumptions) {
+    nextProposal.assumptions = values.assumptions;
+  }
+
+  if (values.terms) {
+    nextProposal.terms = {
+      ...nextProposal.terms,
+      payment: values.terms,
+    };
+  }
+
+  if (parsedNotes.lineItems.length > 0) {
+    nextProposal.lineItems = parsedNotes.lineItems;
+  }
+
+  return nextProposal;
+}
+
+function collectSmartPasteSections(notes) {
+  const sections = {};
+  const lines = String(notes || "").split(/\r?\n/);
+  let activeKey = "";
+  const multiLineKeys = new Set(["scope", "exclusions", "assumptions", "terms", "lineItems"]);
+
+  lines.forEach((rawLine) => {
+    const line = rawLine.trim();
+
+    if (!line) {
+      return;
+    }
+
+    const labelMatch = line.match(/^([^:]+):\s*(.*)$/);
+
+    if (labelMatch) {
+      const key = getSmartPasteLabelKey(labelMatch[1]);
+
+      if (key) {
+        activeKey = key;
+        appendSmartPasteSection(sections, key, labelMatch[2]);
+        return;
+      }
+    }
+
+    if (activeKey === "lineItems" || line.includes("|")) {
+      activeKey = "lineItems";
+      appendSmartPasteSection(sections, "lineItems", line);
+      return;
+    }
+
+    if (multiLineKeys.has(activeKey)) {
+      appendSmartPasteSection(sections, activeKey, line);
+    }
+  });
+
+  return sections;
+}
+
+function getSmartPasteLabelKey(label) {
+  const normalizedLabel = label.trim().toLowerCase().replace(/\s+/g, " ");
+  const labels = {
+    address: "billingAddress",
+    assumptions: "assumptions",
+    client: "clientCompany",
+    contact: "contactName",
+    email: "clientEmail",
+    exclusions: "exclusions",
+    "line items": "lineItems",
+    "line item": "lineItems",
+    location: "projectLocation",
+    phone: "clientPhone",
+    "prepared for": "clientCompany",
+    project: "projectName",
+    "project address": "projectAddress",
+    "project location": "projectLocation",
+    "project name": "projectName",
+    "proposal type": "proposalType",
+    schedule: "schedule",
+    scope: "scope",
+    terms: "terms",
+  };
+
+  return labels[normalizedLabel] || "";
+}
+
+function appendSmartPasteSection(sections, key, value) {
+  const textValue = String(value || "").trim();
+
+  if (!textValue) {
+    return;
+  }
+
+  if (!sections[key]) {
+    sections[key] = [];
+  }
+
+  sections[key].push(textValue);
+}
+
+function getSectionText(sections, key) {
+  return (sections[key] || []).join("\n").trim();
+}
+
+function splitSmartPasteList(value) {
+  return String(value || "")
+    .split(/\r?\n|,|;/)
+    .map((item) => item.replace(/^[-*•]\s*/, "").trim())
+    .filter(Boolean)
+    .map((item) => item.charAt(0).toUpperCase() + item.slice(1));
+}
+
+function parseSmartPasteLineItems(lines, warnings) {
+  return lines
+    .map((line) => parseSmartPasteLineItem(line, warnings))
+    .filter(Boolean)
+    .map((item, index) => ({ ...item, itemNumber: String(index + 1) }));
+}
+
+function parseSmartPasteLineItem(line, warnings) {
+  const parts = String(line)
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length < 4) {
+    if (hasTextValue(line)) {
+      warnings.push(`Skipped line item "${line}" because it does not use Description | Quantity | Unit | Unit Price.`);
+    }
+
+    return null;
+  }
+
+  const lineParts = parts.length >= 5 && /^\d+$/.test(parts[0]) ? parts.slice(1) : parts;
+  const [description, quantityText, unitText, unitPriceText] = lineParts;
+  const quantity = toEditableNumber(quantityText);
+  const unitPrice = toEditableNumber(unitPriceText);
+  const unit = String(unitText || "").trim().toUpperCase();
+
+  if (!hasTextValue(description) || quantity <= 0 || !LINE_ITEM_UNITS.includes(unit) || unitPrice < 0) {
+    warnings.push(`Skipped line item "${line}" because quantity, unit, or unit price could not be parsed.`);
+    return null;
+  }
+
+  return {
+    itemNumber: "",
+    description,
+    quantity,
+    unit,
+    unitPrice,
+    taxable: true,
+  };
+}
+
+function normalizeSmartProposalType(value) {
+  const textValue = String(value || "").toLowerCase();
+
+  if (!textValue) {
+    return "";
+  }
+
+  if (textValue.includes("gc") || textValue.includes("prime")) {
+    return "gc_prime";
+  }
+
+  if (textValue.includes("residential")) {
+    return "residential";
+  }
+
+  if (textValue.includes("public") || textValue.includes("municipal")) {
+    return "public_municipal";
+  }
+
+  if (textValue.includes("commercial")) {
+    return "commercial";
+  }
+
+  return "";
 }
 
 function toEditableNumber(value) {

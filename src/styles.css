@@ -474,6 +474,46 @@ h4 {
   resize: vertical;
 }
 
+.smart-paste-help {
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.smart-paste-summary {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #c9d1dc;
+  border-left: 4px solid var(--blue);
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 10px;
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.smart-paste-summary strong,
+.smart-paste-warnings span {
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.smart-paste-summary ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.smart-paste-warnings {
+  display: grid;
+  gap: 4px;
+}
+
+.smart-paste-warnings span {
+  color: #8a5a10;
+}
+
 .editor-field input:focus,
 .editor-field select:focus,
 .editor-field textarea:focus {
