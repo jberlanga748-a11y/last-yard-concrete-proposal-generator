@@ -610,6 +610,67 @@ h4 {
   object-position: center;
 }
 
+.plan-sheet-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.plan-sheet-editor-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.plan-sheet-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.plan-sheet-editor-wide {
+  grid-column: span 2;
+}
+
+.plan-sheet-upload-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.plan-sheet-image-preview {
+  display: grid;
+  min-height: 120px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px dashed #bfc7d1;
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0 1px, transparent 1px 14px),
+    linear-gradient(135deg, #f8fafc, #d9dee5);
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.plan-sheet-image-preview img {
+  width: 100%;
+  height: 140px;
+  display: block;
+  object-fit: cover;
+  object-position: center;
+}
+
+.plan-sheet-upload-controls {
+  display: grid;
+  gap: 10px;
+}
+
 .scope-builder {
   display: grid;
   gap: 12px;
@@ -1866,6 +1927,317 @@ h4 {
   padding-left: 26px;
 }
 
+.appendix-reference {
+  margin: 8px 32px 0;
+  border-left: 3px solid var(--gold);
+  background: #f8fafc;
+  padding: 6px 10px;
+  color: var(--ink);
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.appendix-reference p + p {
+  margin-top: 3px;
+}
+
+.appendix-page {
+  min-height: 1055px;
+  overflow: hidden;
+}
+
+.appendix-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  background: var(--navy);
+  color: white;
+  padding: 28px 34px;
+}
+
+.appendix-header p,
+.appendix-header span {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.appendix-header h2 {
+  margin-top: 5px;
+  color: white;
+  font-size: 30px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.appendix-header strong {
+  display: block;
+  max-width: 280px;
+  margin-top: 5px;
+  font-size: 14px;
+  text-align: right;
+}
+
+.appendix-body {
+  display: grid;
+  gap: 20px;
+  padding: 28px 34px;
+}
+
+.appendix-section {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.appendix-section h3 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.appendix-section h3::after {
+  content: "";
+  height: 2px;
+  flex: 1;
+  background: var(--gold);
+}
+
+.appendix-two-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 30px;
+  margin-top: 14px;
+}
+
+.appendix-list-group h4 {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.appendix-list-group ul {
+  margin-top: 6px;
+  padding-left: 18px;
+  color: var(--body);
+  font-size: 11.5px;
+  line-height: 1.42;
+}
+
+.appendix-text {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.appendix-table {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+  color: var(--body);
+  font-size: 11px;
+}
+
+.appendix-table th {
+  background: var(--navy);
+  color: white;
+  padding: 7px;
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.appendix-table td {
+  border: 1px solid var(--line);
+  padding: 6px 7px;
+  vertical-align: top;
+}
+
+.appendix-table th:nth-child(n + 3),
+.appendix-table td:nth-child(n + 3),
+.appendix-table th:last-child,
+.appendix-table td:last-child {
+  text-align: right;
+}
+
+.appendix-table tfoot td {
+  background: #f8fafc;
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.appendix-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  padding: 12px 34px;
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.plan-sheet-page {
+  min-height: 1055px;
+  overflow: hidden;
+}
+
+.plan-sheet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  background: var(--navy);
+  color: white;
+  padding: 24px 30px;
+}
+
+.plan-sheet-header p,
+.plan-sheet-header span {
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.plan-sheet-header h2 {
+  margin-top: 5px;
+  color: white;
+  font-size: 24px;
+  font-weight: 950;
+  letter-spacing: 0.035em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.plan-sheet-header span {
+  display: block;
+  max-width: 260px;
+  text-align: right;
+}
+
+.plan-sheet-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.38fr);
+  gap: 20px;
+  flex: 1;
+  padding: 24px 30px 18px;
+}
+
+.plan-sheet-image-area {
+  overflow: hidden;
+  border: 1px solid #bfc7d1;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.plan-sheet-image-area img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  object-position: center;
+  background: white;
+}
+
+.plan-sheet-placeholder {
+  display: grid;
+  height: 100%;
+  min-height: 720px;
+  place-items: center;
+  background:
+    linear-gradient(135deg, rgba(6, 43, 69, 0.05) 0 1px, transparent 1px 18px),
+    linear-gradient(135deg, #ffffff, #eef2f6);
+  color: var(--blue);
+}
+
+.plan-sheet-placeholder span {
+  border: 1px dashed #9aa7b5;
+  border-radius: 8px;
+  padding: 13px 18px;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.plan-sheet-notes {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.plan-notes-box {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+
+.plan-notes-box h3 {
+  border-bottom: 3px solid var(--gold);
+  background: var(--blue);
+  color: white;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.plan-notes-box ul {
+  margin: 0;
+  padding: 12px 14px 14px 28px;
+  color: var(--body);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.plan-notes-box li + li {
+  margin-top: 6px;
+}
+
+.plan-notes-box p {
+  padding: 12px 14px;
+  color: #556171;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.clarification-box h3 {
+  background: var(--navy);
+}
+
+.plan-sheet-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  padding: 12px 30px;
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 850;
+}
+
 @media (max-width: 1180px) {
   .proposal-workbench {
     grid-template-columns: 1fr;
@@ -1944,8 +2316,14 @@ h4 {
   .trust-grid,
   .signature-grid,
   .full-footer,
-  .footer-details {
+  .footer-details,
+  .plan-sheet-editor-grid,
+  .plan-sheet-upload-row {
     grid-template-columns: 1fr;
+  }
+
+  .plan-sheet-editor-wide {
+    grid-column: auto;
   }
 
   .print-bar,
@@ -2121,6 +2499,143 @@ h4 {
   .proposal-page:last-child {
     break-after: auto;
     page-break-after: auto;
+  }
+
+  .proposal-page.appendix-page {
+    width: 8.5in;
+    height: auto;
+    min-height: 11in;
+    max-height: none;
+    overflow: visible;
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .appendix-header {
+    padding: 20px 28px;
+  }
+
+  .appendix-header h2 {
+    font-size: 24px;
+  }
+
+  .appendix-header p,
+  .appendix-header span {
+    font-size: 8.8px;
+  }
+
+  .appendix-header strong {
+    font-size: 11px;
+  }
+
+  .appendix-body {
+    gap: 14px;
+    padding: 20px 28px;
+  }
+
+  .appendix-section h3 {
+    font-size: 12px;
+  }
+
+  .appendix-section {
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .appendix-two-column {
+    gap: 12px 22px;
+    margin-top: 9px;
+  }
+
+  .appendix-list-group h4 {
+    font-size: 9.5px;
+  }
+
+  .appendix-list-group ul,
+  .appendix-text {
+    font-size: 9.5px;
+    line-height: 1.32;
+  }
+
+  .appendix-table {
+    font-size: 8.5px;
+  }
+
+  .appendix-table th {
+    padding: 4px 5px;
+    font-size: 7px;
+  }
+
+  .appendix-table td {
+    padding: 4px 5px;
+  }
+
+  .appendix-footer {
+    padding: 8px 28px;
+    font-size: 8.5px;
+  }
+
+  .proposal-page.plan-sheet-page {
+    width: 8.5in;
+    height: 11in;
+    min-height: 11in;
+    max-height: 11in;
+    overflow: hidden;
+  }
+
+  .plan-sheet-header {
+    padding: 18px 26px;
+  }
+
+  .plan-sheet-header h2 {
+    font-size: 18px;
+  }
+
+  .plan-sheet-header p,
+  .plan-sheet-header span {
+    font-size: 7.8px;
+  }
+
+  .plan-sheet-body {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 0.36fr);
+    gap: 14px;
+    padding: 18px 26px 12px;
+  }
+
+  .plan-sheet-placeholder {
+    min-height: 0;
+  }
+
+  .plan-sheet-placeholder span {
+    padding: 9px 12px;
+    font-size: 8.2px;
+  }
+
+  .plan-notes-box h3 {
+    border-bottom-width: 2px;
+    padding: 7px 9px;
+    font-size: 8.8px;
+  }
+
+  .plan-notes-box ul {
+    padding: 8px 10px 10px 20px;
+    font-size: 8.4px;
+    line-height: 1.28;
+  }
+
+  .plan-notes-box li + li {
+    margin-top: 4px;
+  }
+
+  .plan-notes-box p {
+    padding: 8px 10px;
+    font-size: 8.2px;
+    line-height: 1.28;
+  }
+
+  .plan-sheet-footer {
+    padding: 8px 26px;
+    font-size: 8px;
   }
 
   .cover-inner {

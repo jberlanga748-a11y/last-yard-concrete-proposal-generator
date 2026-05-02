@@ -28,6 +28,88 @@ const defaultProjectPhotos = [
   { label: "Control Joints", src: "" },
 ];
 
+const PLAN_SHEET_PAGE_TYPES = ["plan_takeoff_sheet", "detail_notes", "shade_footing_estimate", "general_backup"];
+
+const defaultPlanSheets = [
+  {
+    matchKey: "l102",
+    enabled: false,
+    pageType: "plan_takeoff_sheet",
+    title: "Plan Takeoff Sheet - L102 Materials Plan West",
+    subtitle: "L102 Materials Plan West",
+    imageSrc: "",
+    calculationTitle: "L102 Takeoff Basis",
+    calculationNotes: [],
+    clarificationNotes: [],
+  },
+  {
+    matchKey: "l103",
+    enabled: false,
+    pageType: "plan_takeoff_sheet",
+    title: "Plan Takeoff Sheet - L103 Materials Plan East",
+    subtitle: "L103 Materials Plan East",
+    imageSrc: "",
+    calculationTitle: "L103 Takeoff Basis",
+    calculationNotes: [],
+    clarificationNotes: [],
+  },
+  {
+    matchKey: "l104",
+    enabled: false,
+    pageType: "plan_takeoff_sheet",
+    title: "Plan Takeoff Sheet - L104 Materials Play Area Enlargement",
+    subtitle: "L104 Materials Play Area Enlargement",
+    imageSrc: "",
+    calculationTitle: "L104 Takeoff Basis",
+    calculationNotes: [],
+    clarificationNotes: [],
+  },
+  {
+    matchKey: "sport-courts-l203",
+    enabled: false,
+    pageType: "plan_takeoff_sheet",
+    title: "Plan Takeoff Sheet - Sport Courts / L203",
+    subtitle: "Sport Courts / L203",
+    imageSrc: "",
+    calculationTitle: "Sport Court Alternate",
+    calculationNotes: [],
+    clarificationNotes: [],
+  },
+  {
+    matchKey: "l601",
+    enabled: false,
+    pageType: "detail_notes",
+    title: "L601 Detail Notes",
+    subtitle: "Construction Detail Notes",
+    imageSrc: "",
+    calculationTitle: "Detail Notes",
+    calculationNotes: [],
+    clarificationNotes: [],
+  },
+  {
+    matchKey: "l602",
+    enabled: false,
+    pageType: "detail_notes",
+    title: "L602 Fence / Site Furnishing Notes",
+    subtitle: "Fence / Site Furnishing Notes",
+    imageSrc: "",
+    calculationTitle: "Detail Notes",
+    calculationNotes: [],
+    clarificationNotes: [],
+  },
+  {
+    matchKey: "shade-footing-estimate",
+    enabled: false,
+    pageType: "shade_footing_estimate",
+    title: "Shade Footing Estimate",
+    subtitle: "Concrete Footing Backup",
+    imageSrc: "",
+    calculationTitle: "Estimate Basis",
+    calculationNotes: [],
+    clarificationNotes: [],
+  },
+];
+
 export default function App() {
   const [companySettings, setCompanySettings] = useState(() => loadCompanySettings());
   const [settingsDraft, setSettingsDraft] = useState(() => loadCompanySettings());
@@ -418,21 +500,62 @@ export default function App() {
     });
   }
 
+  function updatePlanSheet(index, field, value) {
+    setProposalDraft((currentProposal) => {
+      const planSheets = normalizePlanSheets(currentProposal.planSheets).map((sheet, sheetIndex) =>
+        sheetIndex === index ? { ...sheet, [field]: value } : sheet,
+      );
+
+      return { ...currentProposal, planSheets };
+    });
+  }
+
+  function addPlanSheet() {
+    setProposalDraft((currentProposal) => ({
+      ...currentProposal,
+      planSheets: [
+        ...normalizePlanSheets(currentProposal.planSheets),
+        {
+          id: createProposalId(),
+          matchKey: `custom-${Date.now()}`,
+          enabled: true,
+          pageType: "general_backup",
+          title: "General Backup",
+          subtitle: "",
+          imageSrc: "",
+          calculationTitle: "Backup Notes",
+          calculationNotes: [],
+          clarificationNotes: [],
+        },
+      ],
+    }));
+  }
+
+  function removePlanSheet(index) {
+    setProposalDraft((currentProposal) => ({
+      ...currentProposal,
+      planSheets: normalizePlanSheets(currentProposal.planSheets).filter((_, sheetIndex) => sheetIndex !== index),
+    }));
+  }
+
   function fillProposalFromNotes() {
     const parsedNotes = parseProjectNotes(smartPasteNotes);
     const parsedLineItemCount = parsedNotes.lineItems.length + (parsedNotes.values.baseBidLineItem ? 1 : 0);
     const parsedPricingSectionCount = parsedNotes.pricingSectionCount || 0;
+    const parsedPlanSheetCount = parsedNotes.planSheetCount || 0;
 
     if (
       parsedNotes.fields.length === 0 &&
       parsedNotes.lineItems.length === 0 &&
       parsedPricingSectionCount === 0 &&
+      parsedPlanSheetCount === 0 &&
       parsedNotes.sectionsCaptured.length === 0
     ) {
       setSmartPasteResult({
         fields: [],
         lineItemCount: 0,
         pricingSectionCount: 0,
+        planSheetCount: 0,
         sectionsCaptured: [],
         warnings: parsedNotes.warnings.length > 0 ? parsedNotes.warnings : ["No clearly labeled proposal fields were found."],
       });
@@ -444,6 +567,7 @@ export default function App() {
       fields: parsedNotes.fields,
       lineItemCount: parsedLineItemCount,
       pricingSectionCount: parsedPricingSectionCount,
+      planSheetCount: parsedPlanSheetCount,
       sectionsCaptured: parsedNotes.sectionsCaptured,
       warnings: parsedNotes.warnings,
     });
@@ -552,6 +676,9 @@ export default function App() {
                 onConcreteSpecChange={updateConcreteSpec}
                 onGcPrimeChange={updateGcPrimeField}
                 onProjectPhotoChange={updateProjectPhoto}
+                onAddPlanSheet={addPlanSheet}
+                onPlanSheetChange={updatePlanSheet}
+                onRemovePlanSheet={removePlanSheet}
                 onSmartPasteFill={fillProposalFromNotes}
                 onSmartPasteNotesChange={setSmartPasteNotes}
                 smartPasteNotes={smartPasteNotes}
@@ -915,6 +1042,9 @@ function ProposalEditor({
   onConcreteSpecChange,
   onGcPrimeChange,
   onProjectPhotoChange,
+  onAddPlanSheet,
+  onPlanSheetChange,
+  onRemovePlanSheet,
   onSmartPasteFill,
   onSmartPasteNotesChange,
   validation,
@@ -1056,6 +1186,15 @@ function ProposalEditor({
         <ProjectPhotoEditor photos={proposal.projectPhotos} onPhotoChange={onProjectPhotoChange} />
       </EditorSection>
 
+      <EditorSection title="Plan Sheets / Takeoff Pages">
+        <PlanSheetEditor
+          planSheets={proposal.planSheets}
+          onAddPlanSheet={onAddPlanSheet}
+          onPlanSheetChange={onPlanSheetChange}
+          onRemovePlanSheet={onRemovePlanSheet}
+        />
+      </EditorSection>
+
       <EditorSection title="Scope of Work">
         <ScopeBuilder
           scopeSections={proposal.scopeSections}
@@ -1155,6 +1294,7 @@ function SmartPasteSummary({ result }) {
         <li>{result.fields.length} fields updated</li>
         <li>{result.lineItemCount} line items added</li>
         <li>{result.pricingSectionCount || 0} alternates / allowances added</li>
+        <li>{result.planSheetCount || 0} plan / takeoff pages updated</li>
         <li>{(result.sectionsCaptured || []).length} sections captured</li>
         {result.fields.length > 0 ? <li>Updated: {result.fields.join(", ")}</li> : null}
         {(result.sectionsCaptured || []).length > 0 ? <li>Captured: {result.sectionsCaptured.join(", ")}</li> : null}
@@ -1396,6 +1536,120 @@ function ProjectPhotoEditor({ photos, onPhotoChange }) {
           ) : null}
         </div>
       ))}
+    </div>
+  );
+}
+
+function PlanSheetEditor({ planSheets, onAddPlanSheet, onPlanSheetChange, onRemovePlanSheet }) {
+  const sheets = normalizePlanSheets(planSheets);
+
+  function handleUpload(index, file) {
+    if (!file) {
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => onPlanSheetChange(index, "imageSrc", String(reader.result || ""));
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div className="plan-sheet-editor">
+      <p className="smart-paste-help">
+        Enable only the plan and takeoff backup pages that should print with the full GC packet.
+      </p>
+      {sheets.map((sheet, index) => (
+        <div className="plan-sheet-editor-card" key={sheet.id || sheet.matchKey || `${sheet.title}-${index}`}>
+          <div className="line-item-card-header">
+            <strong>{sheet.title || `Plan Sheet ${index + 1}`}</strong>
+            {isDefaultPlanSheet(sheet) ? null : (
+              <button type="button" onClick={() => onRemovePlanSheet(index)}>
+                Remove
+              </button>
+            )}
+          </div>
+
+          <label className="editor-check">
+            <input
+              checked={Boolean(sheet.enabled)}
+              type="checkbox"
+              onChange={(event) => onPlanSheetChange(index, "enabled", event.target.checked)}
+            />
+            <span>Include this page in full packet</span>
+          </label>
+
+          <div className="plan-sheet-editor-grid">
+            <EditorField
+              label="Page Type"
+              path={`planSheets.${index}.pageType`}
+              value={sheet.pageType}
+              onChange={(_, value) => onPlanSheetChange(index, "pageType", value)}
+              options={PLAN_SHEET_PAGE_TYPES}
+            />
+            <EditorField
+              label="Sheet Subtitle"
+              path={`planSheets.${index}.subtitle`}
+              value={sheet.subtitle}
+              onChange={(_, value) => onPlanSheetChange(index, "subtitle", value)}
+            />
+            <div className="plan-sheet-editor-wide">
+              <EditorField
+                label="Sheet Title"
+                path={`planSheets.${index}.title`}
+                value={sheet.title}
+                onChange={(_, value) => onPlanSheetChange(index, "title", value)}
+              />
+            </div>
+            <div className="plan-sheet-editor-wide">
+              <EditorField
+                label="Calculation Box Title"
+                path={`planSheets.${index}.calculationTitle`}
+                value={sheet.calculationTitle}
+                onChange={(_, value) => onPlanSheetChange(index, "calculationTitle", value)}
+              />
+            </div>
+            <div className="plan-sheet-editor-wide">
+              <EditorField
+                label="Calculation Notes / Bullet List"
+                path={`planSheets.${index}.calculationNotes`}
+                value={formatEditorList(sheet.calculationNotes)}
+                onChange={(_, value) => onPlanSheetChange(index, "calculationNotes", parseEditorList(value))}
+                multiline
+              />
+            </div>
+            <div className="plan-sheet-editor-wide">
+              <EditorField
+                label="Clarification Notes / Bullet List"
+                path={`planSheets.${index}.clarificationNotes`}
+                value={formatEditorList(sheet.clarificationNotes)}
+                onChange={(_, value) => onPlanSheetChange(index, "clarificationNotes", parseEditorList(value))}
+                multiline
+              />
+            </div>
+          </div>
+
+          <div className="plan-sheet-upload-row">
+            <div className="plan-sheet-image-preview">
+              {sheet.imageSrc ? <img src={sheet.imageSrc} alt={sheet.title || "Plan sheet preview"} /> : <span>Upload plan image</span>}
+            </div>
+            <div className="plan-sheet-upload-controls">
+              <label className="editor-field">
+                <span>Plan Image Upload</span>
+                <input type="file" accept="image/*" onChange={(event) => handleUpload(index, event.target.files?.[0])} />
+              </label>
+              {sheet.imageSrc ? (
+                <button className="editor-secondary-button" type="button" onClick={() => onPlanSheetChange(index, "imageSrc", "")}>
+                  Remove plan image
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <button className="editor-add-button" type="button" onClick={onAddPlanSheet}>
+        Add plan / takeoff page
+      </button>
     </div>
   );
 }
@@ -1740,15 +1994,16 @@ function ProposalPreview({ proposal }) {
   const company = proposal.company;
   const companyCredentials = company.credentials.join(" | ");
   const isGcPrime = proposal.proposalType === "gc_prime";
-  const gcPrimeRows = isGcPrime ? buildGcPrimeRows(proposal.gcPrime) : [];
-  const scopeSplitIndex = Math.ceil(proposal.scopeSections.length / 2);
-  const scopeLeft = proposal.scopeSections.slice(0, scopeSplitIndex);
-  const scopeRight = proposal.scopeSections.slice(scopeSplitIndex);
+  const appendixPlan = buildAppendixPlan(proposal);
+  const gcPrimeRows = isGcPrime ? buildGcPrimeRows(appendixPlan.mainGcPrime) : [];
+  const scopeSplitIndex = Math.ceil(appendixPlan.mainScopeSections.length / 2);
+  const scopeLeft = appendixPlan.mainScopeSections.slice(0, scopeSplitIndex);
+  const scopeRight = appendixPlan.mainScopeSections.slice(scopeSplitIndex);
   const specRows = buildConcreteSpecRows(proposal.concreteSpecs);
   const specSplitIndex = Math.ceil(specRows.length / 2);
   const specsLeft = specRows.slice(0, specSplitIndex);
   const specsRight = specRows.slice(specSplitIndex);
-  const lineItems = proposal.lineItems.map((item, index) => {
+  const lineItems = appendixPlan.mainLineItems.map((item, index) => {
     const amount = item.amount ?? toEditableNumber(item.quantity) * toEditableNumber(item.unitPrice);
 
     return [
@@ -1763,7 +2018,9 @@ function ProposalPreview({ proposal }) {
   const proposalTotals = calculateProposalTotals(proposal);
   const totalProposalPrice = formatCurrency(proposalTotals.total);
   const termsCopy = buildTermsCopy(proposal.terms);
-  const visiblePricingSections = getVisiblePricingSections(proposal.pricingSections);
+  const visiblePricingSections = appendixPlan.mainPricingSections;
+  const planSheetPages = getEnabledPlanSheets(proposal.planSheets);
+  const firstPlanSheetPageNumber = appendixPlan.pages.length + 3;
 
   return (
     <section className="proposal-grid">
@@ -1785,6 +2042,7 @@ function ProposalPreview({ proposal }) {
           <ScopeColumn groups={scopeLeft} />
           <ScopeColumn groups={scopeRight} />
         </div>
+        {appendixPlan.scopeNeedsAppendix ? <AppendixReferenceNote message="See Appendix for detailed scope backup." /> : null}
 
         <SectionTitle icon="gear" title="Concrete Specifications" className="section-title-spaced" />
         <div className="two-column spec-grid">
@@ -1802,7 +2060,7 @@ function ProposalPreview({ proposal }) {
           <div>
             <MiniHeading icon="minus" title="Exclusions / Assumptions" />
             <ul className="bullet-list compact-list">
-              {proposal.exclusions.map((item) => (
+              {appendixPlan.mainExclusions.map((item) => (
                 <li key={item}>
                   <span />
                   {item}
@@ -1817,11 +2075,32 @@ function ProposalPreview({ proposal }) {
             <SignatureBlock companyName={company.name} />
           </div>
         </div>
+        {appendixPlan.referenceNotes.length > 0 ? <AppendixReferenceNote notes={appendixPlan.referenceNotes} /> : null}
 
         <div className="footer-push">
           <PageFooter company={company} companyCredentials={companyCredentials} />
         </div>
       </ProposalPage>
+
+      {appendixPlan.pages.map((page, index) => (
+        <AppendixPage
+          company={company}
+          key={`appendix-page-${index}`}
+          page={page}
+          pageNumber={index + 3}
+          projectName={proposal.project?.name}
+        />
+      ))}
+
+      {planSheetPages.map((sheet, index) => (
+        <PlanSheetPage
+          company={company}
+          key={sheet.id || sheet.matchKey || `plan-sheet-page-${index}`}
+          pageNumber={firstPlanSheetPageNumber + index}
+          projectName={proposal.project?.name}
+          sheet={sheet}
+        />
+      ))}
     </section>
   );
 }
@@ -1840,6 +2119,263 @@ function GcPrimeNotes({ rows }) {
         </div>
       </InfoCard>
     </section>
+  );
+}
+
+function AppendixReferenceNote({ message, notes = [] }) {
+  const noteItems = message ? [message] : notes;
+
+  if (noteItems.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="appendix-reference">
+      {noteItems.map((note) => (
+        <p key={note}>{note}</p>
+      ))}
+    </div>
+  );
+}
+
+function AppendixPage({ company, page, pageNumber, projectName }) {
+  return (
+    <ProposalPage className="appendix-page">
+      <header className="appendix-header">
+        <div>
+          <p>{company.name}</p>
+          <h2>{page.title}</h2>
+        </div>
+        <div>
+          <span>Project</span>
+          <strong>{projectName || "Proposal Appendix"}</strong>
+        </div>
+      </header>
+
+      <div className="appendix-body">
+        {page.sections.map((section) => (
+          <AppendixSection key={section.key} section={section} />
+        ))}
+      </div>
+
+      <footer className="appendix-footer">
+        <span>{company.name}</span>
+        <span>Appendix Page {pageNumber}</span>
+      </footer>
+    </ProposalPage>
+  );
+}
+
+function AppendixSection({ section }) {
+  if (section.kind === "scope") {
+    return (
+      <section className="appendix-section">
+        <h3>{section.title}</h3>
+        <div className="appendix-two-column">
+          {section.groups.map((group) => (
+            <div className="appendix-list-group" key={group.title}>
+              <h4>{group.title}</h4>
+              <ul>
+                {group.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (section.kind === "listGroups") {
+    return (
+      <section className="appendix-section">
+        <h3>{section.title}</h3>
+        <div className="appendix-two-column">
+          {section.groups.map((group) => (
+            <div className="appendix-list-group" key={group.title}>
+              <h4>{group.title}</h4>
+              <ul>
+                {group.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  if (section.kind === "takeoff") {
+    return (
+      <section className="appendix-section">
+        <h3>{section.title}</h3>
+        <AppendixLineItemTable items={section.lineItems} />
+        {section.text ? <AppendixText text={section.text} /> : null}
+      </section>
+    );
+  }
+
+  if (section.kind === "pricing") {
+    return (
+      <section className="appendix-section">
+        <h3>{section.title}</h3>
+        <AppendixPricingTable sections={section.sections} totals={section.totals} />
+      </section>
+    );
+  }
+
+  return (
+    <section className="appendix-section">
+      <h3>{section.title}</h3>
+      <AppendixText text={section.text} />
+    </section>
+  );
+}
+
+function AppendixText({ text }) {
+  return (
+    <div className="appendix-text">
+      {splitAppendixText(text).map((line, index) => (
+        <p key={`${line}-${index}`}>{line}</p>
+      ))}
+    </div>
+  );
+}
+
+function AppendixLineItemTable({ items }) {
+  return (
+    <table className="appendix-table">
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Description</th>
+          <th>Qty</th>
+          <th>Unit</th>
+          <th>Unit Price</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((item, index) => {
+          const amount = item.amount ?? toEditableNumber(item.quantity) * toEditableNumber(item.unitPrice);
+
+          return (
+            <tr key={`${item.itemNumber || index}-${item.description}`}>
+              <td>{item.itemNumber || index + 1}</td>
+              <td>{item.description}</td>
+              <td>{formatQuantity(item.quantity)}</td>
+              <td>{item.unit}</td>
+              <td>{formatCurrency(item.unitPrice)}</td>
+              <td>{formatCurrency(amount)}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function AppendixPricingTable({ sections, totals }) {
+  return (
+    <table className="appendix-table">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Label</th>
+          <th>Description</th>
+          <th>Status</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {sections.map((section, index) => (
+          <tr key={section.id || `${section.type}-${index}`}>
+            <td>{formatOptionLabel(section.type)}</td>
+            <td>{section.label}</td>
+            <td>{section.description || "-"}</td>
+            <td>{section.included ? "Included" : "Not Included"}</td>
+            <td>{formatPricingSectionAmount(section)}</td>
+          </tr>
+        ))}
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colSpan="4">Total Included Alternates / Allowances</td>
+          <td>{formatCurrency(totals.includedPricingSectionsTotal)}</td>
+        </tr>
+        <tr>
+          <td colSpan="4">Total if All Alternates Accepted</td>
+          <td>{formatCurrency(totals.totalIfAllAlternatesAccepted)}</td>
+        </tr>
+      </tfoot>
+    </table>
+  );
+}
+
+function PlanSheetPage({ company, sheet, pageNumber, projectName }) {
+  const calculationNotes = normalizePlanSheetNotes(sheet.calculationNotes);
+  const clarificationNotes = normalizePlanSheetNotes(sheet.clarificationNotes);
+
+  return (
+    <ProposalPage className="plan-sheet-page">
+      <header className="plan-sheet-header">
+        <div>
+          <p>{formatOptionLabel(sheet.pageType)}</p>
+          <h2>{sheet.title || "Plan Takeoff Sheet"}</h2>
+        </div>
+        <div>
+          <span>{sheet.subtitle || projectName || "Takeoff Backup"}</span>
+        </div>
+      </header>
+
+      <div className="plan-sheet-body">
+        <section className="plan-sheet-image-area">
+          {sheet.imageSrc ? (
+            <img src={sheet.imageSrc} alt={sheet.title || "Uploaded plan sheet"} />
+          ) : (
+            <div className="plan-sheet-placeholder">
+              <span>Upload plan image</span>
+            </div>
+          )}
+        </section>
+
+        <aside className="plan-sheet-notes">
+          <div className="plan-notes-box">
+            <h3>{sheet.calculationTitle || "Calculation Notes"}</h3>
+            {calculationNotes.length > 0 ? (
+              <ul>
+                {calculationNotes.map((note, index) => (
+                  <li key={`${note}-${index}`}>{note}</li>
+                ))}
+              </ul>
+            ) : (
+              <p>No calculation notes entered.</p>
+            )}
+          </div>
+
+          <div className="plan-notes-box clarification-box">
+            <h3>Clarifications</h3>
+            {clarificationNotes.length > 0 ? (
+              <ul>
+                {clarificationNotes.map((note, index) => (
+                  <li key={`${note}-${index}`}>{note}</li>
+                ))}
+              </ul>
+            ) : (
+              <p>No clarification notes entered.</p>
+            )}
+          </div>
+        </aside>
+      </div>
+
+      <footer className="plan-sheet-footer">
+        <span>{projectName || "Project takeoff backup"}</span>
+        <span>{company.name}</span>
+        <span>Packet Page {pageNumber}</span>
+      </footer>
+    </ProposalPage>
   );
 }
 
@@ -2655,6 +3191,80 @@ function normalizeProjectPhotos(photos = []) {
   });
 }
 
+function normalizePlanSheets(planSheets = []) {
+  const sourceSheets = Array.isArray(planSheets) ? planSheets : [];
+  const normalizedExisting = sourceSheets.map((sheet, index) => normalizePlanSheet(sheet, index));
+  const defaultSheets = defaultPlanSheets.map((sheet, index) => normalizePlanSheet(sheet, index));
+  const mergedSheets = [...normalizedExisting];
+
+  defaultSheets.forEach((defaultSheet) => {
+    const hasSheet = mergedSheets.some((sheet) => getPlanSheetMatchKey(sheet) === getPlanSheetMatchKey(defaultSheet));
+
+    if (!hasSheet) {
+      mergedSheets.push(defaultSheet);
+    }
+  });
+
+  return mergedSheets;
+}
+
+function normalizePlanSheet(sheet = {}, index = 0) {
+  const fallback = defaultPlanSheets[index] || {};
+  const pageType = PLAN_SHEET_PAGE_TYPES.includes(sheet.pageType) ? sheet.pageType : fallback.pageType || "general_backup";
+
+  return {
+    id: sheet.id || fallback.id || createProposalId(),
+    matchKey: sheet.matchKey || fallback.matchKey || createPlanSheetMatchKey(sheet.title || fallback.title || `plan-sheet-${index + 1}`),
+    enabled: Boolean(sheet.enabled),
+    pageType,
+    title: sheet.title ?? fallback.title ?? `Plan Sheet ${index + 1}`,
+    subtitle: sheet.subtitle ?? fallback.subtitle ?? "",
+    imageSrc: sheet.imageSrc ?? sheet.image ?? "",
+    calculationTitle: sheet.calculationTitle ?? fallback.calculationTitle ?? "Calculation Notes",
+    calculationNotes: normalizePlanSheetNotes(sheet.calculationNotes ?? sheet.notes ?? fallback.calculationNotes),
+    clarificationNotes: normalizePlanSheetNotes(sheet.clarificationNotes ?? fallback.clarificationNotes),
+  };
+}
+
+function normalizePlanSheetNotes(notes = []) {
+  if (Array.isArray(notes)) {
+    return notes.map((note) => String(note || "").trim()).filter(Boolean);
+  }
+
+  return parseEditorList(notes);
+}
+
+function getEnabledPlanSheets(planSheets = []) {
+  return normalizePlanSheets(planSheets).filter((sheet) => sheet.enabled);
+}
+
+function formatEditorList(items = []) {
+  return normalizePlanSheetNotes(items).join("\n");
+}
+
+function parseEditorList(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((item) => item.replace(/^[-*•]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+function createPlanSheetMatchKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function getPlanSheetMatchKey(sheet = {}) {
+  return sheet.matchKey || createPlanSheetMatchKey(sheet.title || sheet.subtitle);
+}
+
+function isDefaultPlanSheet(sheet = {}) {
+  const matchKey = getPlanSheetMatchKey(sheet);
+  return defaultPlanSheets.some((defaultSheet) => getPlanSheetMatchKey(defaultSheet) === matchKey);
+}
+
 function normalizeScopeSections(scopeSections = []) {
   if (!Array.isArray(scopeSections)) {
     return [];
@@ -2708,6 +3318,7 @@ function createEditableProposal(seedProposal) {
     },
     scopeSections: normalizeScopeSections(proposal.scopeSections),
     projectPhotos: normalizeProjectPhotos(proposal.projectPhotos),
+    planSheets: normalizePlanSheets(proposal.planSheets),
     concreteSpecs: {
       ...getDefaultConcreteSpecs(),
       ...(proposal.concreteSpecs || {}),
@@ -2808,6 +3419,312 @@ function formatPricingSectionAmount(section) {
   return section.type === "deduct_alternate" ? `-${formattedAmount}` : formattedAmount;
 }
 
+function buildAppendixPlan(proposal) {
+  const scopeSummary = buildScopeSummary(proposal.scopeSections);
+  const exclusionsSummary = buildExclusionsSummary(proposal.exclusions, proposal.assumptions);
+  const lineItemSummary = buildLineItemSummary(proposal.lineItems);
+  const pricingSummary = buildPricingSectionSummary(proposal.pricingSections);
+  const gcPrimeSummary = buildGcPrimeSummary(proposal.gcPrime || {});
+  const proposalNotes = getAppendixTextValue(proposal.proposalNotes || proposal.notes);
+  const concreteSpecNotes = getAppendixTextValue(proposal.concreteSpecs?.notes);
+  const takeoffBackupText = getAppendixTextValue(proposal.takeoffQuantityBackup || proposal.quantityBackup);
+  const proposalTotals = calculateProposalTotals(proposal);
+  const appendixSections = [];
+
+  if (scopeSummary.needsAppendix) {
+    appendixSections.push({
+      key: "detailed-scope",
+      kind: "scope",
+      title: "Detailed Scope Backup",
+      groups: proposal.scopeSections,
+    });
+  }
+
+  if (exclusionsSummary.needsAppendix) {
+    appendixSections.push({
+      key: "detailed-exclusions-assumptions",
+      kind: "listGroups",
+      title: "Detailed Exclusions / Assumptions",
+      groups: [
+        { title: "Exclusions", items: proposal.exclusions },
+        { title: "Assumptions", items: proposal.assumptions },
+      ].filter((group) => group.items.length > 0),
+    });
+  }
+
+  if (gcPrimeSummary.rfiNeedsAppendix) {
+    appendixSections.push({
+      key: "rfis-clarifications",
+      kind: "text",
+      title: "RFIs / Clarifications",
+      text: gcPrimeSummary.rfiText,
+    });
+  }
+
+  if (gcPrimeSummary.addendaNeedsAppendix) {
+    appendixSections.push({
+      key: "addenda-acknowledgement",
+      kind: "text",
+      title: "Addenda Acknowledgement",
+      text: gcPrimeSummary.addendaText,
+    });
+  }
+
+  if (proposalNotes || concreteSpecNotes || gcPrimeSummary.gcPrimeNotesText) {
+    appendixSections.push({
+      key: "proposal-notes",
+      kind: "text",
+      title: "Proposal Notes",
+      text: [proposalNotes, gcPrimeSummary.gcPrimeNotesText, concreteSpecNotes].filter(Boolean).join("\n\n"),
+    });
+  }
+
+  if (lineItemSummary.needsAppendix || takeoffBackupText) {
+    appendixSections.push({
+      key: "takeoff-quantity-backup",
+      kind: "takeoff",
+      title: "Takeoff Quantity Backup",
+      lineItems: proposal.lineItems,
+      text: takeoffBackupText,
+    });
+  }
+
+  if (pricingSummary.needsAppendix) {
+    appendixSections.push({
+      key: "alternates-allowances-detail",
+      kind: "pricing",
+      title: "Alternates / Allowances Detail",
+      sections: pricingSummary.fullSections,
+      totals: proposalTotals,
+    });
+  }
+
+  const referenceNotes = buildAppendixReferenceNotes({
+    scopeNeedsAppendix: scopeSummary.needsAppendix,
+    exclusionsNeedsAppendix: exclusionsSummary.needsAppendix,
+    lineItemsNeedAppendix: lineItemSummary.needsAppendix,
+    pricingNeedsAppendix: pricingSummary.needsAppendix,
+    hasRfiAppendix: gcPrimeSummary.rfiNeedsAppendix,
+    hasAddendaAppendix: gcPrimeSummary.addendaNeedsAppendix,
+    hasNotesAppendix: Boolean(proposalNotes || concreteSpecNotes || gcPrimeSummary.gcPrimeNotesText),
+  });
+
+  return {
+    mainScopeSections: scopeSummary.mainSections,
+    mainExclusions: exclusionsSummary.mainExclusions,
+    mainGcPrime: gcPrimeSummary.mainGcPrime,
+    mainLineItems: lineItemSummary.mainLineItems,
+    mainPricingSections: pricingSummary.mainSections,
+    scopeNeedsAppendix: scopeSummary.needsAppendix,
+    referenceNotes,
+    pages: paginateAppendixSections(appendixSections),
+  };
+}
+
+function buildScopeSummary(scopeSections = []) {
+  const totalItems = scopeSections.reduce((sum, section) => sum + (section.items?.length || 0), 0);
+  const scopeTextLength = scopeSections.reduce(
+    (sum, section) => sum + String(section.title || "").length + (section.items || []).join(" ").length,
+    0,
+  );
+  const needsAppendix = scopeSections.length > 5 || totalItems > 22 || scopeTextLength > 950;
+
+  if (!needsAppendix) {
+    return { mainSections: scopeSections, needsAppendix: false };
+  }
+
+  return {
+    needsAppendix: true,
+    mainSections: scopeSections.slice(0, 5).map((section) => ({
+      ...section,
+      items: [
+        ...(section.items || []).slice(0, 3),
+        ...((section.items || []).length > 3 ? ["Additional scope items noted in Appendix."] : []),
+      ],
+    })),
+  };
+}
+
+function buildExclusionsSummary(exclusions = [], assumptions = []) {
+  const exclusionsTextLength = exclusions.join(" ").length;
+  const assumptionsTextLength = assumptions.join(" ").length;
+  const needsAppendix =
+    exclusions.length > 6 ||
+    assumptions.length > 4 ||
+    exclusionsTextLength > 520 ||
+    assumptionsTextLength > 420;
+
+  if (!needsAppendix) {
+    return { mainExclusions: exclusions, needsAppendix: false };
+  }
+
+  return {
+    needsAppendix: true,
+    mainExclusions: [...exclusions.slice(0, 5), "See Appendix for detailed exclusions and assumptions."],
+  };
+}
+
+function buildLineItemSummary(lineItems = []) {
+  const lineItemTextLength = lineItems.map((item) => item.description).join(" ").length;
+  const needsAppendix = lineItems.length > 8 || lineItemTextLength > 760;
+
+  return {
+    needsAppendix,
+    mainLineItems: needsAppendix ? lineItems.slice(0, 8) : lineItems,
+  };
+}
+
+function buildPricingSectionSummary(pricingSections = []) {
+  const fullSections = getVisiblePricingSections(pricingSections);
+  const pricingTextLength = fullSections
+    .map((section) => `${section.label} ${section.description} ${section.amount}`)
+    .join(" ").length;
+  const needsAppendix =
+    fullSections.length >= 4 ||
+    pricingTextLength > 620 ||
+    fullSections.some((section) => String(section.description || "").length > 90);
+
+  if (!needsAppendix) {
+    return { fullSections, mainSections: fullSections, needsAppendix: false };
+  }
+
+  return {
+    fullSections,
+    needsAppendix: true,
+    mainSections: fullSections.slice(0, 4).map((section) => ({
+      ...section,
+      description: truncateText(section.description, 72),
+    })),
+  };
+}
+
+function buildGcPrimeSummary(gcPrime = {}) {
+  const rfiText = getAppendixTextValue(gcPrime.rfiClarificationNotes || gcPrime.rfiNotes);
+  const addendaText = getAppendixTextValue(gcPrime.addendaAcknowledged);
+  const gcPrimeNotesText = getAppendixTextValue(gcPrime.gcPrimeNotes);
+  const rfiNeedsAppendix = rfiText.length > 0;
+  const addendaNeedsAppendix = addendaText.length > 80 || splitAppendixText(addendaText).length > 1;
+  const mainGcPrime = {
+    ...gcPrime,
+    rfiClarificationNotes: rfiNeedsAppendix ? "See Appendix for RFI / clarification backup." : gcPrime.rfiClarificationNotes,
+    addendaAcknowledged: addendaNeedsAppendix ? "See Appendix for addenda acknowledgement." : gcPrime.addendaAcknowledged,
+  };
+
+  return {
+    mainGcPrime,
+    rfiText,
+    addendaText,
+    gcPrimeNotesText,
+    rfiNeedsAppendix,
+    addendaNeedsAppendix,
+  };
+}
+
+function buildAppendixReferenceNotes(flags) {
+  const topics = [];
+
+  if (flags.scopeNeedsAppendix) {
+    topics.push("detailed scope");
+  }
+
+  if (flags.exclusionsNeedsAppendix) {
+    topics.push("exclusions / assumptions");
+  }
+
+  if (flags.lineItemsNeedAppendix) {
+    topics.push("takeoff backup");
+  }
+
+  if (flags.pricingNeedsAppendix) {
+    topics.push("alternate detail");
+  }
+
+  if (flags.hasRfiAppendix || flags.hasAddendaAppendix || flags.hasNotesAppendix) {
+    topics.push("clarifications and proposal notes");
+  }
+
+  return topics.length > 0 ? [`See Appendix for ${formatTopicList(topics)}.`] : [];
+}
+
+function paginateAppendixSections(sections) {
+  const pages = [];
+  let currentSections = [];
+  let currentEstimate = 0;
+  const maxEstimate = 34;
+
+  sections.forEach((section) => {
+    const estimate = estimateAppendixSectionSize(section);
+
+    if (currentSections.length > 0 && currentEstimate + estimate > maxEstimate) {
+      pages.push({ title: "Proposal Appendix", sections: currentSections });
+      currentSections = [];
+      currentEstimate = 0;
+    }
+
+    currentSections.push(section);
+    currentEstimate += estimate;
+  });
+
+  if (currentSections.length > 0) {
+    pages.push({ title: "Proposal Appendix", sections: currentSections });
+  }
+
+  return pages;
+}
+
+function estimateAppendixSectionSize(section) {
+  if (section.kind === "scope") {
+    return 3 + section.groups.reduce((sum, group) => sum + 1 + (group.items?.length || 0), 0);
+  }
+
+  if (section.kind === "listGroups") {
+    return 3 + section.groups.reduce((sum, group) => sum + 1 + (group.items?.length || 0), 0);
+  }
+
+  if (section.kind === "pricing") {
+    return 5 + section.sections.length;
+  }
+
+  if (section.kind === "takeoff") {
+    return 5 + section.lineItems.length + splitAppendixText(section.text).length;
+  }
+
+  return 3 + splitAppendixText(section.text).reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / 95)), 0);
+}
+
+function formatTopicList(topics) {
+  if (topics.length <= 1) {
+    return topics[0] || "backup details";
+  }
+
+  if (topics.length === 2) {
+    return `${topics[0]} and ${topics[1]}`;
+  }
+
+  return `${topics.slice(0, -1).join(", ")}, and ${topics[topics.length - 1]}`;
+}
+
+function getAppendixTextValue(value) {
+  return value === undefined || value === null ? "" : String(value).trim();
+}
+
+function splitAppendixText(text) {
+  return getAppendixTextValue(text)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function truncateText(value, maxLength) {
+  const textValue = String(value || "").trim();
+
+  if (textValue.length <= maxLength) {
+    return textValue;
+  }
+
+  return `${textValue.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
+}
+
 function buildTermsCopy(terms) {
   const normalizedTerms = terms || {};
   const copyParts = [
@@ -2826,8 +3743,12 @@ function formatOptionLabel(value) {
     allowance: "Allowance",
     base_bid: "Base Bid",
     deduct_alternate: "Deduct Alternate",
+    detail_notes: "Detail Notes",
+    general_backup: "General Backup",
     gc_prime: "GC / Prime Contractor",
+    plan_takeoff_sheet: "Plan Takeoff Sheet",
     public_municipal: "Public / Municipal",
+    shade_footing_estimate: "Shade Footing Estimate",
     unit_price: "Unit Price",
   };
 
@@ -3026,6 +3947,7 @@ function parseProjectNotes(notes) {
 
   const lineItems = parseSmartPasteLineItems(sections.lineItems || [], warnings);
   const pricingParse = parseSmartPastePricingSections(sections.pricingSections || [], warnings);
+  const planSheetParse = normalizeSmartPastePlanSheets(sections.planSheets || []);
 
   if (pricingParse.baseBidLineItem) {
     values.baseBidLineItem = pricingParse.baseBidLineItem;
@@ -3042,6 +3964,11 @@ function parseProjectNotes(notes) {
     fields.push("total if all accepted");
   }
 
+  if (planSheetParse.length > 0) {
+    values.planSheets = planSheetParse;
+    fields.push("plan sheets / takeoff pages");
+  }
+
   if ((sections.lineItems || []).length > 0 && lineItems.length === 0) {
     warnings.push("Line items were found, but none matched Description | Quantity | Unit | Unit Price.");
   }
@@ -3054,6 +3981,7 @@ function parseProjectNotes(notes) {
     fields: [...new Set(fields)],
     lineItems,
     pricingSectionCount: pricingParse.sections.length,
+    planSheetCount: planSheetParse.length,
     sectionsCaptured: getCapturedSmartPasteLabels(sections),
     values,
     warnings: [...new Set(warnings)],
@@ -3166,6 +4094,10 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     nextProposal.pricingSections = values.pricingSections;
   }
 
+  if (values.planSheets) {
+    nextProposal.planSheets = mergePlanSheets(nextProposal.planSheets, values.planSheets);
+  }
+
   return nextProposal;
 }
 
@@ -3173,6 +4105,8 @@ function collectSmartPasteSections(notes) {
   const sections = {};
   const lines = String(notes || "").split(/\r?\n/);
   let activeKey = "";
+  let activePlanSheetIndex = -1;
+  let activePlanSheetField = "calculationNotes";
   const multiLineKeys = new Set([
     "scope",
     "exclusions",
@@ -3185,6 +4119,7 @@ function collectSmartPasteSections(notes) {
     "gcPrimeNotes",
     "concreteSpecs",
     "pricingSections",
+    "planSheets",
   ]);
   const textCaptureKeys = new Set([
     "rfiClarifications",
@@ -3204,10 +4139,32 @@ function collectSmartPasteSections(notes) {
     const labelMatch = line.match(/^([^:]+):\s*(.*)$/);
 
     if (labelMatch) {
+      const planHeading = getSmartPlanSheetHeading(labelMatch[1]);
+
+      if (planHeading) {
+        activeKey = "planSheets";
+        activePlanSheetIndex = upsertSmartPastePlanSheet(sections, planHeading);
+        activePlanSheetField = planHeading.noteField || "calculationNotes";
+        recordSmartPasteSection(sections, "planSheets");
+        appendSmartPastePlanSheetNote(sections, activePlanSheetIndex, activePlanSheetField, labelMatch[2]);
+        return;
+      }
+
+      const planSubheading = getSmartPlanSheetSubheading(labelMatch[1]);
+
+      if (planSubheading && activePlanSheetIndex >= 0) {
+        activeKey = "planSheets";
+        activePlanSheetField = planSubheading.noteField;
+        setSmartPastePlanSheetTitle(sections, activePlanSheetIndex, planSubheading);
+        appendSmartPastePlanSheetNote(sections, activePlanSheetIndex, activePlanSheetField, labelMatch[2]);
+        return;
+      }
+
       const key = getSmartPasteLabelKey(labelMatch[1]);
 
       if (key && isSmartPasteSectionHeading(labelMatch[1], key)) {
         activeKey = key;
+        activePlanSheetIndex = -1;
         recordSmartPasteSection(sections, key);
         appendSmartPasteSection(sections, key, labelMatch[2]);
         return;
@@ -3221,6 +4178,7 @@ function collectSmartPasteSections(notes) {
 
     if (isSmartPricingLine(line)) {
       activeKey = "pricingSections";
+      activePlanSheetIndex = -1;
       recordSmartPasteSection(sections, "pricingSections");
       appendSmartPasteSection(sections, "pricingSections", line);
       return;
@@ -3231,10 +4189,16 @@ function collectSmartPasteSections(notes) {
 
       if (key) {
         activeKey = key;
+        activePlanSheetIndex = -1;
         recordSmartPasteSection(sections, key);
         appendSmartPasteSection(sections, key, labelMatch[2]);
         return;
       }
+    }
+
+    if (activeKey === "planSheets" && activePlanSheetIndex >= 0) {
+      appendSmartPastePlanSheetNote(sections, activePlanSheetIndex, activePlanSheetField, line);
+      return;
     }
 
     if (activeKey === "lineItems") {
@@ -3256,6 +4220,170 @@ function collectSmartPasteSections(notes) {
   });
 
   return sections;
+}
+
+function getSmartPlanSheetHeading(label) {
+  const rawLabel = String(label || "").trim();
+  const normalizedLabel = rawLabel.toLowerCase().replace(/\s+/g, " ");
+  const codeMatch = normalizedLabel.match(/\b(l10[234]|l203|l601|l602)\b/i);
+
+  if (normalizedLabel.startsWith("plan takeoff sheet")) {
+    return getPlanHeadingFromCodeOrTitle(codeMatch?.[1], rawLabel, "plan_takeoff_sheet");
+  }
+
+  if (/^l10[234]\s+takeoff basis$/i.test(rawLabel)) {
+    const heading = getPlanHeadingFromCodeOrTitle(codeMatch?.[1], rawLabel, "plan_takeoff_sheet");
+    return { ...heading, calculationTitle: rawLabel, noteField: "calculationNotes" };
+  }
+
+  if (normalizedLabel.includes("sport court alternate")) {
+    return {
+      ...getPlanHeadingFromCodeOrTitle("sport-courts-l203", "Plan Takeoff Sheet - Sport Courts / L203", "plan_takeoff_sheet"),
+      calculationTitle: rawLabel,
+      noteField: "calculationNotes",
+    };
+  }
+
+  if (normalizedLabel.startsWith("l601 detail notes")) {
+    return {
+      ...getPlanHeadingFromCodeOrTitle("l601", rawLabel, "detail_notes"),
+      calculationTitle: rawLabel,
+      noteField: "calculationNotes",
+    };
+  }
+
+  if (normalizedLabel.startsWith("l602 fence") || normalizedLabel.startsWith("l602 site furnishing")) {
+    return {
+      ...getPlanHeadingFromCodeOrTitle("l602", rawLabel, "detail_notes"),
+      calculationTitle: rawLabel,
+      noteField: "calculationNotes",
+    };
+  }
+
+  if (normalizedLabel.startsWith("shade footing estimate")) {
+    return {
+      ...getPlanHeadingFromCodeOrTitle("shade-footing-estimate", rawLabel, "shade_footing_estimate"),
+      calculationTitle: rawLabel,
+      noteField: "calculationNotes",
+    };
+  }
+
+  return null;
+}
+
+function getPlanHeadingFromCodeOrTitle(code, fallbackTitle, fallbackType) {
+  const matchKey = normalizePlanSheetMatchCode(code || fallbackTitle);
+  const defaultSheet = defaultPlanSheets.find((sheet) => getPlanSheetMatchKey(sheet) === matchKey);
+
+  if (defaultSheet) {
+    return {
+      matchKey: defaultSheet.matchKey,
+      pageType: defaultSheet.pageType,
+      title: defaultSheet.title,
+      subtitle: defaultSheet.subtitle,
+      calculationTitle: defaultSheet.calculationTitle,
+      noteField: "calculationNotes",
+    };
+  }
+
+  return {
+    matchKey,
+    pageType: fallbackType,
+    title: fallbackTitle,
+    subtitle: "",
+    calculationTitle: "Calculation Notes",
+    noteField: "calculationNotes",
+  };
+}
+
+function getSmartPlanSheetSubheading(label) {
+  const rawLabel = String(label || "").trim();
+  const normalizedLabel = rawLabel.toLowerCase().replace(/\s+/g, " ");
+
+  if (/^clarifications?$/.test(normalizedLabel)) {
+    return { noteField: "clarificationNotes" };
+  }
+
+  if (/takeoff basis$/.test(normalizedLabel) || normalizedLabel.includes("calculation")) {
+    return { calculationTitle: rawLabel, noteField: "calculationNotes" };
+  }
+
+  return null;
+}
+
+function upsertSmartPastePlanSheet(sections, heading) {
+  if (!sections.planSheets) {
+    sections.planSheets = [];
+  }
+
+  const matchKey = normalizePlanSheetMatchCode(heading.matchKey || heading.title);
+  const existingIndex = sections.planSheets.findIndex((sheet) => getPlanSheetMatchKey(sheet) === matchKey);
+
+  if (existingIndex >= 0) {
+    sections.planSheets[existingIndex] = {
+      ...sections.planSheets[existingIndex],
+      ...heading,
+      matchKey,
+      enabled: true,
+    };
+    return existingIndex;
+  }
+
+  sections.planSheets.push({
+    id: createProposalId(),
+    enabled: true,
+    imageSrc: "",
+    calculationNotes: [],
+    clarificationNotes: [],
+    ...heading,
+    matchKey,
+  });
+
+  return sections.planSheets.length - 1;
+}
+
+function setSmartPastePlanSheetTitle(sections, index, subheading) {
+  if (!sections.planSheets?.[index] || !subheading.calculationTitle) {
+    return;
+  }
+
+  sections.planSheets[index].calculationTitle = subheading.calculationTitle;
+}
+
+function appendSmartPastePlanSheetNote(sections, index, field, value) {
+  const textValue = String(value || "").trim();
+
+  if (!textValue || !sections.planSheets?.[index]) {
+    return;
+  }
+
+  const targetField = field === "clarificationNotes" ? "clarificationNotes" : "calculationNotes";
+
+  if (!Array.isArray(sections.planSheets[index][targetField])) {
+    sections.planSheets[index][targetField] = [];
+  }
+
+  sections.planSheets[index][targetField].push(textValue);
+}
+
+function normalizePlanSheetMatchCode(value) {
+  const textValue = String(value || "").toLowerCase();
+  const codeMatch = textValue.match(/\b(l10[234]|l203|l601|l602)\b/);
+
+  if (codeMatch) {
+    const code = codeMatch[1].toLowerCase();
+    return code === "l203" ? "sport-courts-l203" : code;
+  }
+
+  if (textValue.includes("sport court")) {
+    return "sport-courts-l203";
+  }
+
+  if (textValue.includes("shade footing")) {
+    return "shade-footing-estimate";
+  }
+
+  return createPlanSheetMatchKey(value);
 }
 
 function getSmartPasteLabelKey(label) {
@@ -3344,6 +4472,7 @@ function getCapturedSmartPasteLabels(sections) {
     exclusions: "Exclusions",
     gcPrimeNotes: "GC / Prime Notes",
     lineItems: "Line Items",
+    planSheets: "Plan Sheets / Takeoff Pages",
     pricingSections: "Alternates / Allowances",
     projectAddress: "Project Address",
     projectLocation: "Project Location",
@@ -3375,6 +4504,45 @@ function appendSmartPasteSection(sections, key, value) {
 
 function getSectionText(sections, key) {
   return (sections[key] || []).join("\n").trim();
+}
+
+function normalizeSmartPastePlanSheets(planSheets = []) {
+  if (!Array.isArray(planSheets)) {
+    return [];
+  }
+
+  return planSheets
+    .map((sheet, index) => normalizePlanSheet({ ...sheet, enabled: true }, index))
+    .filter(
+      (sheet) =>
+        hasTextValue(sheet.title) ||
+        normalizePlanSheetNotes(sheet.calculationNotes).length > 0 ||
+        normalizePlanSheetNotes(sheet.clarificationNotes).length > 0,
+    );
+}
+
+function mergePlanSheets(currentPlanSheets = [], parsedPlanSheets = []) {
+  const mergedSheets = normalizePlanSheets(currentPlanSheets);
+
+  parsedPlanSheets.forEach((parsedSheet) => {
+    const normalizedSheet = normalizePlanSheet({ ...parsedSheet, enabled: true });
+    const matchKey = getPlanSheetMatchKey(normalizedSheet);
+    const existingIndex = mergedSheets.findIndex((sheet) => getPlanSheetMatchKey(sheet) === matchKey);
+
+    if (existingIndex >= 0) {
+      mergedSheets[existingIndex] = {
+        ...mergedSheets[existingIndex],
+        ...normalizedSheet,
+        imageSrc: mergedSheets[existingIndex].imageSrc || normalizedSheet.imageSrc,
+        enabled: true,
+      };
+      return;
+    }
+
+    mergedSheets.push(normalizedSheet);
+  });
+
+  return mergedSheets;
 }
 
 function splitSmartPasteList(value) {
