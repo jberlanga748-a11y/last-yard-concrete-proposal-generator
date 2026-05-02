@@ -912,6 +912,68 @@ h4 {
   resize: vertical;
 }
 
+.template-picker-help {
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.template-card-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.template-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #c9d1dc;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.template-card.active {
+  border-color: rgba(201, 166, 74, 0.9);
+  box-shadow: 0 0 0 3px rgba(201, 166, 74, 0.16);
+}
+
+.template-card span {
+  color: var(--gold);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.template-card h3 {
+  margin-top: 3px;
+  color: var(--blue);
+  font-size: 14px;
+  line-height: 1.15;
+}
+
+.template-card p,
+.template-card small {
+  display: block;
+  margin-top: 5px;
+  color: #556171;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.template-card button {
+  border-radius: 9px;
+  background: var(--blue);
+  color: white;
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
 .smart-paste-help {
   color: var(--body);
   font-size: 12px;

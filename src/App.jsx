@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import {
   LINE_ITEM_UNITS,
   PRICING_SECTION_TYPES,
+  PROPOSAL_TEMPLATES,
   PROPOSAL_STATUSES,
   PROPOSAL_TYPES,
   SEED_PROPOSAL,
+  applyTemplateToProposal,
   calculateProposalTotals,
   formatCurrency,
   generateProposalNumber,
@@ -190,6 +192,7 @@ export default function App() {
   const [smartPasteNotes, setSmartPasteNotes] = useState("");
   const [smartPasteResult, setSmartPasteResult] = useState(null);
   const [backupMessage, setBackupMessage] = useState("");
+  const [proposalDirty, setProposalDirty] = useState(false);
   const company = proposalDraft.company;
   const isDashboardView = route.view === "dashboard";
   const isListView = route.view === "list";
@@ -219,6 +222,7 @@ export default function App() {
       setRoute(nextRoute);
 
       if (isProposalRouteView(nextRoute.view)) {
+        setProposalDirty(false);
         setProposalDraft(getInitialProposalForRoute(nextRoute, savedProposals, companySettings));
       }
     }
@@ -273,6 +277,7 @@ export default function App() {
   }
 
   function updateProposalField(path, value) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const nextProposal = updateNestedValue(currentProposal, path, value);
 
@@ -295,6 +300,7 @@ export default function App() {
     setRoute(nextRoute);
 
     if (isProposalRouteView(nextRoute.view)) {
+      setProposalDirty(false);
       setProposalDraft(
         options.proposal ? createEditableProposal(options.proposal) : getInitialProposalForRoute(nextRoute, savedProposals, companySettings),
       );
@@ -315,9 +321,39 @@ export default function App() {
     navigate("/proposals/new", { proposal });
   }
 
-  function createNewGcPacket() {
-    const proposal = createNewGcPacketDraft(savedProposals, companySettings);
+  function createNewProposalFromTemplate(templateId) {
+    const proposal = createEditableProposal(applyTemplateToProposal(templateId, createNewProposalDraft(savedProposals, companySettings)));
     navigate("/proposals/new", { proposal });
+  }
+
+  function createNewGcPacket() {
+    createNewProposalFromTemplate("gc_prime_full_packet");
+  }
+
+  function createNewCommercialProposal() {
+    createNewProposalFromTemplate("commercial_flatwork");
+  }
+
+  function createNewResidentialProposal() {
+    createNewProposalFromTemplate("driveway");
+  }
+
+  function applyProposalTemplate(templateId) {
+    const template = PROPOSAL_TEMPLATES.find((item) => item.id === templateId);
+
+    if (!template) {
+      return;
+    }
+
+    const shouldConfirm = proposalDirty || Boolean(proposalDraft.templateId);
+
+    if (shouldConfirm && !window.confirm(`Use the ${template.name} template? This will replace current scope, pricing, specifications, exclusions, assumptions, terms, and packet defaults.`)) {
+      return;
+    }
+
+    setProposalDraft((currentProposal) => createEditableProposal(applyTemplateToProposal(templateId, currentProposal)));
+    setProposalDirty(false);
+    setSaveMessage(`Applied ${template.name} template.`);
   }
 
   function updateSettingsDraft(field, value) {
@@ -352,6 +388,7 @@ export default function App() {
 
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, proposalToSave));
     setProposalDraft(proposalToSave);
+    setProposalDirty(false);
     setSaveMessage("Draft saved locally.");
 
     if (route.view === "new") {
@@ -403,6 +440,7 @@ export default function App() {
   }
 
   function updateLineItem(index, field, value) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const lineItems = currentProposal.lineItems.map((item, itemIndex) =>
         itemIndex === index ? { ...item, [field]: value } : item,
@@ -413,6 +451,7 @@ export default function App() {
   }
 
   function addLineItem() {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const nextItemNumber = String(currentProposal.lineItems.length + 1);
       const nextLineItem = {
@@ -432,6 +471,7 @@ export default function App() {
   }
 
   function removeLineItem(index) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => ({
       ...currentProposal,
       lineItems: currentProposal.lineItems.filter((_, itemIndex) => itemIndex !== index),
@@ -439,6 +479,7 @@ export default function App() {
   }
 
   function updatePricingSection(index, field, value) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const pricingSections = normalizePricingSections(currentProposal.pricingSections).map((section, sectionIndex) =>
         sectionIndex === index ? { ...section, [field]: value } : section,
@@ -449,6 +490,7 @@ export default function App() {
   }
 
   function addPricingSection() {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => ({
       ...currentProposal,
       pricingSections: [
@@ -466,6 +508,7 @@ export default function App() {
   }
 
   function removePricingSection(index) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => ({
       ...currentProposal,
       pricingSections: normalizePricingSections(currentProposal.pricingSections).filter(
@@ -475,6 +518,7 @@ export default function App() {
   }
 
   function updateFinancialField(field, value) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const financials = { ...currentProposal.financials };
 
@@ -489,6 +533,7 @@ export default function App() {
   }
 
   function updateScopeSectionTitle(sectionIndex, title) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const scopeSections = currentProposal.scopeSections.map((section, index) =>
         index === sectionIndex ? { ...section, title } : section,
@@ -499,6 +544,7 @@ export default function App() {
   }
 
   function updateScopeBullet(sectionIndex, bulletIndex, value) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const scopeSections = currentProposal.scopeSections.map((section, index) => {
         if (index !== sectionIndex) {
@@ -514,6 +560,7 @@ export default function App() {
   }
 
   function addScopeBullet(sectionIndex) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const scopeSections = currentProposal.scopeSections.map((section, index) =>
         index === sectionIndex ? { ...section, items: [...section.items, "New scope item"] } : section,
@@ -524,6 +571,7 @@ export default function App() {
   }
 
   function removeScopeBullet(sectionIndex, bulletIndex) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const scopeSections = currentProposal.scopeSections.map((section, index) => {
         if (index !== sectionIndex) {
@@ -538,6 +586,7 @@ export default function App() {
   }
 
   function addScopeSection() {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => ({
       ...currentProposal,
       scopeSections: [
@@ -551,6 +600,7 @@ export default function App() {
   }
 
   function removeScopeSection(sectionIndex) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => ({
       ...currentProposal,
       scopeSections: currentProposal.scopeSections.filter((_, index) => index !== sectionIndex),
@@ -558,6 +608,7 @@ export default function App() {
   }
 
   function updateConcreteSpec(field, value) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => ({
       ...currentProposal,
       concreteSpecs: {
@@ -568,6 +619,7 @@ export default function App() {
   }
 
   function updateGcPrimeField(field, value) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => ({
       ...currentProposal,
       gcPrime: {
@@ -578,6 +630,7 @@ export default function App() {
   }
 
   function updateProjectPhoto(index, updates) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const projectPhotos = normalizeProjectPhotos(currentProposal.projectPhotos).map((photo, photoIndex) =>
         photoIndex === index ? { ...photo, ...updates } : photo,
@@ -588,6 +641,7 @@ export default function App() {
   }
 
   function updatePlanSheet(index, field, value) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const planSheets = normalizePlanSheets(currentProposal.planSheets).map((sheet, sheetIndex) =>
         sheetIndex === index ? { ...sheet, [field]: value } : sheet,
@@ -598,6 +652,7 @@ export default function App() {
   }
 
   function addPlanSheet() {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => ({
       ...currentProposal,
       planSheets: [
@@ -619,6 +674,7 @@ export default function App() {
   }
 
   function removePlanSheet(index) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => ({
       ...currentProposal,
       planSheets: normalizePlanSheets(currentProposal.planSheets).filter((_, sheetIndex) => sheetIndex !== index),
@@ -626,6 +682,7 @@ export default function App() {
   }
 
   function updateGcPacketTable(sectionKey, field, value) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const gcPacketTables = normalizeGcPacketTables(currentProposal.gcPacketTables);
 
@@ -643,6 +700,7 @@ export default function App() {
   }
 
   function addGcPacketTableRow(sectionKey) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const gcPacketTables = normalizeGcPacketTables(currentProposal.gcPacketTables);
 
@@ -661,6 +719,7 @@ export default function App() {
   }
 
   function updateGcPacketTableRow(sectionKey, rowIndex, field, value) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const gcPacketTables = normalizeGcPacketTables(currentProposal.gcPacketTables);
       const rows = (gcPacketTables[sectionKey]?.rows || []).map((row, index) =>
@@ -681,6 +740,7 @@ export default function App() {
   }
 
   function removeGcPacketTableRow(sectionKey, rowIndex) {
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const gcPacketTables = normalizeGcPacketTables(currentProposal.gcPacketTables);
 
@@ -724,6 +784,7 @@ export default function App() {
       return;
     }
 
+    setProposalDirty(true);
     setProposalDraft((currentProposal) => createEditableProposal(applyParsedNotesToProposal(currentProposal, parsedNotes)));
     setSmartPasteResult({
       fields: parsedNotes.fields,
@@ -878,8 +939,10 @@ export default function App() {
       {isDashboardView ? (
         <DashboardView
           proposals={savedProposals}
+          onCreateCommercialProposal={createNewCommercialProposal}
           onCreateGcPacket={createNewGcPacket}
           onCreateProposal={createNewProposal}
+          onCreateResidentialProposal={createNewResidentialProposal}
           onExportBackup={() => navigate("/backup")}
           onOpen={openProposal}
           onOpenList={() => navigate("/proposals")}
@@ -946,8 +1009,10 @@ export default function App() {
             {isPrintView ? null : (
               <ProposalEditor
                 proposal={proposalDraft}
+                showTemplatePicker={route.view === "new"}
                 onAddLineItem={addLineItem}
                 onAddPricingSection={addPricingSection}
+                onApplyTemplate={applyProposalTemplate}
                 onChange={updateProposalField}
                 onFinancialChange={updateFinancialField}
                 onLineItemChange={updateLineItem}
@@ -1028,8 +1093,10 @@ function AppChrome({ companyName, currentView, onNavigate, onNewGcPacket, onNewP
 
 function DashboardView({
   proposals,
+  onCreateCommercialProposal,
   onCreateGcPacket,
   onCreateProposal,
+  onCreateResidentialProposal,
   onExportBackup,
   onOpen,
   onOpenList,
@@ -1053,6 +1120,12 @@ function DashboardView({
           </button>
           <button className="gold-action" type="button" onClick={onCreateGcPacket}>
             New GC Packet
+          </button>
+          <button type="button" onClick={onCreateCommercialProposal}>
+            New Commercial Proposal
+          </button>
+          <button type="button" onClick={onCreateResidentialProposal}>
+            New Residential Proposal
           </button>
           <button type="button" onClick={onOpenList}>
             Open Proposals
@@ -1607,10 +1680,12 @@ function ValidationPanel({ className = "", notice = "", validation }) {
 
 function ProposalEditor({
   proposal,
+  showTemplatePicker = false,
   onAddLineItem,
   onAddPricingSection,
   onAddScopeBullet,
   onAddScopeSection,
+  onApplyTemplate,
   onChange,
   onFinancialChange,
   onLineItemChange,
@@ -1644,6 +1719,10 @@ function ProposalEditor({
   return (
     <aside className="editor-panel no-print" aria-label="Proposal editor">
       <ValidationPanel notice={validationNotice} validation={validation} />
+
+      {showTemplatePicker ? (
+        <TemplatePicker currentTemplateId={proposal.templateId} templates={PROPOSAL_TEMPLATES} onApplyTemplate={onApplyTemplate} />
+      ) : null}
 
       <SmartPastePanel
         notes={smartPasteNotes}
@@ -1855,6 +1934,47 @@ function ProposalEditor({
         <PricingSummary totals={proposalTotals} />
       </EditorSection>
     </aside>
+  );
+}
+
+function TemplatePicker({ currentTemplateId, onApplyTemplate, templates }) {
+  function useTemplate(event, templateId) {
+    event.preventDefault();
+    onApplyTemplate(templateId);
+  }
+
+  return (
+    <EditorSection title="Proposal Template">
+      <p className="template-picker-help">
+        Choose a starter template to prefill common scope, specs, exclusions, terms, pricing rows, and packet defaults.
+      </p>
+      <div className="template-card-grid">
+        {templates.map((template) => (
+          <article
+            className={`template-card ${currentTemplateId === template.id ? "active" : ""}`}
+            key={template.id}
+          >
+            <div>
+              <span>{template.category}</span>
+              <h3>{template.name}</h3>
+              <p>{template.description}</p>
+              <small>{template.recommendedFor}</small>
+            </div>
+            <button
+              type="button"
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  useTemplate(event, template.id);
+                }
+              }}
+              onClick={(event) => useTemplate(event, template.id)}
+            >
+              Use Template
+            </button>
+          </article>
+        ))}
+      </div>
+    </EditorSection>
   );
 }
 
@@ -4087,6 +4207,63 @@ function createNewGcPacketDraft(existingProposals, companySettings = getDefaultC
   });
 }
 
+function hasTemplateSensitiveChanges(proposal, companySettings = getDefaultCompanySettings()) {
+  const baseline = createNewProposalDraft([], companySettings);
+
+  return getTemplateSensitiveSignature(proposal) !== getTemplateSensitiveSignature(baseline);
+}
+
+function getTemplateSensitiveSignature(proposal = {}) {
+  return JSON.stringify({
+    proposalType: proposal.proposalType ?? proposal.type ?? "",
+    packetMode: proposal.packetMode || "",
+    projectCategory: proposal.project?.category || "",
+    scopeSections: normalizeScopeSections(proposal.scopeSections),
+    concreteSpecs: proposal.concreteSpecs || {},
+    exclusions: normalizeTextList(proposal.exclusions),
+    assumptions: normalizeTextList(proposal.assumptions),
+    terms: proposal.terms || {},
+    lineItems: (proposal.lineItems || []).map((item) => ({
+      description: item.description || "",
+      quantity: item.quantity ?? "",
+      unit: item.unit || "",
+      unitPrice: item.unitPrice ?? "",
+      taxable: item.taxable ?? true,
+    })),
+    pricingSections: normalizePricingSections(proposal.pricingSections).map(({ type, label, description, amount, included }) => ({
+      type,
+      label,
+      description,
+      amount,
+      included,
+    })),
+    gcPacketTables: getTemplateGcPacketSignature(proposal.gcPacketTables),
+    planSheets: normalizePlanSheets(proposal.planSheets).map((sheet) => ({
+      matchKey: getPlanSheetMatchKey(sheet),
+      enabled: sheet.enabled,
+      title: sheet.title,
+      subtitle: sheet.subtitle,
+      calculationTitle: sheet.calculationTitle,
+      calculationNotes: sheet.calculationNotes,
+      clarificationNotes: sheet.clarificationNotes,
+    })),
+  });
+}
+
+function getTemplateGcPacketSignature(gcPacketTables = {}) {
+  const tables = normalizeGcPacketTables(gcPacketTables);
+
+  return Object.fromEntries(
+    Object.entries(tables).map(([sectionKey, table]) => [
+      sectionKey,
+      {
+        ...table,
+        rows: (table.rows || []).map(({ id, ...row }) => row),
+      },
+    ]),
+  );
+}
+
 function duplicateProposalDraft(sourceProposal, existingProposals) {
   const now = new Date();
   const validUntil = new Date(now);
@@ -4223,6 +4400,10 @@ function getProposalTimestamp(proposal = {}) {
 }
 
 function getPacketModeLabel(proposal = {}) {
+  if (proposal.packetMode === "full_gc_packet") {
+    return "Full GC Packet";
+  }
+
   return hasFullPacketContent(proposal) ? "Full GC Packet" : "Summary";
 }
 
@@ -4550,6 +4731,7 @@ function createEditableProposal(seedProposal) {
     status: proposal.status || "draft",
     proposalType,
     type: proposalType,
+    packetMode: proposal.packetMode || (proposalType === "gc_prime" ? "full_gc_packet" : "summary"),
     company: {
       ...SEED_PROPOSAL.company,
       ...(proposal.company || {}),

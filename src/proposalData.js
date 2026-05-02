@@ -103,6 +103,329 @@ export const DEFAULT_CONCRETE_SPECIFICATIONS = [
   { item: "Codes", specification: "IBC / ACI / local" },
 ];
 
+export const PROPOSAL_TEMPLATES = [
+  {
+    id: "gc_prime_full_packet",
+    name: "GC / Prime Full Packet",
+    description: "Full bid packet starter for GC, prime contractor, and public bid packages.",
+    category: "GC / Prime",
+    recommendedFor: "Plan-based bid packages, alternates, allowances, RFIs, and takeoff backup.",
+    proposalType: "gc_prime",
+    packetMode: "full_gc_packet",
+    projectCategory: "GC / Prime concrete packet",
+    scopeSections: DEFAULT_SCOPE_SECTIONS,
+    concreteSpecs: createConcreteSpecTemplate({
+      thickness: "Per plan",
+      rebarMeshDetails: "Per plan and specifications",
+      finishType: "Per plan",
+      controlJointSpacing: "Per plan / ACI guidance",
+      truckAccessNotes: "GC to provide clear concrete truck and pump access.",
+    }),
+    exclusions: [
+      ...DEFAULT_EXCLUSIONS,
+      "Engineering, delegated design, and stamped calculations by others unless specifically listed.",
+      "Survey control, benchmarks, and layout files by others unless noted.",
+      "Traffic control, off-site improvements, and utility relocation by others.",
+    ],
+    assumptions: [
+      "Proposal is based on issued plans, specifications, addenda, and written clarifications available at bid time.",
+      "GC will coordinate access, laydown, safety orientation, and sequencing with other trades.",
+      "Accepted alternates, allowances, and clarifications must be identified before contract execution.",
+      "Changes in scope, quantities, phasing, or schedule will be handled by written change order.",
+    ],
+    terms: createTemplateTerms(
+      "Payment by approved progress billing or pay application per contract documents.",
+      "Deposit requirements may be waived or adjusted for approved GC / Prime contract terms.",
+      "Progress billings will be submitted monthly or by approved schedule of values.",
+    ),
+    starterLineItems: makeTemplateLineItems([
+      ["Base Concrete Work", 1, "LS", 0],
+      ["Mobilization / Project Setup", 1, "LS", 0],
+      ["Concrete Flatwork Per Plans", 1, "LS", 0],
+    ]),
+    pricingSections: [],
+    gcPacketTables: createFullGcPacketTableDefaults(),
+  },
+  {
+    id: "commercial_flatwork",
+    name: "Commercial Flatwork",
+    description: "Commercial sidewalks, slabs, curb, gutter, and flatwork starter proposal.",
+    category: "Commercial",
+    recommendedFor: "Retail, tenant improvement, site concrete, and commercial flatwork jobs.",
+    proposalType: "commercial",
+    packetMode: "summary",
+    projectCategory: "Commercial flatwork",
+    scopeSections: [
+      templateScope("Site Preparation", ["Layout and staking", "Excavation and grading", "Compact subgrade", "Install forms and reinforcement as needed"]),
+      templateScope("Concrete Flatwork", ["Sidewalks and walkways", "Drive aisles and parking areas", "Concrete pads and slabs", "Curb and gutter as listed"]),
+      templateScope("Finishes", ["Broom finish sidewalks", "Troweled slab surfaces", "Control joints and expansion joints", "Edging and joint sealant"]),
+      templateScope("Quality & Cleanup", ["Concrete placement and finishing", "Jointing and curing", "Final cleanup", "Haul off excess materials"]),
+    ],
+    concreteSpecs: createConcreteSpecTemplate({ thickness: "4 in sidewalks / 5 in slabs", finishType: "Broom / troweled" }),
+    exclusions: DEFAULT_EXCLUSIONS,
+    assumptions: DEFAULT_ASSUMPTIONS,
+    terms: DEFAULT_TERMS,
+    starterLineItems: makeTemplateLineItems([
+      ["Site Prep & Excavation", 1, "LS", 0],
+      ["Sidewalks - 4 in Thick", 1, "SF", 0],
+      ["Concrete Pads / Slabs - 5 in Thick", 1, "SF", 0],
+      ["Curb & Gutter", 1, "LF", 0],
+      ["Control Joints & Sealant", 1, "SF", 0],
+      ["Mobilization", 1, "LS", 0],
+    ]),
+  },
+  {
+    id: "sidewalk_ada",
+    name: "Sidewalk / ADA",
+    description: "Sidewalk replacement, ADA ramps, detectable warnings, and pedestrian flatwork.",
+    category: "Commercial",
+    recommendedFor: "ADA upgrades, public walks, storefront access, and pedestrian repairs.",
+    proposalType: "commercial",
+    packetMode: "summary",
+    projectCategory: "Sidewalk / ADA concrete",
+    scopeSections: [
+      templateScope("Demolition & Prep", ["Remove existing concrete as listed", "Excavate and prep subgrade", "Compact base material", "Protect adjacent surfaces"]),
+      templateScope("Sidewalk & ADA Work", ["Form and place sidewalk sections", "Construct ADA ramp panels as listed", "Install detectable warning panels as listed", "Match adjacent grades where practical"]),
+      templateScope("Finishes & Cleanup", ["Broom finish walking surfaces", "Tool edges and joints", "Cure concrete", "Final cleanup and debris haul off"]),
+    ],
+    concreteSpecs: createConcreteSpecTemplate({ thickness: "4 in typical / 6 in at drive approaches as needed", finishType: "Broom finish", controlJointSpacing: "Per panel layout / sawcut as needed" }),
+    exclusions: [
+      "Permits and fees by others",
+      "Testing by others unless noted",
+      "Survey, civil design, and ADA compliance certification by others",
+      "Utility relocation or repair",
+      "Landscaping, irrigation, and lighting by others",
+      "Unsuitable soils or rock excavation",
+      "Price valid for 30 days from proposal date",
+    ],
+    assumptions: [
+      "Existing grades allow reasonable tie-in to adjacent surfaces.",
+      "Work area will be accessible and ready for demolition and placement.",
+      "Detectable warning panel color and product will be approved before ordering.",
+    ],
+    terms: DEFAULT_TERMS,
+    starterLineItems: makeTemplateLineItems([
+      ["Remove Existing Sidewalk", 1, "SF", 0],
+      ["Sidewalk Replacement - 4 in", 1, "SF", 0],
+      ["ADA Ramp Panels", 1, "EA", 0],
+      ["Detectable Warning Panels", 1, "EA", 0],
+      ["Mobilization", 1, "LS", 0],
+    ]),
+  },
+  {
+    id: "driveway",
+    name: "Driveway",
+    description: "Residential driveway replacement or new concrete driveway starter.",
+    category: "Residential",
+    recommendedFor: "Residential driveway tear-out, replacement, widening, and approaches.",
+    proposalType: "residential",
+    packetMode: "summary",
+    projectCategory: "Residential driveway",
+    scopeSections: [
+      templateScope("Driveway Preparation", ["Layout driveway limits", "Remove existing concrete as listed", "Excavate and grade", "Compact subgrade / base"]),
+      templateScope("Concrete Driveway", ["Install forms", "Place concrete driveway slab", "Add reinforcement as listed", "Tool edges and joints"]),
+      templateScope("Finish & Cleanup", ["Broom finish surface", "Sawcut or tool control joints", "Cure concrete", "Final cleanup and debris haul off"]),
+    ],
+    concreteSpecs: createConcreteSpecTemplate({ thickness: "4 in typical / 5 in to 6 in where listed", finishType: "Broom finish", rebarMeshDetails: "Per proposal / as listed" }),
+    exclusions: [
+      "Permits and fees by owner unless noted",
+      "Utility relocation or repair",
+      "Irrigation, landscaping, gates, fencing, and lighting by others",
+      "Unsuitable soils, tree roots, or rock excavation",
+      "Concrete staining, stamping, or sealer unless listed",
+      "Price valid for 30 days from proposal date",
+    ],
+    assumptions: [
+      "Owner will provide clear access to the driveway work area.",
+      "Existing subgrade is suitable for standard residential concrete placement.",
+      "Vehicle traffic will remain off new concrete until curing period is complete.",
+    ],
+    terms: DEFAULT_TERMS,
+    starterLineItems: makeTemplateLineItems([
+      ["Driveway Demolition / Removal", 1, "SF", 0],
+      ["Base Prep & Grading", 1, "LS", 0],
+      ["Concrete Driveway", 1, "SF", 0],
+      ["Control Joints", 1, "SF", 0],
+      ["Mobilization", 1, "LS", 0],
+    ]),
+  },
+  {
+    id: "patio",
+    name: "Patio",
+    description: "Residential patio slab, walkway tie-ins, and outdoor living concrete.",
+    category: "Residential",
+    recommendedFor: "Backyard patios, outdoor seating areas, walkways, and small pads.",
+    proposalType: "residential",
+    packetMode: "summary",
+    projectCategory: "Residential patio",
+    scopeSections: [
+      templateScope("Patio Preparation", ["Layout patio footprint", "Excavate and grade", "Compact base", "Install forms"]),
+      templateScope("Patio Concrete", ["Place concrete patio slab", "Install reinforcement as listed", "Tool edges and control joints", "Coordinate drainage slope as practical"]),
+      templateScope("Finish & Cleanup", ["Apply selected finish", "Cure concrete", "Remove forms", "Final cleanup"]),
+    ],
+    concreteSpecs: createConcreteSpecTemplate({ thickness: "4 in typical", finishType: "Broom / smooth trowel as selected", controlJointSpacing: "Per patio layout" }),
+    exclusions: [
+      "Permits and fees by owner unless noted",
+      "Patio cover footings, electrical, plumbing, and drainage systems by others unless listed",
+      "Landscaping, irrigation, lighting, and hardscape walls by others",
+      "Unsuitable soils or rock excavation",
+      "Decorative finish or sealer unless listed",
+      "Price valid for 30 days from proposal date",
+    ],
+    assumptions: [
+      "Owner will approve patio layout and finish before scheduling concrete.",
+      "Work area access is suitable for equipment, wheelbarrow, or pump placement as needed.",
+      "Final grade allows positive drainage away from structures.",
+    ],
+    terms: DEFAULT_TERMS,
+    starterLineItems: makeTemplateLineItems([
+      ["Patio Excavation & Base Prep", 1, "LS", 0],
+      ["Concrete Patio Slab - 4 in", 1, "SF", 0],
+      ["Thickened Edge / Step Detail", 1, "LF", 0],
+      ["Finish / Cure / Cleanup", 1, "LS", 0],
+    ]),
+  },
+  {
+    id: "slab",
+    name: "Slab",
+    description: "Concrete slab starter for pads, equipment slabs, shed slabs, and small foundations.",
+    category: "Commercial",
+    recommendedFor: "Equipment pads, shed slabs, dumpster pads, utility pads, and small slabs.",
+    proposalType: "commercial",
+    packetMode: "summary",
+    projectCategory: "Concrete slab / pad",
+    scopeSections: [
+      templateScope("Slab Preparation", ["Layout slab limits", "Excavate and grade", "Compact subgrade", "Install forms"]),
+      templateScope("Concrete Slab", ["Place concrete slab", "Install reinforcement as listed", "Finish slab surface", "Install control joints"]),
+      templateScope("Closeout", ["Cure concrete", "Strip forms", "Final cleanup", "Haul off excess materials"]),
+    ],
+    concreteSpecs: createConcreteSpecTemplate({ thickness: "4 in to 6 in as listed", finishType: "Troweled / broom as selected", rebarMeshDetails: "Per proposal / as listed" }),
+    exclusions: DEFAULT_EXCLUSIONS,
+    assumptions: [
+      "Subgrade and base section are suitable for the listed slab use.",
+      "Anchor bolts, embeds, and equipment templates by others unless listed.",
+      "Final slab dimensions and elevations will be approved before forming.",
+    ],
+    terms: DEFAULT_TERMS,
+    starterLineItems: makeTemplateLineItems([
+      ["Slab Prep & Forms", 1, "LS", 0],
+      ["Concrete Slab", 1, "SF", 0],
+      ["Reinforcement", 1, "SF", 0],
+      ["Control Joints", 1, "SF", 0],
+      ["Mobilization", 1, "LS", 0],
+    ]),
+  },
+  {
+    id: "curb_gutter",
+    name: "Curb / Gutter",
+    description: "Curb, gutter, curb cuts, and site concrete edge work.",
+    category: "Commercial",
+    recommendedFor: "Parking lots, drive aisles, site frontage work, and concrete edge repairs.",
+    proposalType: "commercial",
+    packetMode: "summary",
+    projectCategory: "Curb and gutter",
+    scopeSections: [
+      templateScope("Curb Preparation", ["Layout curb alignment", "Excavate and grade", "Compact subgrade", "Set forms"]),
+      templateScope("Curb & Gutter", ["Place curb and gutter", "Tie into existing concrete as practical", "Tool joints and edges", "Coordinate transitions and returns"]),
+      templateScope("Cleanup", ["Cure concrete", "Remove forms", "Backfill edges as listed", "Final cleanup"]),
+    ],
+    concreteSpecs: createConcreteSpecTemplate({ thickness: "Per curb / gutter profile", finishType: "Formed curb finish / broom gutter pan", controlJointSpacing: "Per plan / field layout" }),
+    exclusions: [
+      "Permits and fees by others",
+      "Testing by others unless noted",
+      "Asphalt sawcut, paving, striping, and traffic control by others unless listed",
+      "Survey control and staking by others unless listed",
+      "Unsuitable soils or rock excavation",
+      "Price valid for 30 days from proposal date",
+    ],
+    assumptions: [
+      "Curb grades, alignments, and tie-in elevations will be provided before forming.",
+      "Work area will be accessible for concrete trucks and finishing operations.",
+      "Adjacent asphalt or base repairs are excluded unless specifically listed.",
+    ],
+    terms: DEFAULT_TERMS,
+    starterLineItems: makeTemplateLineItems([
+      ["Curb & Gutter", 1, "LF", 0],
+      ["Curb Returns / Transitions", 1, "EA", 0],
+      ["Sawcut / Tie-In Prep", 1, "LS", 0],
+      ["Mobilization", 1, "LS", 0],
+    ]),
+  },
+  {
+    id: "stamped_decorative",
+    name: "Stamped / Decorative Concrete",
+    description: "Decorative patio, walkway, borders, color, stamp, and sealer starter.",
+    category: "Residential",
+    recommendedFor: "Stamped patios, decorative walkways, colored slabs, and accent borders.",
+    proposalType: "residential",
+    packetMode: "summary",
+    projectCategory: "Stamped / decorative concrete",
+    scopeSections: [
+      templateScope("Decorative Concrete Prep", ["Confirm pattern, color, and layout", "Excavate and grade", "Compact base", "Install forms"]),
+      templateScope("Placement & Finish", ["Place decorative concrete slab", "Apply selected color / release system as listed", "Stamp selected pattern", "Tool joints and edges"]),
+      templateScope("Seal & Cleanup", ["Wash and detail stamped surface", "Apply sealer as listed", "Final cleanup", "Provide basic care instructions"]),
+    ],
+    concreteSpecs: createConcreteSpecTemplate({ thickness: "4 in typical", finishType: "Stamped / decorative finish", controlJointSpacing: "Decorative layout / sawcut as needed", cureSealerNotes: "Sealer as listed after surface preparation" }),
+    exclusions: [
+      "Permits and fees by owner unless noted",
+      "Color variation, weather variation, and natural curing variation are inherent to decorative concrete",
+      "Landscaping, irrigation, drainage, and lighting by others",
+      "Unsuitable soils or rock excavation",
+      "Future resealing or maintenance unless listed",
+      "Price valid for 30 days from proposal date",
+    ],
+    assumptions: [
+      "Owner will approve pattern, color, borders, and final layout before placement.",
+      "Decorative concrete requires weather-appropriate scheduling and may shift based on conditions.",
+      "Final appearance may vary from samples due to site and weather conditions.",
+    ],
+    terms: DEFAULT_TERMS,
+    starterLineItems: makeTemplateLineItems([
+      ["Decorative Slab Prep", 1, "LS", 0],
+      ["Stamped Concrete", 1, "SF", 0],
+      ["Integral Color / Release", 1, "SF", 0],
+      ["Sealer", 1, "SF", 0],
+      ["Mobilization", 1, "LS", 0],
+    ]),
+  },
+  {
+    id: "concrete_repair",
+    name: "Concrete Repair",
+    description: "Patch, removal, replacement, joint repair, and localized concrete repair starter.",
+    category: "Repair",
+    recommendedFor: "Trip hazards, broken panels, joint repair, pads, and localized replacement.",
+    proposalType: "commercial",
+    packetMode: "summary",
+    projectCategory: "Concrete repair",
+    scopeSections: [
+      templateScope("Repair Preparation", ["Identify repair limits", "Sawcut or remove damaged concrete as listed", "Prepare base / substrate", "Protect adjacent surfaces"]),
+      templateScope("Concrete Repair", ["Place repair concrete or patch material as listed", "Match adjacent finish where practical", "Tool or sawcut joints", "Cure repair areas"]),
+      templateScope("Cleanup", ["Remove debris", "Clean work area", "Haul off excess materials", "Final walkthrough"]),
+    ],
+    concreteSpecs: createConcreteSpecTemplate({ thickness: "Match existing or as listed", finishType: "Match adjacent finish where practical", controlJointSpacing: "Match existing joint layout where practical" }),
+    exclusions: [
+      "Permits and fees by others",
+      "Testing by others unless noted",
+      "Structural engineering, root removal, or utility repair by others",
+      "Full-depth replacement beyond listed repair limits",
+      "Color and texture match is approximate unless specified otherwise",
+      "Price valid for 30 days from proposal date",
+    ],
+    assumptions: [
+      "Repair areas are based on visible conditions at proposal time.",
+      "Hidden deterioration may require written change order.",
+      "Owner or GC will keep repaired areas protected during curing.",
+    ],
+    terms: DEFAULT_TERMS,
+    starterLineItems: makeTemplateLineItems([
+      ["Sawcut / Demo Repair Area", 1, "LS", 0],
+      ["Concrete Panel Replacement", 1, "SF", 0],
+      ["Joint Repair / Sealant", 1, "LF", 0],
+      ["Cleanup & Haul Off", 1, "LS", 0],
+    ]),
+  },
+];
+
 export const SEED_PROPOSAL = {
   id: "seed-marketplace-retail-center",
   proposalNumber: "LYC-2026-0001",
@@ -231,6 +554,43 @@ export const SEED_PROPOSAL = {
   assumptions: DEFAULT_ASSUMPTIONS,
   terms: DEFAULT_TERMS,
 };
+
+export function applyTemplateToProposal(templateId, proposal = {}) {
+  const template = PROPOSAL_TEMPLATES.find((item) => item.id === templateId);
+  const nextProposal = cloneTemplateValue(proposal || {});
+
+  if (!template) {
+    return nextProposal;
+  }
+
+  const project = nextProposal.project || {};
+
+  return {
+    ...nextProposal,
+    templateId: template.id,
+    templateName: template.name,
+    proposalType: template.proposalType,
+    type: template.proposalType,
+    packetMode: template.packetMode,
+    project: {
+      ...project,
+      category: template.projectCategory || project.category || template.name,
+    },
+    scopeSections: cloneTemplateValue(template.scopeSections || []),
+    concreteSpecs: cloneTemplateValue(template.concreteSpecs || {}),
+    exclusions: cloneTemplateValue(template.exclusions || []),
+    assumptions: cloneTemplateValue(template.assumptions || []),
+    terms: cloneTemplateValue(template.terms || DEFAULT_TERMS),
+    lineItems: normalizeTemplateLineItems(template.starterLineItems || []),
+    pricingSections: cloneTemplateValue(template.pricingSections || []),
+    gcPacketTables: cloneTemplateValue(template.gcPacketTables || createSummaryGcPacketTableDefaults()),
+    planSheets: cloneTemplateValue(template.planSheets || []),
+    financials: {
+      ...(nextProposal.financials || {}),
+      depositRate: template.terms?.depositRate ?? nextProposal.financials?.depositRate ?? DEFAULT_TERMS.depositRate,
+    },
+  };
+}
 
 export function formatCurrency(value, locale = "en-US", currency = "USD") {
   return new Intl.NumberFormat(locale, {
@@ -405,6 +765,100 @@ export function validateProposalCompleteness(proposal) {
     errors,
     warnings,
   };
+}
+
+function templateScope(title, items) {
+  return { title, items };
+}
+
+function createTemplateTerms(payment, depositText = DEFAULT_TERMS.depositText, progressBilling = DEFAULT_TERMS.progressBilling) {
+  return {
+    ...DEFAULT_TERMS,
+    payment,
+    depositText,
+    progressBilling,
+  };
+}
+
+function createConcreteSpecTemplate(overrides = {}) {
+  return {
+    estimatedSquareFeet: "",
+    estimatedCubicYards: "",
+    thickness: "4 in sidewalks / 5 in pads",
+    psi: "4,000 PSI @ 28 days",
+    slump: "4 in +/- 1 in",
+    airEntrainment: "5% - 7%",
+    fiberMesh: false,
+    rebarMeshDetails: "Per plan",
+    finishType: "Broom / troweled",
+    controlJointSpacing: "Sawcut - 1/4 slab depth",
+    sawCutTiming: "",
+    cureSealerNotes: "Minimum 7 days",
+    concreteSupplier: "Local ready-mix",
+    pumpRequired: false,
+    truckAccessNotes: "",
+    ...overrides,
+  };
+}
+
+function makeTemplateLineItems(rows) {
+  return rows.map(([description, quantity, unit, unitPrice], index) => ({
+    itemNumber: String(index + 1),
+    description,
+    quantity,
+    unit,
+    unitPrice,
+    taxable: true,
+  }));
+}
+
+function createSummaryGcPacketTableDefaults() {
+  return {
+    pricingSummary: { enabled: false, presentationNotes: "", rows: [] },
+    scheduleOfValues: { enabled: false, rows: [] },
+    takeoffQuantities: { enabled: false, rows: [] },
+    shadeFootingEstimate: { enabled: false, rows: [] },
+    proposalNotes: {
+      enabled: false,
+      proposalBasis: "",
+      contractScopeControl: "",
+      acceptanceSummary: "",
+      gcPrimeReviewer: "",
+    },
+  };
+}
+
+function createFullGcPacketTableDefaults() {
+  return {
+    ...createSummaryGcPacketTableDefaults(),
+    pricingSummary: {
+      enabled: true,
+      presentationNotes: "Confirm accepted alternates and allowances before contract execution.",
+      rows: [],
+    },
+    proposalNotes: {
+      enabled: true,
+      proposalBasis: "Proposal based on provided plans, specifications, addenda, and written clarifications.",
+      contractScopeControl: "Accepted bid form, exclusions, alternates, and clarifications control final contract scope.",
+      acceptanceSummary: "GC to identify accepted alternates and allowances before contract execution.",
+      gcPrimeReviewer: "Reviewed by: ______________________________ Date: __________",
+    },
+  };
+}
+
+function normalizeTemplateLineItems(items = []) {
+  return items.map((item, index) => ({
+    itemNumber: String(index + 1),
+    description: item.description || "",
+    quantity: item.quantity ?? 1,
+    unit: LINE_ITEM_UNITS.includes(item.unit) ? item.unit : "LS",
+    unitPrice: item.unitPrice ?? 0,
+    taxable: item.taxable ?? true,
+  }));
+}
+
+function cloneTemplateValue(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function getLineItemAmount(item) {
