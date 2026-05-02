@@ -15,10 +15,10 @@ const storageKey = "last-yard-proposals-v1";
 const companySettingsStorageKey = "last-yard-company-settings-v1";
 
 const trustCards = [
-  ["01", "PROVEN RELIABILITY", "On time. On budget. Built to last."],
-  ["02", "QUALITY CRAFTSMANSHIP", "Clean finishes. Sharp details. Premium materials."],
-  ["03", "SAFETY FIRST", "Safe jobsites for your team and ours."],
-  ["04", "BUILT ON INTEGRITY", "Clear communication. Honest work. Local service."],
+  ["shield", "PROVEN RELIABILITY", "On time. On budget. Built to last."],
+  ["tools", "QUALITY CRAFTSMANSHIP", "Clean finishes. Sharp details. Premium materials."],
+  ["hardhat", "SAFETY FIRST", "Safe jobsites for your team and ours."],
+  ["handshake", "BUILT ON INTEGRITY", "Clear communication. Honest work. Local service."],
 ];
 
 const defaultProjectPhotos = [
@@ -1550,24 +1550,24 @@ function ProposalPreview({ proposal }) {
       </ProposalPage>
 
       <ProposalPage>
-        <SectionTitle icon="01" title="Scope of Work" />
+        <SectionTitle icon="clipboard" title="Scope of Work" />
         <div className="two-column section-pad">
           <ScopeColumn groups={scopeLeft} />
           <ScopeColumn groups={scopeRight} />
         </div>
 
-        <SectionTitle icon="02" title="Concrete Specifications" className="section-title-spaced" />
+        <SectionTitle icon="gear" title="Concrete Specifications" className="section-title-spaced" />
         <div className="two-column spec-grid">
           <SpecTable rows={specsLeft} />
           <SpecTable rows={specsRight} />
         </div>
 
-        <SectionTitle icon="$" title="Pricing" className="section-title-spaced" />
+        <SectionTitle icon="dollar" title="Pricing" className="section-title-spaced" />
         <PricingTable items={lineItems} total={totalProposalPrice} />
 
         <div className="two-column lower-grid">
           <div>
-            <MiniHeading icon="!" title="Exclusions / Assumptions" />
+            <MiniHeading icon="minus" title="Exclusions / Assumptions" />
             <ul className="bullet-list compact-list">
               {proposal.exclusions.map((item) => (
                 <li key={item}>
@@ -1579,7 +1579,7 @@ function ProposalPreview({ proposal }) {
           </div>
 
           <div>
-            <MiniHeading icon={"\u2713"} title="Terms & Acceptance" />
+            <MiniHeading icon="check" title="Terms & Acceptance" />
             <p className="terms-copy">{termsCopy}</p>
             <SignatureBlock companyName={company.name} />
           </div>
@@ -1653,11 +1653,11 @@ function CoverHeader({ company }) {
 
 function CompanyIntro({ company, companyCredentials }) {
   const items = [
-    ["CO", company.name],
-    ["PH", company.phone],
-    ["EM", company.email],
-    ["OR", company.serviceArea],
-    ["CC", `${companyCredentials}\n${company.license}`],
+    ["user", company.name],
+    ["phone", company.phone],
+    ["mail", company.email],
+    ["pin", company.serviceArea],
+    ["shield-small", `${companyCredentials}\n${company.license}`],
   ];
 
   return (
@@ -1665,7 +1665,9 @@ function CompanyIntro({ company, companyCredentials }) {
       <div className="contact-list">
         {items.map(([icon, text]) => (
           <div key={text} className="contact-row">
-            <span>{icon}</span>
+            <span>
+              <SvgIcon type={icon} />
+            </span>
             <p>{text}</p>
           </div>
         ))}
@@ -1685,7 +1687,6 @@ function CompanyIntro({ company, companyCredentials }) {
 
 function ProjectCards({ proposal }) {
   const { client, project } = proposal;
-  const proposalType = formatOptionLabel(proposal.proposalType ?? proposal.type);
 
   return (
     <section className="project-cards">
@@ -1700,10 +1701,6 @@ function ProjectCards({ proposal }) {
       </InfoCard>
 
       <InfoCard title="Project Summary" watermark="SCOPE">
-        <Field label="Proposal #" value={proposal.proposalNumber} />
-        <Field label="Proposal Date" value={formatDisplayDate(proposal.proposalDate)} />
-        <Field label="Expiration" value={formatDisplayDate(proposal.validUntil)} />
-        <Field label="Proposal Type" value={proposalType} />
         <Field label="Project Name" value={project.name} />
         <Field label="Project Location" value={project.location} />
         <Field label="Proposed Schedule" value={project.estimatedDuration || project.proposedSchedule.display} />
@@ -1770,7 +1767,9 @@ function WhyChoose() {
       <div className="trust-grid">
         {trustCards.map(([icon, title, body]) => (
           <div key={title} className="trust-card">
-            <div>{icon}</div>
+            <div>
+              <SvgIcon type={icon} />
+            </div>
             <h4>{title}</h4>
             <p>{body}</p>
           </div>
@@ -1784,7 +1783,7 @@ function SectionTitle({ icon, title, className = "" }) {
   return (
     <div className={`section-title ${className}`}>
       <div className="section-title-row">
-        <span>{icon}</span>
+        <IconBadge icon={icon} />
         <h3>{title}</h3>
         <div className="gold-rule title-rule" />
         <div className="gray-rule" />
@@ -1871,10 +1870,18 @@ function PricingTable({ items, total }) {
 function MiniHeading({ icon, title }) {
   return (
     <div className="mini-heading">
-      <span>{icon}</span>
+      <IconBadge icon={icon} />
       <h3>{title}</h3>
       <div className="gold-rule mini-rule" />
     </div>
+  );
+}
+
+function IconBadge({ icon }) {
+  return (
+    <span className="icon-badge">
+      <SvgIcon type={icon} />
+    </span>
   );
 }
 
@@ -1905,6 +1912,122 @@ function SignatureBlock({ companyName }) {
   );
 }
 
+function SvgIcon({ type }) {
+  switch (type) {
+    case "user":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="8" r="3.5" />
+          <path d="M5.5 20c.8-4 3-6 6.5-6s5.7 2 6.5 6" />
+        </svg>
+      );
+    case "phone":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M8.4 4.8 6.7 6.1c-.7.5-.9 1.4-.5 2.2 2 4 5.4 7.4 9.5 9.5.8.4 1.7.2 2.2-.5l1.3-1.7-3.5-2-1 1.3c-2.4-1.2-4.3-3.1-5.6-5.6l1.3-1-2-3.5Z" />
+        </svg>
+      );
+    case "mail":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="4" y="6" width="16" height="12" rx="2" />
+          <path d="m5 8 7 5 7-5" />
+        </svg>
+      );
+    case "pin":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 21s6-5.4 6-10a6 6 0 0 0-12 0c0 4.6 6 10 6 10Z" />
+          <circle cx="12" cy="11" r="2" />
+        </svg>
+      );
+    case "shield":
+    case "shield-small":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3 5.5 5.8v5.7c0 4.1 2.7 7.6 6.5 9.2 3.8-1.6 6.5-5.1 6.5-9.2V5.8L12 3Z" />
+          <path d="m8.8 12 2.1 2.2 4.4-5" />
+        </svg>
+      );
+    case "tools":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m5 19 5.4-5.4" />
+          <path d="m14.7 6.2 3.1 3.1" />
+          <path d="m13.8 7.1 2.1-2.1 3.1 3.1-2.1 2.1" />
+          <path d="m19 19-6.2-6.2" />
+          <path d="m5 5 4.5 4.5" />
+          <path d="M4.5 4.5 7 4l-.5 2.5" />
+        </svg>
+      );
+    case "hardhat":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 15.5h16" />
+          <path d="M6 15.5V13a6 6 0 0 1 12 0v2.5" />
+          <path d="M9 15.5V8" />
+          <path d="M15 15.5V8" />
+          <path d="M3.5 18h17" />
+        </svg>
+      );
+    case "handshake":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m7.5 12.5 3.2-3.2c.8-.8 2-.8 2.8 0l.8.8" />
+          <path d="m14.5 10.3 2 2c.8.8.8 2 0 2.8l-2.8 2.8c-.8.8-2 .8-2.8 0L7.5 14.5" />
+          <path d="m3.8 10.8 3.4-3.4 3 3" />
+          <path d="m20.2 10.8-3.4-3.4-2.4 2.4" />
+          <path d="m9 16 1.3-1.3" />
+          <path d="m11 18 1.3-1.3" />
+        </svg>
+      );
+    case "clipboard":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="6" y="5" width="12" height="15" rx="2" />
+          <path d="M9 5.5A3 3 0 0 1 12 3a3 3 0 0 1 3 2.5" />
+          <path d="M9 10h6" />
+          <path d="M9 14h6" />
+        </svg>
+      );
+    case "gear":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3" />
+          <path d="M12 3v3" />
+          <path d="M12 18v3" />
+          <path d="M3 12h3" />
+          <path d="M18 12h3" />
+          <path d="m5.6 5.6 2.1 2.1" />
+          <path d="m16.3 16.3 2.1 2.1" />
+          <path d="m18.4 5.6-2.1 2.1" />
+          <path d="m7.7 16.3-2.1 2.1" />
+        </svg>
+      );
+    case "dollar":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 4v16" />
+          <path d="M16 8.2c-.8-1-2-1.5-3.6-1.5-2 0-3.4 1-3.4 2.5 0 3.4 7 1.7 7 5.4 0 1.6-1.5 2.7-3.8 2.7-1.8 0-3.2-.6-4.2-1.8" />
+        </svg>
+      );
+    case "minus":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 12h12" />
+        </svg>
+      );
+    case "check":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="m5.5 12.5 4.2 4.2 8.8-9.4" />
+        </svg>
+      );
+    default:
+      return <span>{type}</span>;
+  }
+}
+
 function PageFooter({ company, companyCredentials, compact = false }) {
   if (compact) {
     return (
@@ -1918,6 +2041,7 @@ function PageFooter({ company, companyCredentials, compact = false }) {
         <span>{company.license}</span>
         <span>|</span>
         <span>{companyCredentials}</span>
+        <LogoSeal companyName={company.name} logoPath={company.logoPath} small />
       </footer>
     );
   }
@@ -1930,11 +2054,15 @@ function PageFooter({ company, companyCredentials, compact = false }) {
         <p>{company.tagline}</p>
       </div>
       <div className="footer-details">
-        <p>Phone: {company.phone}</p>
-        <p>{company.license}</p>
-        <p>Email: {company.email}</p>
-        <p>{companyCredentials}</p>
-        <p>{company.serviceArea}</p>
+        <div className="footer-contact">
+          <p>Phone: {company.phone}</p>
+          <p>Email: {company.email}</p>
+          <p>{company.serviceArea}</p>
+        </div>
+        <div className="footer-compliance">
+          <p>{company.license}</p>
+          <p>{companyCredentials}</p>
+        </div>
       </div>
     </footer>
   );
