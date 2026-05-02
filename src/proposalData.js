@@ -138,6 +138,7 @@ export const SEED_PROPOSAL = {
       quantity: 1,
       unit: "LS",
       unitPrice: 3250,
+      taxable: true,
     },
     {
       itemNumber: "2",
@@ -145,6 +146,7 @@ export const SEED_PROPOSAL = {
       quantity: 1250,
       unit: "SF",
       unitPrice: 8.75,
+      taxable: true,
     },
     {
       itemNumber: "3",
@@ -152,6 +154,7 @@ export const SEED_PROPOSAL = {
       quantity: 600,
       unit: "LF",
       unitPrice: 14.5,
+      taxable: true,
     },
     {
       itemNumber: "4",
@@ -159,6 +162,7 @@ export const SEED_PROPOSAL = {
       quantity: 2000,
       unit: "SF",
       unitPrice: 9.75,
+      taxable: true,
     },
     {
       itemNumber: "5",
@@ -166,6 +170,7 @@ export const SEED_PROPOSAL = {
       quantity: 2000,
       unit: "SF",
       unitPrice: 1.1,
+      taxable: true,
     },
     {
       itemNumber: "6",
@@ -173,6 +178,7 @@ export const SEED_PROPOSAL = {
       quantity: 1,
       unit: "LS",
       unitPrice: 1850,
+      taxable: true,
     },
   ],
   financials: {
@@ -209,10 +215,14 @@ export function calculateProposalTotals(proposalOrLineItems, overrides = {}) {
   const subtotal = roundMoney(
     (proposal.lineItems || []).reduce((sum, item) => sum + getLineItemAmount(item), 0),
   );
+  const taxableSubtotal = roundMoney(
+    (proposal.lineItems || []).reduce((sum, item) => sum + (item.taxable === false ? 0 : getLineItemAmount(item)), 0),
+  );
   const discount = roundMoney(resolveDiscount(subtotal, financials));
-  const taxableAmount = Math.max(0, subtotal - discount);
+  const taxableDiscount = subtotal > 0 ? discount * (taxableSubtotal / subtotal) : 0;
+  const taxableAmount = Math.max(0, taxableSubtotal - taxableDiscount);
   const tax = roundMoney(taxableAmount * toRate(financials.taxRate));
-  const total = roundMoney(taxableAmount + tax);
+  const total = roundMoney(Math.max(0, subtotal - discount) + tax);
   const deposit = roundMoney(resolveDeposit(total, financials));
   const balanceDue = roundMoney(Math.max(0, total - deposit));
 

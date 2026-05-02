@@ -1,5 +1,11 @@
 import { useState } from "react";
-import { PROPOSAL_TYPES, SEED_PROPOSAL, calculateProposalTotals, formatCurrency } from "./proposalData.js";
+import {
+  LINE_ITEM_UNITS,
+  PROPOSAL_TYPES,
+  SEED_PROPOSAL,
+  calculateProposalTotals,
+  formatCurrency,
+} from "./proposalData.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
 
@@ -16,6 +22,56 @@ export default function App() {
 
   function updateProposalField(path, value) {
     setProposalDraft((currentProposal) => updateNestedValue(currentProposal, path, value));
+  }
+
+  function updateLineItem(index, field, value) {
+    setProposalDraft((currentProposal) => {
+      const lineItems = currentProposal.lineItems.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item,
+      );
+
+      return { ...currentProposal, lineItems };
+    });
+  }
+
+  function addLineItem() {
+    setProposalDraft((currentProposal) => {
+      const nextItemNumber = String(currentProposal.lineItems.length + 1);
+      const nextLineItem = {
+        itemNumber: nextItemNumber,
+        description: "New line item",
+        quantity: 1,
+        unit: "LS",
+        unitPrice: 0,
+        taxable: true,
+      };
+
+      return {
+        ...currentProposal,
+        lineItems: [...currentProposal.lineItems, nextLineItem],
+      };
+    });
+  }
+
+  function removeLineItem(index) {
+    setProposalDraft((currentProposal) => ({
+      ...currentProposal,
+      lineItems: currentProposal.lineItems.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  }
+
+  function updateFinancialField(field, value) {
+    setProposalDraft((currentProposal) => {
+      const financials = { ...currentProposal.financials };
+
+      if (value === "" && (field === "discountAmount" || field === "depositAmount")) {
+        delete financials[field];
+      } else {
+        financials[field] = value;
+      }
+
+      return { ...currentProposal, financials };
+    });
   }
 
   return (
@@ -37,7 +93,14 @@ export default function App() {
       </div>
 
       <div className="proposal-workbench">
-        <ProposalEditor proposal={proposalDraft} onChange={updateProposalField} />
+        <ProposalEditor
+          proposal={proposalDraft}
+          onAddLineItem={addLineItem}
+          onChange={updateProposalField}
+          onFinancialChange={updateFinancialField}
+          onLineItemChange={updateLineItem}
+          onRemoveLineItem={removeLineItem}
+        />
         <div className="preview-pane">
           <ProposalPreview proposal={proposalDraft} />
         </div>
@@ -46,7 +109,9 @@ export default function App() {
   );
 }
 
-function ProposalEditor({ proposal, onChange }) {
+function ProposalEditor({ proposal, onAddLineItem, onChange, onFinancialChange, onLineItemChange, onRemoveLineItem }) {
+  const proposalTotals = calculateProposalTotals(proposal);
+
   return (
     <aside className="editor-panel no-print" aria-label="Proposal editor">
       <EditorSection title="Proposal Info">
@@ -163,7 +228,148 @@ function ProposalEditor({ proposal, onChange }) {
           multiline
         />
       </EditorSection>
+
+      <EditorSection title="Pricing">
+        <LineItemEditor
+          lineItems={proposal.lineItems}
+          onAddLineItem={onAddLineItem}
+          onLineItemChange={onLineItemChange}
+          onRemoveLineItem={onRemoveLineItem}
+        />
+
+        <div className="editor-pricing-settings">
+          <EditorField
+            label="Tax Rate (%)"
+            path="financials.taxRate"
+            type="number"
+            value={proposal.financials.taxRate ?? ""}
+            onChange={(_, value) => onFinancialChange("taxRate", value)}
+          />
+          <EditorField
+            label="Discount Amount"
+            path="financials.discountAmount"
+            type="number"
+            value={proposal.financials.discountAmount ?? ""}
+            onChange={(_, value) => onFinancialChange("discountAmount", value)}
+          />
+          <EditorField
+            label="Deposit Amount"
+            path="financials.depositAmount"
+            type="number"
+            value={proposal.financials.depositAmount ?? ""}
+            onChange={(_, value) => onFinancialChange("depositAmount", value)}
+          />
+        </div>
+
+        <PricingSummary totals={proposalTotals} />
+      </EditorSection>
     </aside>
+  );
+}
+
+function LineItemEditor({ lineItems, onAddLineItem, onLineItemChange, onRemoveLineItem }) {
+  return (
+    <div className="line-item-editor">
+      {lineItems.map((item, index) => {
+        const amount = toEditableNumber(item.quantity) * toEditableNumber(item.unitPrice);
+
+        return (
+          <div className="line-item-card" key={`${item.itemNumber}-${index}`}>
+            <div className="line-item-card-header">
+              <strong>Line Item {index + 1}</strong>
+              <button type="button" onClick={() => onRemoveLineItem(index)}>
+                Remove
+              </button>
+            </div>
+
+            <div className="line-item-grid">
+              <EditorField
+                label="Item #"
+                path={`lineItems.${index}.itemNumber`}
+                value={item.itemNumber ?? ""}
+                onChange={(_, value) => onLineItemChange(index, "itemNumber", value)}
+              />
+              <EditorField
+                label="Unit"
+                path={`lineItems.${index}.unit`}
+                value={item.unit}
+                onChange={(_, value) => onLineItemChange(index, "unit", value)}
+                options={LINE_ITEM_UNITS}
+              />
+              <div className="line-item-description">
+                <EditorField
+                  label="Description"
+                  path={`lineItems.${index}.description`}
+                  value={item.description}
+                  onChange={(_, value) => onLineItemChange(index, "description", value)}
+                />
+              </div>
+              <EditorField
+                label="Quantity"
+                path={`lineItems.${index}.quantity`}
+                type="number"
+                value={item.quantity}
+                onChange={(_, value) => onLineItemChange(index, "quantity", value)}
+              />
+              <EditorField
+                label="Unit Price"
+                path={`lineItems.${index}.unitPrice`}
+                type="number"
+                value={item.unitPrice}
+                onChange={(_, value) => onLineItemChange(index, "unitPrice", value)}
+              />
+            </div>
+
+            <div className="line-item-meta">
+              <label className="editor-check">
+                <input
+                  checked={item.taxable !== false}
+                  type="checkbox"
+                  onChange={(event) => onLineItemChange(index, "taxable", event.target.checked)}
+                />
+                <span>Taxable</span>
+              </label>
+              <span>Amount: {formatCurrency(amount)}</span>
+            </div>
+          </div>
+        );
+      })}
+
+      <button className="editor-add-button" type="button" onClick={onAddLineItem}>
+        Add line item
+      </button>
+    </div>
+  );
+}
+
+function PricingSummary({ totals }) {
+  return (
+    <div className="editor-totals">
+      <div>
+        <span>Subtotal</span>
+        <strong>{formatCurrency(totals.subtotal)}</strong>
+      </div>
+      <div>
+        <span>Tax</span>
+        <strong>{formatCurrency(totals.tax)}</strong>
+      </div>
+      <div>
+        <span>Discount</span>
+        <strong>{formatCurrency(totals.discount)}</strong>
+      </div>
+      <div>
+        <span>Total Proposal</span>
+        <strong>{formatCurrency(totals.total)}</strong>
+      </div>
+      <div>
+        <span>Deposit</span>
+        <strong>{formatCurrency(totals.deposit)}</strong>
+      </div>
+      <div>
+        <span>Balance Due</span>
+        <strong>{formatCurrency(totals.balanceDue)}</strong>
+      </div>
+    </div>
   );
 }
 
@@ -607,6 +813,10 @@ function createEditableProposal(seedProposal) {
 
   return {
     ...proposal,
+    lineItems: proposal.lineItems.map((item) => ({
+      ...item,
+      taxable: item.taxable ?? true,
+    })),
     client: {
       ...proposal.client,
       billingAddress: proposal.client.billingAddress ?? proposal.client.address ?? "",
@@ -659,7 +869,7 @@ function updateNestedValue(source, path, value) {
 function formatQuantity(value) {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
-  }).format(value);
+  }).format(toEditableNumber(value));
 }
 
 function buildTermsCopy(terms) {
@@ -671,4 +881,9 @@ function formatOptionLabel(value) {
     .split("_")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+function toEditableNumber(value) {
+  const numericValue = typeof value === "number" ? value : Number.parseFloat(String(value).replace(/[$,%\s,]/g, ""));
+  return Number.isFinite(numericValue) ? numericValue : 0;
 }

@@ -183,6 +183,102 @@ h4 {
   outline: 0;
 }
 
+.line-item-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.line-item-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.line-item-card-header,
+.line-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.line-item-card-header strong {
+  color: var(--blue);
+  font-size: 13px;
+}
+
+.line-item-card-header button,
+.editor-add-button {
+  border-radius: 7px;
+  background: var(--blue);
+  color: white;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.line-item-card-header button {
+  background: white;
+  color: var(--blue);
+  outline: 1px solid #c9d1dc;
+}
+
+.line-item-grid,
+.editor-pricing-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.line-item-description {
+  grid-column: span 2;
+}
+
+.line-item-meta {
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.editor-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.editor-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--blue);
+}
+
+.editor-add-button {
+  width: 100%;
+}
+
+.editor-totals {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.editor-totals div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--body);
+  font-size: 12px;
+}
+
+.editor-totals strong {
+  color: var(--blue);
+}
+
 .preview-pane {
   min-width: 0;
   overflow-x: auto;
