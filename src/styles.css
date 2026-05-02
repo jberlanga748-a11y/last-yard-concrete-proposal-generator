@@ -240,6 +240,7 @@ h4 {
 }
 
 .proposal-action-bar {
+  flex-wrap: wrap;
   padding: 16px 18px;
 }
 
@@ -265,6 +266,57 @@ h4 {
   color: var(--body);
   font-size: 12px;
   font-weight: 700;
+}
+
+.revision-inline-date {
+  margin-left: 10px;
+  color: #556171;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.revision-summary-line {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.revision-history {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.revision-history strong {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.revision-history div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.revision-history span {
+  border: 1px solid #c9d1dc;
+  border-radius: 999px;
+  background: #f8fafc;
+  padding: 5px 9px;
+  color: var(--body);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.revision-history span.active {
+  border-color: rgba(201, 166, 74, 0.75);
+  background: rgba(201, 166, 74, 0.12);
+  color: var(--blue);
 }
 
 .list-toolbar button,
@@ -703,6 +755,14 @@ h4 {
   color: var(--blue);
 }
 
+.revision-latest {
+  width: max-content;
+  margin-top: 5px;
+  border-color: rgba(201, 166, 74, 0.75);
+  background: rgba(201, 166, 74, 0.12);
+  color: var(--blue);
+}
+
 .status-draft {
   border-color: #c9d1dc;
   background: #f8fafc;
@@ -910,6 +970,16 @@ h4 {
 
 .editor-field textarea {
   resize: vertical;
+}
+
+.revision-label-field strong {
+  border: 1px solid #c9d1dc;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: var(--blue);
+  padding: 9px 10px;
+  font-size: 13px;
+  font-weight: 950;
 }
 
 .template-picker-help {
@@ -1777,6 +1847,26 @@ h4 {
 .card-content {
   position: relative;
   margin-top: 12px;
+}
+
+.proposal-meta-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.proposal-meta-strip span {
+  border: 1px solid rgba(6, 43, 69, 0.14);
+  border-radius: 999px;
+  background: rgba(6, 43, 69, 0.05);
+  color: var(--blue);
+  padding: 3px 7px;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .field-row {

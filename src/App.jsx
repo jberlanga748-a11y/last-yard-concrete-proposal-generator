@@ -416,6 +416,19 @@ export default function App() {
     navigate(`/proposals/${proposal.id}/print`, { proposal });
   }
 
+  function createRevision() {
+    if (!canCompleteProposal("creating a revision")) {
+      return;
+    }
+
+    const sourceProposal = createEditableProposal({ ...proposalDraft, updatedAt: new Date().toISOString() });
+    const revision = createProposalRevisionDraft(sourceProposal, savedProposals);
+    setSavedProposals((currentProposals) => upsertProposal(upsertProposal(currentProposals, sourceProposal), revision));
+    navigate(`/proposals/${revision.id}`, { proposal: revision });
+    setProposalDirty(false);
+    setSaveMessage(`Created ${revision.revisionLabel}.`);
+  }
+
   function duplicateCurrentProposal(proposal = proposalDraft) {
     const duplicate = duplicateProposalDraft(proposal, savedProposals);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, duplicate));
@@ -992,13 +1005,15 @@ export default function App() {
               />
             </>
           ) : (
-            <ProposalActionBar
-              isPrintView={isPrintView}
-              proposal={proposalDraft}
-              saveMessage={saveMessage}
-              onBackToList={() => navigate("/proposals")}
-              onDuplicate={() => duplicateCurrentProposal(proposalDraft)}
-              onOpenPrintView={openPrintView}
+              <ProposalActionBar
+                isPrintView={isPrintView}
+                proposal={proposalDraft}
+                revisionHistory={getRevisionHistory(proposalDraft, savedProposals)}
+                saveMessage={saveMessage}
+                onBackToList={() => navigate("/proposals")}
+                onCreateRevision={createRevision}
+                onDuplicate={() => duplicateCurrentProposal(proposalDraft)}
+                onOpenPrintView={openPrintView}
               onSave={saveCurrentProposal}
               onStatusChange={updateCurrentStatus}
             />
@@ -1219,7 +1234,7 @@ function ProposalSummaryRow({ compact = false, onDuplicate, onExport, onOpen, on
   return (
     <div className={`proposal-summary-row ${compact ? "compact" : ""}`}>
       <div className="proposal-summary-main">
-        <strong>{proposal.proposalNumber || "No proposal #"}</strong>
+        <strong>{formatProposalNumberWithRevision(proposal) || "No proposal #"}</strong>
         <span>{proposal.project?.name || "Untitled project"}</span>
         <small>{proposal.client?.companyName || proposal.client?.contactName || "No client entered"}</small>
       </div>
@@ -1426,7 +1441,11 @@ function ProposalListView({
 
               return (
                 <tr key={proposal.id} onClick={() => onOpen(proposal.id)}>
-                  <td>{proposal.proposalNumber}</td>
+                  <td>
+                    <strong>{proposal.proposalNumber}</strong>
+                    <span>{proposal.revisionLabel || formatRevisionLabel(proposal.revisionNumber)}</span>
+                    {isLatestRevision(proposal, proposals) ? <Badge className="revision-latest">Latest</Badge> : null}
+                  </td>
                   <td>
                     <strong>{proposal.client?.companyName}</strong>
                     <span>{proposal.client?.contactName}</span>
@@ -1595,18 +1614,30 @@ function PrintRouteToolbar({ onBackToList, onPrint }) {
 function ProposalActionBar({
   isPrintView,
   proposal,
+  revisionHistory = [],
   saveMessage,
   onBackToList,
+  onCreateRevision,
   onDuplicate,
   onOpenPrintView,
   onSave,
   onStatusChange,
 }) {
+  const revisedTotal = calculateProposalTotals(proposal).total;
+  const previousTotal = toEditableNumber(proposal.previousTotal);
+
   return (
     <section className="proposal-action-bar no-print">
       <div>
-        <p>{proposal.proposalNumber}</p>
+        <p>
+          {formatProposalNumberWithRevision(proposal)}
+          <span className="revision-inline-date">{formatDisplayDate(proposal.revisionDate || proposal.proposalDate)}</span>
+        </p>
         <h2>{proposal.project?.name || "Untitled Proposal"}</h2>
+        <div className="revision-summary-line">
+          <span>Current total: {formatCurrency(revisedTotal)}</span>
+          {previousTotal > 0 ? <span>Previous total: {formatCurrency(previousTotal)}</span> : null}
+        </div>
         {saveMessage ? <span>{saveMessage}</span> : null}
       </div>
       <div className="proposal-actions">
@@ -1632,12 +1663,43 @@ function ProposalActionBar({
           Duplicate
         </button>
         {!isPrintView ? (
+          <button type="button" onClick={onCreateRevision}>
+            Create Revision
+          </button>
+        ) : null}
+        {!isPrintView ? (
           <button type="button" onClick={onOpenPrintView}>
             Print View
           </button>
         ) : null}
       </div>
+      <RevisionHistory revisions={revisionHistory} currentProposalId={proposal.id} />
     </section>
+  );
+}
+
+function RevisionHistory({ currentProposalId, revisions = [] }) {
+  const visibleRevisions = revisions.filter((revision) => revision.id);
+
+  if (visibleRevisions.length <= 1) {
+    return null;
+  }
+
+  return (
+    <div className="revision-history">
+      <strong>Revision History</strong>
+      <div>
+        {visibleRevisions.map((revision) => (
+          <span className={revision.id === currentProposalId ? "active" : ""} key={revision.id}>
+            {revision.revisionLabel || formatRevisionLabel(revision.revisionNumber)}
+            {" · "}
+            {formatDisplayDate(revision.revisionDate || revision.proposalDate)}
+            {" · "}
+            {formatCurrency(calculateProposalTotals(revision).total)}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -1741,6 +1803,17 @@ function ProposalEditor({
         />
         <EditorField label="Status" path="status" value={proposal.status} onChange={onChange} options={PROPOSAL_STATUSES} />
         <EditorField label="Proposal Number" path="proposalNumber" value={proposal.proposalNumber} onChange={onChange} />
+        <label className="editor-field revision-label-field">
+          <span>Revision</span>
+          <strong>{proposal.revisionLabel || formatRevisionLabel(proposal.revisionNumber)}</strong>
+        </label>
+        <EditorField
+          label="Revision Date"
+          path="revisionDate"
+          type="date"
+          value={proposal.revisionDate}
+          onChange={onChange}
+        />
         <EditorField
           label="Proposal Date"
           path="proposalDate"
@@ -1754,6 +1827,13 @@ function ProposalEditor({
           type="date"
           value={proposal.validUntil}
           onChange={onChange}
+        />
+        <EditorField
+          label="Revision Notes"
+          path="revisionNotes"
+          value={proposal.revisionNotes}
+          onChange={onChange}
+          multiline
         />
       </EditorSection>
 
@@ -3418,6 +3498,7 @@ function CompanyIntro({ company, companyCredentials }) {
 
 function ProjectCards({ proposal }) {
   const { client, project } = proposal;
+  const revisionLabel = proposal.revisionLabel || formatRevisionLabel(proposal.revisionNumber);
 
   return (
     <section className="project-cards">
@@ -3432,6 +3513,11 @@ function ProjectCards({ proposal }) {
       </InfoCard>
 
       <InfoCard title="Project Summary" watermark="SCOPE">
+        <div className="proposal-meta-strip">
+          <span>{proposal.proposalNumber}</span>
+          <span>{revisionLabel}</span>
+          <span>{formatDisplayDate(proposal.revisionDate || proposal.proposalDate)}</span>
+        </div>
         <Field label="Project Name" value={project.name} />
         <Field label="Project Location" value={project.location} />
         <Field label="Proposed Schedule" value={project.estimatedDuration || project.proposedSchedule.display} />
@@ -4094,6 +4180,8 @@ function mergeOrReplaceImportedProposals(importedProposals, existingProposals, m
 function resolveImportedProposalIdentity(proposal, existingProposals = []) {
   const existingIds = new Set(existingProposals.map((item) => item.id));
   const existingNumbers = new Set(existingProposals.map((item) => item.proposalNumber).filter(Boolean));
+  const hasRevisionMetadata =
+    normalizeRevisionNumber(proposal.revisionNumber) > 0 || hasTextValue(proposal.revisionLabel) || hasTextValue(proposal.parentProposalId);
   const importedProposal = createEditableProposal({
     ...proposal,
     updatedAt: new Date().toISOString(),
@@ -4103,7 +4191,7 @@ function resolveImportedProposalIdentity(proposal, existingProposals = []) {
     importedProposal.id = createProposalId();
   }
 
-  if (!importedProposal.proposalNumber || existingNumbers.has(importedProposal.proposalNumber)) {
+  if (!importedProposal.proposalNumber || (existingNumbers.has(importedProposal.proposalNumber) && !hasRevisionMetadata)) {
     importedProposal.proposalNumber = getNextProposalNumber(existingProposals, new Date(importedProposal.proposalDate || Date.now()));
   }
 
@@ -4170,6 +4258,13 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
     id: createProposalId(),
     proposalNumber: getNextProposalNumber(existingProposals, today),
     status: "draft",
+    revisionNumber: 0,
+    revisionLabel: "Rev 0",
+    revisionDate: formatInputDate(today),
+    revisionNotes: "",
+    parentProposalId: "",
+    previousTotal: "",
+    revisedTotal: "",
     proposalDate: formatInputDate(today),
     validUntil: formatInputDate(validUntil),
     createdAt: today.toISOString(),
@@ -4205,6 +4300,38 @@ function createNewGcPacketDraft(existingProposals, companySettings = getDefaultC
       },
     },
   });
+}
+
+function createProposalRevisionDraft(sourceProposal, existingProposals = []) {
+  const now = new Date();
+  const source = createEditableProposal(sourceProposal);
+  const revisionNumber = getNextRevisionNumber(source, existingProposals);
+  const previousTotal = calculateProposalTotals(source).total;
+  const revisionLabel = formatRevisionLabel(revisionNumber);
+
+  return createEditableProposal({
+    ...cloneObject(source),
+    id: createProposalId(),
+    status: "draft",
+    revisionNumber,
+    revisionLabel,
+    revisionDate: formatInputDate(now),
+    revisionNotes: `Created ${revisionLabel} from ${source.revisionLabel || formatRevisionLabel(source.revisionNumber)}.`,
+    parentProposalId: source.id,
+    previousTotal,
+    revisedTotal: previousTotal,
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+  });
+}
+
+function getNextRevisionNumber(sourceProposal, proposals = []) {
+  const sourceNumber = sourceProposal.proposalNumber;
+  const maxExistingRevision = proposals
+    .filter((proposal) => proposal.proposalNumber === sourceNumber)
+    .reduce((maxRevision, proposal) => Math.max(maxRevision, normalizeRevisionNumber(proposal.revisionNumber)), -1);
+
+  return Math.max(normalizeRevisionNumber(sourceProposal.revisionNumber), maxExistingRevision) + 1;
 }
 
 function hasTemplateSensitiveChanges(proposal, companySettings = getDefaultCompanySettings()) {
@@ -4274,6 +4401,13 @@ function duplicateProposalDraft(sourceProposal, existingProposals) {
     id: createProposalId(),
     proposalNumber: getNextProposalNumber(existingProposals, now),
     status: "draft",
+    revisionNumber: 0,
+    revisionLabel: "Rev 0",
+    revisionDate: formatInputDate(now),
+    revisionNotes: "",
+    parentProposalId: "",
+    previousTotal: "",
+    revisedTotal: "",
     proposalDate: formatInputDate(now),
     validUntil: formatInputDate(validUntil),
     createdAt: now.toISOString(),
@@ -4340,6 +4474,53 @@ function formatDisplayDate(value) {
     day: "numeric",
     year: "numeric",
   }).format(date);
+}
+
+function formatRevisionLabel(revisionNumber = 0) {
+  return `Rev ${normalizeRevisionNumber(revisionNumber)}`;
+}
+
+function formatProposalNumberWithRevision(proposal = {}) {
+  const proposalNumber = proposal.proposalNumber || "";
+  const revisionLabel = proposal.revisionLabel || formatRevisionLabel(proposal.revisionNumber);
+
+  return proposalNumber ? `${proposalNumber} - ${revisionLabel}` : revisionLabel;
+}
+
+function normalizeRevisionNumber(value) {
+  const parsed = Number.parseInt(value, 10);
+
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function getRevisionHistory(proposal = {}, proposals = []) {
+  if (!proposal?.proposalNumber) {
+    return [proposal].filter((item) => item?.id);
+  }
+
+  const family = [...proposals, proposal]
+    .filter((item) => item?.id && item.proposalNumber === proposal.proposalNumber)
+    .reduce((items, item) => {
+      if (!items.some((existing) => existing.id === item.id)) {
+        items.push(createEditableProposal(item));
+      }
+
+      return items;
+    }, []);
+
+  return family.sort((a, b) => normalizeRevisionNumber(a.revisionNumber) - normalizeRevisionNumber(b.revisionNumber));
+}
+
+function isLatestRevision(proposal = {}, proposals = []) {
+  if (!proposal.proposalNumber) {
+    return true;
+  }
+
+  const latestRevisionNumber = proposals
+    .filter((item) => item.proposalNumber === proposal.proposalNumber)
+    .reduce((latest, item) => Math.max(latest, normalizeRevisionNumber(item.revisionNumber)), -1);
+
+  return normalizeRevisionNumber(proposal.revisionNumber) >= latestRevisionNumber;
 }
 
 function formatDashboardDate(value) {
@@ -4724,14 +4905,22 @@ function createEditableProposal(seedProposal) {
   const project = proposal.project || {};
   const proposedSchedule = project.proposedSchedule || {};
   const proposalType = proposal.proposalType ?? proposal.type ?? "commercial";
+  const revisionNumber = normalizeRevisionNumber(proposal.revisionNumber);
+  const revisionLabel = proposal.revisionLabel || formatRevisionLabel(revisionNumber);
 
-  return {
+  const editableProposal = {
     ...proposal,
     id: proposal.id || createProposalId(),
     status: proposal.status || "draft",
     proposalType,
     type: proposalType,
     packetMode: proposal.packetMode || (proposalType === "gc_prime" ? "full_gc_packet" : "summary"),
+    revisionNumber,
+    revisionLabel,
+    revisionDate: proposal.revisionDate || proposal.proposalDate || "",
+    revisionNotes: proposal.revisionNotes || "",
+    parentProposalId: proposal.parentProposalId || "",
+    previousTotal: proposal.previousTotal ?? "",
     company: {
       ...SEED_PROPOSAL.company,
       ...(proposal.company || {}),
@@ -4792,6 +4981,11 @@ function createEditableProposal(seedProposal) {
         display: proposedSchedule.display ?? "",
       },
     },
+  };
+
+  return {
+    ...editableProposal,
+    revisedTotal: calculateProposalTotals(editableProposal).total,
   };
 }
 

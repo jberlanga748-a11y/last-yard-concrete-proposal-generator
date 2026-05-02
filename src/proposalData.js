@@ -429,6 +429,12 @@ export const PROPOSAL_TEMPLATES = [
 export const SEED_PROPOSAL = {
   id: "seed-marketplace-retail-center",
   proposalNumber: "LYC-2026-0001",
+  revisionNumber: 0,
+  revisionLabel: "Rev 0",
+  revisionDate: "2026-05-01",
+  revisionNotes: "",
+  parentProposalId: "",
+  previousTotal: "",
   status: "draft",
   proposalType: "commercial",
   type: "commercial",
