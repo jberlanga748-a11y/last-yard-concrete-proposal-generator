@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   LINE_ITEM_UNITS,
+  PRICING_SECTION_TYPES,
   PROPOSAL_STATUSES,
   PROPOSAL_TYPES,
   SEED_PROPOSAL,
@@ -268,6 +269,42 @@ export default function App() {
     }));
   }
 
+  function updatePricingSection(index, field, value) {
+    setProposalDraft((currentProposal) => {
+      const pricingSections = normalizePricingSections(currentProposal.pricingSections).map((section, sectionIndex) =>
+        sectionIndex === index ? { ...section, [field]: value } : section,
+      );
+
+      return { ...currentProposal, pricingSections };
+    });
+  }
+
+  function addPricingSection() {
+    setProposalDraft((currentProposal) => ({
+      ...currentProposal,
+      pricingSections: [
+        ...normalizePricingSections(currentProposal.pricingSections),
+        {
+          id: createProposalId(),
+          type: "add_alternate",
+          label: "",
+          description: "",
+          amount: "",
+          included: false,
+        },
+      ],
+    }));
+  }
+
+  function removePricingSection(index) {
+    setProposalDraft((currentProposal) => ({
+      ...currentProposal,
+      pricingSections: normalizePricingSections(currentProposal.pricingSections).filter(
+        (_, sectionIndex) => sectionIndex !== index,
+      ),
+    }));
+  }
+
   function updateFinancialField(field, value) {
     setProposalDraft((currentProposal) => {
       const financials = { ...currentProposal.financials };
@@ -383,6 +420,7 @@ export default function App() {
 
   function fillProposalFromNotes() {
     const parsedNotes = parseProjectNotes(smartPasteNotes);
+    const parsedLineItemCount = parsedNotes.lineItems.length + (parsedNotes.values.baseBidLineItem ? 1 : 0);
 
     if (parsedNotes.fields.length === 0 && parsedNotes.lineItems.length === 0) {
       setSmartPasteResult({
@@ -396,7 +434,7 @@ export default function App() {
     setProposalDraft((currentProposal) => createEditableProposal(applyParsedNotesToProposal(currentProposal, parsedNotes)));
     setSmartPasteResult({
       fields: parsedNotes.fields,
-      lineItemCount: parsedNotes.lineItems.length,
+      lineItemCount: parsedLineItemCount,
       warnings: parsedNotes.warnings,
     });
   }
@@ -488,10 +526,13 @@ export default function App() {
               <ProposalEditor
                 proposal={proposalDraft}
                 onAddLineItem={addLineItem}
+                onAddPricingSection={addPricingSection}
                 onChange={updateProposalField}
                 onFinancialChange={updateFinancialField}
                 onLineItemChange={updateLineItem}
+                onPricingSectionChange={updatePricingSection}
                 onRemoveLineItem={removeLineItem}
+                onRemovePricingSection={removePricingSection}
                 onAddScopeBullet={addScopeBullet}
                 onAddScopeSection={addScopeSection}
                 onRemoveScopeBullet={removeScopeBullet}
@@ -848,12 +889,15 @@ function ValidationPanel({ className = "", notice = "", validation }) {
 function ProposalEditor({
   proposal,
   onAddLineItem,
+  onAddPricingSection,
   onAddScopeBullet,
   onAddScopeSection,
   onChange,
   onFinancialChange,
   onLineItemChange,
+  onPricingSectionChange,
   onRemoveLineItem,
+  onRemovePricingSection,
   onRemoveScopeBullet,
   onRemoveScopeSection,
   onScopeBulletChange,
@@ -1032,6 +1076,13 @@ function ProposalEditor({
           onRemoveLineItem={onRemoveLineItem}
         />
 
+        <PricingSectionsEditor
+          pricingSections={proposal.pricingSections}
+          onAddPricingSection={onAddPricingSection}
+          onPricingSectionChange={onPricingSectionChange}
+          onRemovePricingSection={onRemovePricingSection}
+        />
+
         <div className="editor-pricing-settings">
           <EditorField
             label="Tax Rate (%)"
@@ -1184,6 +1235,82 @@ function LineItemEditor({ lineItems, onAddLineItem, onLineItemChange, onRemoveLi
   );
 }
 
+function PricingSectionsEditor({
+  pricingSections,
+  onAddPricingSection,
+  onPricingSectionChange,
+  onRemovePricingSection,
+}) {
+  const sections = normalizePricingSections(pricingSections);
+
+  return (
+    <div className="pricing-section-editor">
+      <div className="pricing-section-editor-header">
+        <strong>Alternates / Allowances</strong>
+        <span>Included items are added to the proposal total.</span>
+      </div>
+
+      {sections.map((section, index) => (
+        <div className="pricing-section-card" key={section.id || `pricing-section-${index}`}>
+          <div className="line-item-card-header">
+            <strong>{formatOptionLabel(section.type)}</strong>
+            <button type="button" onClick={() => onRemovePricingSection(index)}>
+              Remove
+            </button>
+          </div>
+
+          <div className="pricing-section-grid">
+            <EditorField
+              label="Section Type"
+              path={`pricingSections.${index}.type`}
+              value={section.type}
+              onChange={(_, value) => onPricingSectionChange(index, "type", value)}
+              options={PRICING_SECTION_TYPES}
+            />
+            <EditorField
+              label="Amount"
+              path={`pricingSections.${index}.amount`}
+              type="number"
+              value={section.amount}
+              onChange={(_, value) => onPricingSectionChange(index, "amount", value)}
+            />
+            <div className="pricing-section-wide">
+              <EditorField
+                label="Section Label / Name"
+                path={`pricingSections.${index}.label`}
+                value={section.label}
+                onChange={(_, value) => onPricingSectionChange(index, "label", value)}
+              />
+            </div>
+            <div className="pricing-section-wide">
+              <EditorField
+                label="Description"
+                path={`pricingSections.${index}.description`}
+                value={section.description}
+                onChange={(_, value) => onPricingSectionChange(index, "description", value)}
+                multiline
+              />
+            </div>
+          </div>
+
+          <label className="editor-check">
+            <input
+              checked={Boolean(section.included)}
+              type="checkbox"
+              onChange={(event) => onPricingSectionChange(index, "included", event.target.checked)}
+            />
+            <span>Included in proposal total</span>
+          </label>
+        </div>
+      ))}
+
+      <button className="editor-add-button" type="button" onClick={onAddPricingSection}>
+        Add alternate / allowance
+      </button>
+    </div>
+  );
+}
+
 function PricingSummary({ totals }) {
   return (
     <div className="editor-totals">
@@ -1202,6 +1329,10 @@ function PricingSummary({ totals }) {
       <div>
         <span>Total Proposal</span>
         <strong>{formatCurrency(totals.total)}</strong>
+      </div>
+      <div>
+        <span>Included Alternates / Allowances</span>
+        <strong>{formatCurrency(totals.includedPricingSectionsTotal)}</strong>
       </div>
       <div>
         <span>Deposit</span>
@@ -1619,6 +1750,7 @@ function ProposalPreview({ proposal }) {
   const proposalTotals = calculateProposalTotals(proposal);
   const totalProposalPrice = formatCurrency(proposalTotals.total);
   const termsCopy = buildTermsCopy(proposal.terms);
+  const visiblePricingSections = getVisiblePricingSections(proposal.pricingSections);
 
   return (
     <section className="proposal-grid">
@@ -1649,6 +1781,9 @@ function ProposalPreview({ proposal }) {
 
         <SectionTitle icon="dollar" title="Pricing" className="section-title-spaced" />
         <PricingTable items={lineItems} total={totalProposalPrice} />
+        {visiblePricingSections.length > 0 ? (
+          <AlternatesAllowancesTable sections={visiblePricingSections} totals={proposalTotals} />
+        ) : null}
 
         <div className="two-column lower-grid">
           <div>
@@ -1947,6 +2082,56 @@ function PricingTable({ items, total }) {
             <td>{total}</td>
           </tr>
         </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AlternatesAllowancesTable({ sections, totals }) {
+  return (
+    <div className="alternates-wrap">
+      <div className="alternates-heading">
+        <h4>Alternates / Allowances</h4>
+        <span>Included items are reflected in the total proposal price.</span>
+      </div>
+      <table className="alternates-table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Label</th>
+            <th>Description</th>
+            <th>Status</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="base-bid-row">
+            <td>Base Bid</td>
+            <td>Base scope</td>
+            <td>Line item pricing total</td>
+            <td>Included</td>
+            <td>{formatCurrency(totals.baseBid)}</td>
+          </tr>
+          {sections.map((section, index) => (
+            <tr key={section.id || `${section.type}-${index}`}>
+              <td>{formatOptionLabel(section.type)}</td>
+              <td>{section.label}</td>
+              <td>{section.description || "-"}</td>
+              <td>{section.included ? "Included" : "Not Included"}</td>
+              <td>{formatPricingSectionAmount(section)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan="4">Total Included Alternates / Allowances</td>
+            <td>{formatCurrency(totals.includedPricingSectionsTotal)}</td>
+          </tr>
+          <tr>
+            <td colSpan="4">Total if All Alternates Accepted</td>
+            <td>{formatCurrency(totals.totalIfAllAlternatesAccepted)}</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   );
@@ -2472,6 +2657,21 @@ function normalizeTextList(items = []) {
   return Array.isArray(items) ? items : [];
 }
 
+function normalizePricingSections(pricingSections = []) {
+  if (!Array.isArray(pricingSections)) {
+    return [];
+  }
+
+  return pricingSections.map((section) => ({
+    id: section?.id || createProposalId(),
+    type: PRICING_SECTION_TYPES.includes(section?.type) ? section.type : "add_alternate",
+    label: section?.label ?? section?.name ?? "",
+    description: section?.description ?? "",
+    amount: section?.amount ?? "",
+    included: Boolean(section?.included),
+  }));
+}
+
 function createEditableProposal(seedProposal) {
   const proposal = cloneObject(seedProposal || {});
   const client = proposal.client || {};
@@ -2522,6 +2722,7 @@ function createEditableProposal(seedProposal) {
       ...item,
       taxable: item.taxable ?? true,
     })),
+    pricingSections: normalizePricingSections(proposal.pricingSections),
     client: {
       ...client,
       billingAddress: client.billingAddress ?? client.address ?? "",
@@ -2577,6 +2778,23 @@ function formatQuantity(value) {
   }).format(toEditableNumber(value));
 }
 
+function getVisiblePricingSections(pricingSections = []) {
+  return normalizePricingSections(pricingSections).filter(
+    (section) =>
+      hasTextValue(section.label) ||
+      hasTextValue(section.description) ||
+      hasTextValue(section.amount) ||
+      section.included,
+  );
+}
+
+function formatPricingSectionAmount(section) {
+  const amount = Math.abs(toEditableNumber(section.amount));
+  const formattedAmount = formatCurrency(amount);
+
+  return section.type === "deduct_alternate" ? `-${formattedAmount}` : formattedAmount;
+}
+
 function buildTermsCopy(terms) {
   const normalizedTerms = terms || {};
   const copyParts = [
@@ -2591,8 +2809,13 @@ function buildTermsCopy(terms) {
 
 function formatOptionLabel(value) {
   const labels = {
+    add_alternate: "Add Alternate",
+    allowance: "Allowance",
+    base_bid: "Base Bid",
+    deduct_alternate: "Deduct Alternate",
     gc_prime: "GC / Prime Contractor",
     public_municipal: "Public / Municipal",
+    unit_price: "Unit Price",
   };
 
   if (labels[value]) {
@@ -2784,6 +3007,22 @@ function parseProjectNotes(notes) {
   }
 
   const lineItems = parseSmartPasteLineItems(sections.lineItems || [], warnings);
+  const pricingParse = parseSmartPastePricingSections(sections.pricingSections || [], warnings);
+
+  if (pricingParse.baseBidLineItem) {
+    values.baseBidLineItem = pricingParse.baseBidLineItem;
+    fields.push("base bid");
+  }
+
+  if (pricingParse.sections.length > 0) {
+    values.pricingSections = pricingParse.sections;
+    fields.push("alternates / allowances");
+  }
+
+  if (pricingParse.totalIfAllAccepted !== undefined) {
+    values.totalIfAllAccepted = pricingParse.totalIfAllAccepted;
+    fields.push("total if all accepted");
+  }
 
   if ((sections.lineItems || []).length > 0 && lineItems.length === 0) {
     warnings.push("Line items were found, but none matched Description | Quantity | Unit | Unit Price.");
@@ -2878,6 +3117,12 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
 
   if (parsedNotes.lineItems.length > 0) {
     nextProposal.lineItems = parsedNotes.lineItems;
+  } else if (values.baseBidLineItem) {
+    nextProposal.lineItems = [values.baseBidLineItem];
+  }
+
+  if (values.pricingSections) {
+    nextProposal.pricingSections = values.pricingSections;
   }
 
   return nextProposal;
@@ -2893,6 +3138,12 @@ function collectSmartPasteSections(notes) {
     const line = rawLine.trim();
 
     if (!line) {
+      return;
+    }
+
+    if (isSmartPricingLine(line)) {
+      activeKey = "pricingSections";
+      appendSmartPasteSection(sections, "pricingSections", line);
       return;
     }
 
@@ -2944,6 +3195,8 @@ function getSmartPasteLabelKey(label) {
     schedule: "schedule",
     scope: "scope",
     terms: "terms",
+    "total if all accepted": "pricingSections",
+    "total if all alternates accepted": "pricingSections",
   };
 
   return labels[normalizedLabel] || "";
@@ -2980,6 +3233,118 @@ function parseSmartPasteLineItems(lines, warnings) {
     .map((line) => parseSmartPasteLineItem(line, warnings))
     .filter(Boolean)
     .map((item, index) => ({ ...item, itemNumber: String(index + 1) }));
+}
+
+function parseSmartPastePricingSections(lines, warnings) {
+  const result = {
+    baseBidLineItem: null,
+    sections: [],
+    totalIfAllAccepted: undefined,
+  };
+
+  lines.forEach((line) => {
+    const parsed = parseSmartPastePricingLine(line, warnings);
+
+    if (!parsed) {
+      return;
+    }
+
+    if (parsed.kind === "base_bid") {
+      result.baseBidLineItem = {
+        itemNumber: "1",
+        description: parsed.label || "Base Bid",
+        quantity: 1,
+        unit: "LS",
+        unitPrice: parsed.amount,
+        taxable: true,
+      };
+      return;
+    }
+
+    if (parsed.kind === "total_if_all") {
+      result.totalIfAllAccepted = parsed.amount;
+      return;
+    }
+
+    result.sections.push({
+      id: createProposalId(),
+      type: parsed.kind,
+      label: parsed.label,
+      description: parsed.description,
+      amount: parsed.amount,
+      included: parsed.kind === "allowance",
+    });
+  });
+
+  return result;
+}
+
+function parseSmartPastePricingLine(line, warnings) {
+  const match = String(line).match(
+    /^(base bid|allowance|add alternate(?:\s+\d+|\s+[a-z]+)?|deduct alternate(?:\s+\d+|\s+[a-z]+)?|unit price(?:\s+\d+|\s+[a-z]+)?|total if all(?: alternates)? accepted)\s*:\s*(.+)$/i,
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const rawLabel = match[1].trim();
+  const rawValue = match[2].trim();
+  const normalizedLabel = rawLabel.toLowerCase();
+  const amountParts = rawValue.split("|").map((part) => part.trim()).filter(Boolean);
+  const amount = toEditableNumber(amountParts[amountParts.length - 1]);
+
+  if (amount <= 0) {
+    warnings.push(`Skipped pricing section "${line}" because the amount could not be parsed.`);
+    return null;
+  }
+
+  if (normalizedLabel.startsWith("total if all")) {
+    return { kind: "total_if_all", amount };
+  }
+
+  if (normalizedLabel === "base bid") {
+    return {
+      kind: "base_bid",
+      label: amountParts.length > 1 ? amountParts[0] : "Base Bid",
+      description: "",
+      amount,
+    };
+  }
+
+  const type = getSmartPricingType(normalizedLabel);
+  const numberedLabel = rawLabel.replace(/\s+/g, " ");
+  const valueLabel = amountParts.length > 1 ? amountParts.slice(0, -1).join(" | ") : numberedLabel;
+  const hasNumberedPrefix = /\d|[a-z]$/i.test(numberedLabel.replace(/^(add|deduct) alternate\s*/i, ""));
+
+  return {
+    kind: type,
+    label: hasNumberedPrefix && type !== "allowance" && type !== "unit_price" ? numberedLabel : valueLabel,
+    description: hasNumberedPrefix && type !== "allowance" && type !== "unit_price" ? valueLabel : "",
+    amount,
+  };
+}
+
+function isSmartPricingLine(line) {
+  return /^(base bid|allowance|add alternate(?:\s+\d+|\s+[a-z]+)?|deduct alternate(?:\s+\d+|\s+[a-z]+)?|unit price(?:\s+\d+|\s+[a-z]+)?|total if all(?: alternates)? accepted)\s*:/i.test(
+    String(line).trim(),
+  );
+}
+
+function getSmartPricingType(label) {
+  if (label.startsWith("allowance")) {
+    return "allowance";
+  }
+
+  if (label.startsWith("deduct alternate")) {
+    return "deduct_alternate";
+  }
+
+  if (label.startsWith("unit price")) {
+    return "unit_price";
+  }
+
+  return "add_alternate";
 }
 
 function parseSmartPasteLineItem(line, warnings) {

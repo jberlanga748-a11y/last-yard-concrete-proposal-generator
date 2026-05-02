@@ -527,6 +527,50 @@ h4 {
   gap: 12px;
 }
 
+.pricing-section-editor {
+  display: grid;
+  gap: 12px;
+  margin-top: 2px;
+}
+
+.pricing-section-editor-header {
+  display: grid;
+  gap: 3px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.pricing-section-editor-header strong {
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.pricing-section-editor-header span {
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.pricing-section-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.pricing-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.pricing-section-wide {
+  grid-column: span 2;
+}
+
 .project-photo-editor {
   display: grid;
   gap: 12px;
@@ -1600,6 +1644,78 @@ h4 {
   text-align: right;
 }
 
+.alternates-wrap {
+  margin: 10px 32px 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: white;
+  box-shadow: 0 3px 10px rgba(11, 23, 39, 0.05);
+}
+
+.alternates-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+}
+
+.alternates-heading h4 {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.alternates-heading span {
+  color: var(--body);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.alternates-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10.5px;
+}
+
+.alternates-table th {
+  background: #f4f5f6;
+  color: var(--ink);
+  padding: 5px 7px;
+  font-size: 8.5px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.alternates-table td {
+  border-top: 1px solid var(--line);
+  color: var(--body);
+  padding: 5px 7px;
+  vertical-align: top;
+}
+
+.alternates-table th:last-child,
+.alternates-table td:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.alternates-table .base-bid-row td {
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.alternates-table tfoot td {
+  background: #f8fafc;
+  color: var(--ink);
+  font-weight: 950;
+}
+
 .lower-grid {
   gap: 32px;
   padding: 28px 32px 0;
@@ -1878,6 +1994,7 @@ h4 {
   .section-pad,
   .spec-grid,
   .pricing-wrap,
+  .alternates-wrap,
   .lower-grid,
   .why-choose,
   .compact-footer,
@@ -2174,6 +2291,22 @@ h4 {
     padding: 8px 28px 0;
   }
 
+  .alternates-wrap {
+    margin: 6px 28px 0;
+  }
+
+  .alternates-heading {
+    padding: 5px 7px;
+  }
+
+  .alternates-heading h4 {
+    font-size: 9.5px;
+  }
+
+  .alternates-heading span {
+    font-size: 7.5px;
+  }
+
   .lower-grid {
     gap: 24px;
     padding: 16px 28px 0;
@@ -2280,7 +2413,8 @@ h4 {
   }
 
   .spec-table,
-  .pricing-table {
+  .pricing-table,
+  .alternates-table {
     font-size: 10px;
   }
 
@@ -2312,6 +2446,15 @@ h4 {
 
   .pricing-table .total-row td:last-child {
     font-size: 13px;
+  }
+
+  .alternates-table th {
+    padding: 3px 5px;
+    font-size: 7.4px;
+  }
+
+  .alternates-table td {
+    padding: 3px 5px;
   }
 
   .mini-heading {
@@ -2477,6 +2620,22 @@ h4 {
     padding: 5px 24px 0;
   }
 
+  .proposal-page:not(.first-page) .alternates-wrap {
+    margin: 4px 24px 0;
+  }
+
+  .proposal-page:not(.first-page) .alternates-heading {
+    padding: 4px 6px;
+  }
+
+  .proposal-page:not(.first-page) .alternates-heading h4 {
+    font-size: 8px;
+  }
+
+  .proposal-page:not(.first-page) .alternates-heading span {
+    font-size: 6.7px;
+  }
+
   .proposal-page:not(.first-page) .pricing-table th {
     padding: 3px 5px;
     font-size: 7px;
@@ -2496,6 +2655,19 @@ h4 {
 
   .proposal-page:not(.first-page) .pricing-table .total-row td:last-child {
     font-size: 10.5px;
+  }
+
+  .proposal-page:not(.first-page) .alternates-table {
+    font-size: 7.2px;
+  }
+
+  .proposal-page:not(.first-page) .alternates-table th {
+    padding: 2px 4px;
+    font-size: 6.2px;
+  }
+
+  .proposal-page:not(.first-page) .alternates-table td {
+    padding: 2px 4px;
   }
 
   .proposal-page:not(.first-page) .lower-grid {
@@ -2586,6 +2758,7 @@ h4 {
   .section-pad,
   .spec-grid,
   .pricing-wrap,
+  .alternates-wrap,
   .lower-grid,
   .mini-heading,
   .signature-grid,
@@ -2593,14 +2766,17 @@ h4 {
   .scope-column > div,
   .spec-table,
   .pricing-table,
+  .alternates-table,
   .spec-table tr,
-  .pricing-table tr {
+  .pricing-table tr,
+  .alternates-table tr {
     break-inside: avoid;
     page-break-inside: avoid;
   }
 
   .spec-table thead,
-  .pricing-table thead {
+  .pricing-table thead,
+  .alternates-table thead {
     display: table-header-group;
   }
 }

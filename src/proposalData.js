@@ -14,6 +14,8 @@ export const PROPOSAL_TYPES = ["residential", "gc_prime", "commercial", "public_
 
 export const LINE_ITEM_UNITS = ["LS", "SF", "SY", "LF", "CY", "EA", "HR", "DAY", "TON"];
 
+export const PRICING_SECTION_TYPES = ["base_bid", "allowance", "add_alternate", "deduct_alternate", "unit_price"];
+
 export const DEFAULT_SCOPE_SECTIONS = [
   {
     title: "Site Preparation",
@@ -219,6 +221,7 @@ export const SEED_PROPOSAL = {
       taxable: true,
     },
   ],
+  pricingSections: [],
   financials: {
     taxRate: 0,
     discountAmount: 0,
@@ -260,14 +263,30 @@ export function calculateProposalTotals(proposalOrLineItems, overrides = {}) {
   const taxableDiscount = subtotal > 0 ? discount * (taxableSubtotal / subtotal) : 0;
   const taxableAmount = Math.max(0, taxableSubtotal - taxableDiscount);
   const tax = roundMoney(taxableAmount * toRate(financials.taxRate));
-  const total = roundMoney(Math.max(0, subtotal - discount) + tax);
+  const includedPricingSectionsTotal = roundMoney(
+    (proposal.pricingSections || []).reduce(
+      (sum, section) => sum + (section.included ? getPricingSectionSignedAmount(section) : 0),
+      0,
+    ),
+  );
+  const allAcceptedPricingSectionsTotal = roundMoney(
+    (proposal.pricingSections || [])
+      .filter((section) => section.type !== "unit_price")
+      .reduce((sum, section) => sum + getPricingSectionSignedAmount(section), 0),
+  );
+  const baseBid = roundMoney(Math.max(0, subtotal - discount) + tax);
+  const total = roundMoney(Math.max(0, baseBid + includedPricingSectionsTotal));
+  const totalIfAllAlternatesAccepted = roundMoney(Math.max(0, baseBid + allAcceptedPricingSectionsTotal));
   const deposit = roundMoney(resolveDeposit(total, financials));
   const balanceDue = roundMoney(Math.max(0, total - deposit));
 
   return {
+    baseBid,
     subtotal,
     tax,
     discount,
+    includedPricingSectionsTotal,
+    totalIfAllAlternatesAccepted,
     total,
     deposit,
     balanceDue,
@@ -379,6 +398,8 @@ export function validateProposalCompleteness(proposal) {
     warnings.push("GC / Prime contractor fields are missing.");
   }
 
+  getPricingSectionWarnings(proposal.pricingSections).forEach((warning) => warnings.push(warning));
+
   return {
     isValid: errors.length === 0,
     errors,
@@ -392,6 +413,39 @@ function getLineItemAmount(item) {
   }
 
   return toNumber(item.quantity) * toNumber(item.unitPrice);
+}
+
+function getPricingSectionSignedAmount(section) {
+  const amount = Math.abs(toNumber(section.amount));
+
+  return section.type === "deduct_alternate" ? -amount : amount;
+}
+
+function getPricingSectionWarnings(pricingSections = []) {
+  if (!Array.isArray(pricingSections)) {
+    return [];
+  }
+
+  return pricingSections
+    .map((section, index) => {
+      const hasAnyPricingValue =
+        hasText(section?.label) || hasText(section?.description) || hasText(section?.amount) || section?.included === true;
+
+      if (!hasAnyPricingValue) {
+        return "";
+      }
+
+      if (!hasText(section?.label)) {
+        return `Alternate / allowance ${index + 1} is missing a label.`;
+      }
+
+      if (!hasText(section?.amount) || toNumber(section.amount) < 0) {
+        return `Alternate / allowance ${index + 1} is missing a valid amount.`;
+      }
+
+      return "";
+    })
+    .filter(Boolean);
 }
 
 function resolveDiscount(subtotal, financials) {
