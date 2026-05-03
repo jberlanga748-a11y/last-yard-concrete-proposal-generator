@@ -221,6 +221,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
   const [authMessage, setAuthMessage] = useState("");
   const [cloudSync, setCloudSync] = useState(() => createCloudSyncState());
+  const [saveState, setSaveState] = useState(() => createSaveState());
   const [proposalDirty, setProposalDirty] = useState(false);
   const company = proposalDraft.company;
   const isDashboardView = route.view === "dashboard";
@@ -323,6 +324,17 @@ export default function App() {
   useEffect(() => {
     function handlePopState() {
       const nextRoute = parseRoute(window.location.pathname);
+
+      if (
+        proposalDirty &&
+        isProposalRouteView(route.view) &&
+        nextRoute.path !== route.path &&
+        !window.confirm("You have unsaved proposal changes. Leave without saving?")
+      ) {
+        window.history.pushState({}, "", route.path);
+        return;
+      }
+
       setRoute(nextRoute);
 
       if (isProposalRouteView(nextRoute.view)) {
@@ -333,7 +345,21 @@ export default function App() {
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [companySettings, savedProposals]);
+  }, [companySettings, proposalDirty, route.path, route.view, savedProposals]);
+
+  useEffect(() => {
+    function handleBeforeUnload(event) {
+      if (!proposalDirty || !isProposalRouteView(route.view)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [proposalDirty, route.view]);
 
   useEffect(() => {
     setSaveMessage("");
@@ -400,6 +426,17 @@ export default function App() {
 
   function navigate(path, options = {}) {
     const nextRoute = parseRoute(path);
+
+    if (
+      !options.skipUnsavedCheck &&
+      proposalDirty &&
+      isProposalRouteView(route.view) &&
+      nextRoute.path !== route.path &&
+      !window.confirm("You have unsaved proposal changes. Leave without saving?")
+    ) {
+      return false;
+    }
+
     const method = options.replace ? "replaceState" : "pushState";
     window.history[method]({}, "", path);
     setRoute(nextRoute);
@@ -410,6 +447,8 @@ export default function App() {
         options.proposal ? createEditableProposal(options.proposal) : getInitialProposalForRoute(nextRoute, savedProposals, companySettings),
       );
     }
+
+    return true;
   }
 
   function openProposal(proposalId) {
@@ -531,6 +570,7 @@ export default function App() {
       setCloudSync({
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
+        lastError: "",
         lastSyncedAt: syncedAt,
         loading: false,
         message: `${settingsResult.message} ${contactsResult.message} ${proposalsResult.message}`,
@@ -542,6 +582,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         contactsStatus: cloudSyncErrorLabel,
+        lastError: error.message,
         loading: false,
         message: `Cloud sync failed: ${error.message}`,
         proposalStatus: cloudSyncErrorLabel,
@@ -577,6 +618,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
+        lastError: "",
         lastSyncedAt: syncedAt,
         loading: false,
         message: "Company settings synced to Supabase.",
@@ -587,6 +629,7 @@ export default function App() {
     } catch (error) {
       setCloudSync((currentSync) => ({
         ...currentSync,
+        lastError: error.message,
         loading: false,
         message: `Settings sync failed: ${error.message}`,
         settingsStatus: cloudSyncErrorLabel,
@@ -621,6 +664,7 @@ export default function App() {
         ...currentSync,
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
+        lastError: "",
         lastSyncedAt: syncedAt,
         loading: false,
         message: "Contacts synced to Supabase.",
@@ -631,6 +675,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         contactsStatus: cloudSyncErrorLabel,
+        lastError: error.message,
         loading: false,
         message: `Contacts sync failed: ${error.message}`,
       }));
@@ -657,6 +702,7 @@ export default function App() {
         ...currentSync,
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
+        lastError: "",
         lastSyncedAt: new Date().toISOString(),
         message: "Contact synced to Supabase.",
       }));
@@ -665,6 +711,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         contactsStatus: cloudSyncErrorLabel,
+        lastError: error.message,
         message: `Contact sync failed: ${error.message}`,
       }));
       setContactMessage(`Contact saved locally. Cloud sync failed: ${error.message}`);
@@ -685,6 +732,7 @@ export default function App() {
         ...currentSync,
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
+        lastError: "",
         lastSyncedAt: new Date().toISOString(),
         message: "Contact deleted from Supabase.",
       }));
@@ -693,6 +741,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         contactsStatus: cloudSyncErrorLabel,
+        lastError: error.message,
         message: `Cloud contact delete failed: ${error.message}`,
       }));
       setContactMessage(`Contact deleted locally. Cloud delete failed: ${error.message}`);
@@ -744,16 +793,28 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
+        lastError: "",
         lastSyncedAt: new Date().toISOString(),
         message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
+      }));
+      setSaveState((currentState) => ({
+        ...currentState,
+        lastCloudSavedAt: new Date().toISOString(),
+        lastSyncError: "",
       }));
       return true;
     } catch (error) {
       setCloudSync((currentSync) => ({
         ...currentSync,
+        lastError: error.message,
         message: `Proposal sync failed: ${error.message}`,
         proposalStatus: cloudSyncErrorLabel,
+      }));
+      setSaveState((currentState) => ({
+        ...currentState,
+        lastSyncError: error.message,
+        status: "Saved locally, cloud sync failed",
       }));
       setSaveMessage(`Saved locally. Cloud sync failed: ${error.message}`);
       return false;
@@ -783,18 +844,29 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
+        lastError: "",
         lastSyncedAt: new Date().toISOString(),
         loading: false,
         message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
+      setSaveState((currentState) => ({
+        ...currentState,
+        lastCloudSavedAt: new Date().toISOString(),
+        lastSyncError: "",
+      }));
       return true;
     } catch (error) {
       setCloudSync((currentSync) => ({
         ...currentSync,
+        lastError: error.message,
         loading: false,
         message: `Proposal sync failed: ${error.message}`,
         proposalStatus: cloudSyncErrorLabel,
+      }));
+      setSaveState((currentState) => ({
+        ...currentState,
+        lastSyncError: error.message,
       }));
       return false;
     }
@@ -836,6 +908,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
+        lastError: "",
         lastSyncedAt: syncedAt,
         loading: false,
         message: mergeResult.warning || `Pulled ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"}.`,
@@ -844,6 +917,7 @@ export default function App() {
     } catch (error) {
       setCloudSync((currentSync) => ({
         ...currentSync,
+        lastError: error.message,
         loading: false,
         message: `Pull failed: ${error.message}`,
         proposalStatus: cloudSyncErrorLabel,
@@ -879,6 +953,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
+        lastError: "",
         lastSyncedAt: new Date().toISOString(),
         loading: false,
         message: `${mergeResult.warning || "Cloud and local proposals are synced."} Legacy data URL images may still make cloud sync slower until they are replaced.`,
@@ -887,11 +962,24 @@ export default function App() {
     } catch (error) {
       setCloudSync((currentSync) => ({
         ...currentSync,
+        lastError: error.message,
         loading: false,
         message: `Proposal sync failed: ${error.message}`,
         proposalStatus: cloudSyncErrorLabel,
       }));
     }
+  }
+
+  function clearCloudSyncMessage() {
+    setCloudSync((currentSync) => ({
+      ...currentSync,
+      lastError: "",
+      message: "",
+    }));
+    setSaveState((currentState) => ({
+      ...currentState,
+      lastSyncError: "",
+    }));
   }
 
   function startNewContact() {
@@ -939,7 +1027,7 @@ export default function App() {
     const linkedCount = getProposalCountForContact(contactId, savedProposals);
     const suffix = linkedCount > 0 ? ` This will not delete ${linkedCount} linked proposal${linkedCount === 1 ? "" : "s"}.` : "";
 
-    if (!window.confirm(`Delete ${formatContactName(contact)} from saved contacts?${suffix}`)) {
+    if (!window.confirm(`Delete ${formatContactName(contact)} from saved contacts? This may affect local/cloud data after sync.${suffix}`)) {
       return;
     }
 
@@ -1049,6 +1137,7 @@ export default function App() {
       ...currentSync,
       companyId: "",
       contactsStatus: cloudLocalOnlyLabel,
+      lastError: "",
       loading: false,
       message: cloudSignInLabel,
       proposalStatus: cloudLocalOnlyLabel,
@@ -1058,6 +1147,10 @@ export default function App() {
   }
 
   async function saveCurrentProposal() {
+    if (saveState.isSaving) {
+      return;
+    }
+
     if (!canCompleteProposal("saving")) {
       return;
     }
@@ -1066,15 +1159,48 @@ export default function App() {
       ...proposalDraft,
       updatedAt: new Date().toISOString(),
     });
+    const savedAt = new Date().toISOString();
 
+    setSaveState((currentState) => ({
+      ...currentState,
+      isSaving: true,
+      lastLocalSavedAt: "",
+      lastSyncError: "",
+      status: "Saving...",
+    }));
+    setSaveMessage("Saving...");
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, proposalToSave));
     setProposalDraft(proposalToSave);
     setProposalDirty(false);
-    setSaveMessage(getCloudReadyMessage(authUser, "Draft saved locally. Syncing to cloud...", "Draft saved locally."));
-    await syncSingleProposalToCloud(proposalToSave, "Draft saved to Supabase.");
+    setSaveState((currentState) => ({
+      ...currentState,
+      lastLocalSavedAt: savedAt,
+      status: canUseCloudSync(authUser) ? "Saved locally. Syncing to cloud..." : "Saved locally",
+    }));
+
+    if (canUseCloudSync(authUser)) {
+      setSaveMessage("Saved locally. Syncing to cloud...");
+      const synced = await syncSingleProposalToCloud(proposalToSave, "Draft saved to Supabase.");
+
+      setSaveState((currentState) => ({
+        ...currentState,
+        isSaving: false,
+        lastCloudSavedAt: synced ? new Date().toISOString() : currentState.lastCloudSavedAt,
+        lastSyncError: synced ? "" : currentState.lastSyncError || cloudSync.lastError || "Cloud sync failed.",
+        status: synced ? "Saved locally and to cloud" : "Saved locally, cloud sync failed",
+      }));
+      setSaveMessage(synced ? "Saved locally and to cloud." : "Saved locally, cloud sync failed. Use Retry Sync when ready.");
+    } else {
+      setSaveState((currentState) => ({
+        ...currentState,
+        isSaving: false,
+        status: "Saved locally",
+      }));
+      setSaveMessage("Saved locally.");
+    }
 
     if (route.view === "new") {
-      navigate(`/proposals/${proposalToSave.id}`, { proposal: proposalToSave, replace: true });
+      navigate(`/proposals/${proposalToSave.id}`, { proposal: proposalToSave, replace: true, skipUnsavedCheck: true });
     }
   }
 
@@ -1107,7 +1233,7 @@ export default function App() {
     const revision = createProposalRevisionDraft(sourceProposal, savedProposals);
     const nextProposals = upsertProposal(upsertProposal(savedProposals, sourceProposal), revision);
     setSavedProposals(nextProposals);
-    navigate(`/proposals/${revision.id}`, { proposal: revision });
+    navigate(`/proposals/${revision.id}`, { proposal: revision, skipUnsavedCheck: true });
     setProposalDirty(false);
     setSaveMessage(`Created ${revision.revisionLabel}.`);
     await syncMultipleProposalsToCloud([sourceProposal, revision], `Created ${revision.revisionLabel} and synced it to Supabase.`);
@@ -1116,7 +1242,7 @@ export default function App() {
   async function duplicateCurrentProposal(proposal = proposalDraft) {
     const duplicate = duplicateProposalDraft(proposal, savedProposals);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, duplicate));
-    navigate(`/proposals/${duplicate.id}`, { proposal: duplicate });
+    navigate(`/proposals/${duplicate.id}`, { proposal: duplicate, skipUnsavedCheck: true });
     setSaveMessage(getCloudReadyMessage(authUser, "Duplicated locally. Syncing to cloud...", "Duplicated as a new draft."));
     await syncSingleProposalToCloud(duplicate, "Duplicate synced to Supabase.");
   }
@@ -2068,6 +2194,7 @@ export default function App() {
           onNewProposal={createNewProposal}
         />
       ) : null}
+      {!isPrintView && isSupabaseConfigured && !authUser ? <LocalModeBanner onOpenLogin={() => navigate("/login")} /> : null}
 
       <div className={isPrintView ? "" : "app-content"}>
       {isDashboardView ? (
@@ -2111,8 +2238,10 @@ export default function App() {
           backupTools={backupTools}
           cloudSync={cloudSync}
           message={settingsMessage}
+          saveState={saveState}
           settings={settingsDraft}
           storageDiagnostics={storageDiagnostics}
+          onClearCloudSyncMessage={clearCloudSyncMessage}
           onOpenLogin={() => navigate("/login")}
           onPullCloudData={pullCloudData}
           onPullCloudProposals={pullCloudProposals}
@@ -2185,6 +2314,7 @@ export default function App() {
                 proposal={proposalDraft}
                 revisionHistory={getRevisionHistory(proposalDraft, savedProposals)}
                 saveMessage={saveMessage}
+                saveState={saveState}
                 onBackToList={() => navigate("/proposals")}
                 onCreateRevision={createRevision}
                 onDuplicate={() => duplicateCurrentProposal(proposalDraft)}
@@ -2312,6 +2442,17 @@ function AppChrome({
         </button>
       </div>
     </header>
+  );
+}
+
+function LocalModeBanner({ onOpenLogin }) {
+  return (
+    <div className="local-mode-banner no-print">
+      <span>You are in local mode. Sign in to sync across devices.</span>
+      <button type="button" onClick={onOpenLogin}>
+        Sign In
+      </button>
+    </div>
   );
 }
 
@@ -2807,7 +2948,9 @@ function BackupRestorePanel({ canExportCurrent = false, message = "", onExport, 
       <div>
         <p className="list-kicker">Backup / Restore</p>
         <h3>LocalStorage Backup Tools</h3>
-        <p className="backup-help">Export JSON backups or restore proposals, company settings, and full app data.</p>
+        <p className="backup-help">
+          Export JSON backups or restore proposals, company settings, and full app data. Backup JSON files are plain files and are not encrypted.
+        </p>
         {message ? <span className="backup-message">{message}</span> : null}
       </div>
 
@@ -2878,7 +3021,7 @@ function ProposalSyncPanel({ authUser, cloudSync, onPullCloudProposals, onPushLo
     <div className="proposal-sync-panel no-print">
       <div>
         <span>Proposal sync</span>
-        <strong>{cloudSync.proposalStatus}</strong>
+        <strong>{cloudSync.loading ? "Syncing" : cloudSync.proposalStatus}</strong>
         <small>Last sync: {formatCloudSyncTime(cloudSync.lastSyncedAt)}</small>
       </div>
       <p>
@@ -3097,10 +3240,12 @@ function CompanySettingsView({
   backupTools,
   cloudSync,
   message,
+  saveState,
   settings,
   storageDiagnostics,
   onBackToList,
   onChange,
+  onClearCloudSyncMessage,
   onOpenLogin,
   onPullCloudData,
   onPullCloudProposals,
@@ -3152,7 +3297,9 @@ function CompanySettingsView({
         authMessage={authMessage}
         authUser={authUser}
         cloudSync={cloudSync}
+        saveState={saveState}
         storageDiagnostics={storageDiagnostics}
+        onClearCloudSyncMessage={onClearCloudSyncMessage}
         onOpenLogin={onOpenLogin}
         onPullCloudData={onPullCloudData}
         onPullCloudProposals={onPullCloudProposals}
@@ -3237,7 +3384,9 @@ function CloudStatusCard({
   authMessage,
   authUser,
   cloudSync,
+  saveState,
   storageDiagnostics,
+  onClearCloudSyncMessage,
   onOpenLogin,
   onPullCloudData,
   onPullCloudProposals,
@@ -3250,6 +3399,7 @@ function CloudStatusCard({
   onTestStorageUpload,
 }) {
   const cloudActionsDisabled = authLoading || cloudSync.loading || !canUseCloudSync(authUser);
+  const lastSyncError = cloudSync.lastError || (isCloudSyncErrorState(cloudSync) ? cloudSync.message : "");
 
   return (
     <section className="cloud-status-card no-print">
@@ -3272,11 +3422,11 @@ function CloudStatusCard({
         </div>
         <div>
           <span>Settings sync</span>
-          <strong>{cloudSync.settingsStatus}</strong>
+          <strong>{cloudSync.loading ? "Syncing" : cloudSync.settingsStatus}</strong>
         </div>
         <div>
           <span>Proposal sync</span>
-          <strong>{cloudSync.proposalStatus}</strong>
+          <strong>{cloudSync.loading ? "Syncing" : cloudSync.proposalStatus}</strong>
         </div>
         <div>
           <span>Asset storage</span>
@@ -3284,11 +3434,23 @@ function CloudStatusCard({
         </div>
         <div>
           <span>Contacts sync</span>
-          <strong>{cloudSync.contactsStatus}</strong>
+          <strong>{cloudSync.loading ? "Syncing" : cloudSync.contactsStatus}</strong>
         </div>
         <div>
           <span>Last cloud sync</span>
           <strong>{formatCloudSyncTime(cloudSync.lastSyncedAt)}</strong>
+        </div>
+        <div>
+          <span>Last saved locally</span>
+          <strong>{formatCloudSyncTime(saveState.lastLocalSavedAt)}</strong>
+        </div>
+        <div>
+          <span>Last sync error</span>
+          <strong>{lastSyncError || "-"}</strong>
+        </div>
+        <div>
+          <span>Current role</span>
+          <strong>{authUser ? "Owner/Admin" : "Local user"}</strong>
         </div>
       </div>
       <p>Cloud sync is enabled for proposals, company settings, contacts, and uploaded proposal assets. Legacy data URL images still render and can remain in backups.</p>
@@ -3315,6 +3477,9 @@ function CloudStatusCard({
               <button type="button" onClick={onSyncProposals} disabled={cloudActionsDisabled}>
                 Sync Proposals Now
               </button>
+              <button type="button" onClick={onSyncProposals} disabled={cloudActionsDisabled}>
+                Retry Sync
+              </button>
               <button type="button" onClick={onPullCloudProposals} disabled={cloudActionsDisabled}>
                 Pull Cloud Proposals
               </button>
@@ -3329,6 +3494,9 @@ function CloudStatusCard({
               </button>
               <button type="button" onClick={onSignOut} disabled={authLoading || cloudSync.loading}>
                 Sign Out
+              </button>
+              <button type="button" onClick={onClearCloudSyncMessage}>
+                Clear Sync Message
               </button>
             </>
           ) : (
@@ -3437,6 +3605,7 @@ function ProposalActionBar({
   proposal,
   revisionHistory = [],
   saveMessage,
+  saveState,
   onBackToList,
   onCreateRevision,
   onDuplicate,
@@ -3458,6 +3627,8 @@ function ProposalActionBar({
         <div className="revision-summary-line">
           <span>Current total: {formatCurrency(revisedTotal)}</span>
           {previousTotal > 0 ? <span>Previous total: {formatCurrency(previousTotal)}</span> : null}
+          <span>Save status: {saveState.status}</span>
+          <span>Last saved: {formatCloudSyncTime(saveState.lastLocalSavedAt)}</span>
         </div>
         {saveMessage ? <span>{saveMessage}</span> : null}
       </div>
@@ -3476,8 +3647,8 @@ function ProposalActionBar({
           Back to List
         </button>
         {!isPrintView ? (
-          <button type="button" onClick={onSave}>
-            Save Draft
+          <button type="button" onClick={onSave} disabled={saveState.isSaving}>
+            {saveState.isSaving ? "Saving..." : "Save Draft"}
           </button>
         ) : null}
         <button type="button" onClick={onDuplicate}>
@@ -5897,11 +6068,22 @@ function createCloudSyncState() {
   return {
     companyId: "",
     contactsStatus: cloudLocalOnlyLabel,
+    lastError: "",
     lastSyncedAt: "",
     loading: false,
     message: localMessage,
     proposalStatus: cloudLocalOnlyLabel,
     settingsStatus: cloudLocalOnlyLabel,
+  };
+}
+
+function createSaveState() {
+  return {
+    isSaving: false,
+    lastCloudSavedAt: "",
+    lastLocalSavedAt: "",
+    lastSyncError: "",
+    status: "Not saved this session",
   };
 }
 
@@ -5933,6 +6115,10 @@ function getAssetLocalStorageReason(authUser) {
   }
 
   return "cloud storage is unavailable.";
+}
+
+function isCloudSyncErrorState(cloudSync = {}) {
+  return [cloudSync.contactsStatus, cloudSync.proposalStatus, cloudSync.settingsStatus].includes(cloudSyncErrorLabel);
 }
 
 function getCloudSignInMessage() {
@@ -6914,7 +7100,9 @@ function parseFullAppBackupImport(importedJson) {
 
 function mergeOrReplaceImportedProposals(importedProposals, existingProposals, mode, label) {
   if (mode === "replace") {
-    const confirmed = window.confirm(`Replace existing proposals with ${label}? This cannot be undone unless you have a backup.`);
+    const confirmed = window.confirm(
+      `Replace existing proposals with ${label}? This may affect local and cloud data after your next sync. This cannot be undone unless you have a backup.`,
+    );
 
     if (!confirmed) {
       return null;
@@ -6931,7 +7119,9 @@ function mergeOrReplaceImportedProposals(importedProposals, existingProposals, m
 
 function mergeOrReplaceImportedContacts(importedContacts, existingContacts, mode, label) {
   if (mode === "replace") {
-    const confirmed = window.confirm(`Replace existing contacts with ${label}? This cannot be undone unless you have a backup.`);
+    const confirmed = window.confirm(
+      `Replace existing contacts with ${label}? This may affect local and cloud data after your next sync. This cannot be undone unless you have a backup.`,
+    );
 
     if (!confirmed) {
       return null;
