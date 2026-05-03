@@ -21,7 +21,42 @@ import {
   validateProposalCompleteness,
 } from "./proposalData.js";
 import { isSupabaseConfigured, supabase } from "./supabaseClient.js";
-import { TEAM_INVITE_ROLES, canManageTeamAccess, formatTeamRole, normalizeTeamMember, normalizeTeamRole } from "./utils/cloud/teamAccess.js";
+import { canManageTeamAccess, formatTeamRole } from "./utils/cloud/teamAccess.js";
+import { canUseCloudSync, getCloudReadyMessage, getCloudSignInMessage } from "./utils/cloud/cloudSync.js";
+import {
+  createCloudTeamInvite,
+  deactivateCloudTeamMember,
+  ensureCloudCompany,
+  fetchCloudTeamMembers,
+  loadOrSeedCloudCompanySettings,
+  saveCloudCompanySettings,
+} from "./utils/cloud/companyCloud.js";
+import {
+  deleteCloudContact,
+  loadOrSeedCloudContacts,
+  replaceCloudContacts,
+  saveCloudContact,
+} from "./utils/cloud/contactCloud.js";
+import {
+  fetchCloudProposals,
+  loadOrMergeCloudProposals,
+  mergeProposalCollections,
+  saveCloudProposal,
+  saveCloudProposals,
+} from "./utils/cloud/proposalCloud.js";
+import {
+  createLocalImageAsset,
+  formatStorageUploadError,
+  getActiveSupabaseUser,
+  getAssetLocalStorageReason,
+  getImageAssetLabel,
+  getImageAssetSource,
+  getStoragePublicUrl,
+  isDataUrl,
+  proposalAssetsBucket,
+  sanitizeStoragePathSegment,
+  uploadProposalAssetToCloud,
+} from "./utils/cloud/storageCloud.js";
 import { formatCloudSyncTime, formatDashboardDate, formatDisplayDate, formatOptionLabel } from "./utils/formatting/display.js";
 import { parseSmartPasteNotes } from "./utils/smartPaste/smartPasteParser.js";
 
@@ -29,7 +64,6 @@ const logoSrc = "/assets/last-yard-logo.jpg";
 const storageKey = "last-yard-proposals-v1";
 const companySettingsStorageKey = "last-yard-company-settings-v1";
 const contactsStorageKey = "last-yard-contacts-v1";
-const proposalAssetsBucket = "last-yard-proposal-assets";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
 const demoContactId = "demo-contact-abc-prime-contractors";
@@ -55,6 +89,26 @@ const CONTACT_TYPES = [
   "Builder",
   "Other",
 ];
+
+const companyCloudDeps = {
+  getDefaultCompanySettings,
+  normalizeCompanySettings,
+};
+
+const contactCloudDeps = {
+  normalizeContact,
+};
+
+const proposalCloudDeps = {
+  createProposalId,
+  getProposalTimestamp,
+  normalizeProposal: createEditableProposal,
+};
+
+const proposalCloudStatusLabels = {
+  needsSyncLabel: cloudNeedsSyncLabel,
+  syncedLabel: cloudSyncedLabel,
+};
 
 const trustCards = [
   ["shield", "PROVEN RELIABILITY", "On time. On budget. Built to last."],
@@ -634,25 +688,25 @@ export default function App() {
     }));
 
     try {
-      const companyRecord = await ensureCloudCompany(user, companySettings);
+      const companyRecord = await ensureCloudCompany(user, companySettings, companyCloudDeps);
 
       if (isCancelled()) {
         return;
       }
 
-      const settingsResult = await loadOrSeedCloudCompanySettings(companyRecord.id, companySettings);
+      const settingsResult = await loadOrSeedCloudCompanySettings(companyRecord.id, companySettings, companyCloudDeps);
 
       if (isCancelled()) {
         return;
       }
 
-      const contactsResult = await loadOrSeedCloudContacts(companyRecord.id, savedContacts);
+      const contactsResult = await loadOrSeedCloudContacts(companyRecord.id, savedContacts, contactCloudDeps);
 
       if (isCancelled()) {
         return;
       }
 
-      const proposalsResult = await loadOrMergeCloudProposals(companyRecord.id, savedProposals);
+      const proposalsResult = await loadOrMergeCloudProposals(companyRecord.id, savedProposals, proposalCloudDeps, proposalCloudStatusLabels);
       const cloudTeamMembers = await fetchCloudTeamMembers(companyRecord.id);
       const syncedAt = new Date().toISOString();
 
@@ -724,8 +778,8 @@ export default function App() {
     }));
 
     try {
-      const companyRecord = await ensureCloudCompany(authUser, normalizedSettings);
-      await saveCloudCompanySettings(companyRecord.id, normalizedSettings);
+      const companyRecord = await ensureCloudCompany(authUser, normalizedSettings, companyCloudDeps);
+      await saveCloudCompanySettings(companyRecord.id, normalizedSettings, "", companyCloudDeps);
       const syncedAt = new Date().toISOString();
 
       setCloudSync((currentSync) => ({
@@ -770,8 +824,8 @@ export default function App() {
     }));
 
     try {
-      const companyRecord = await ensureCloudCompany(authUser, companySettings);
-      await replaceCloudContacts(companyRecord.id, contacts);
+      const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
+      await replaceCloudContacts(companyRecord.id, contacts, contactCloudDeps);
       const syncedAt = new Date().toISOString();
 
       setCloudSync((currentSync) => ({
@@ -810,8 +864,8 @@ export default function App() {
     }
 
     try {
-      const companyRecord = await ensureCloudCompany(authUser, companySettings);
-      await saveCloudContact(companyRecord.id, contact);
+      const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
+      await saveCloudContact(companyRecord.id, contact, contactCloudDeps);
 
       setCloudSync((currentSync) => ({
         ...currentSync,
@@ -841,7 +895,7 @@ export default function App() {
     }
 
     try {
-      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
       await deleteCloudContact(companyRecord.id, contactId);
 
       setCloudSync((currentSync) => ({
@@ -892,7 +946,7 @@ export default function App() {
     }
 
     try {
-      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
       const members = await fetchCloudTeamMembers(companyRecord.id);
 
       setTeamMembers(members);
@@ -931,7 +985,7 @@ export default function App() {
         return;
       }
 
-      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
       const invitedMember = await createCloudTeamInvite(companyRecord.id, email, role);
       const members = await fetchCloudTeamMembers(companyRecord.id);
 
@@ -963,7 +1017,7 @@ export default function App() {
     }
 
     try {
-      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
       await deactivateCloudTeamMember(companyRecord.id, memberId);
       const members = await fetchCloudTeamMembers(companyRecord.id);
 
@@ -998,8 +1052,8 @@ export default function App() {
     }
 
     try {
-      const companyRecord = await ensureCloudCompany(authUser, companySettings);
-      await saveCloudProposal(companyRecord.id, proposal);
+      const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
+      await saveCloudProposal(companyRecord.id, proposal, proposalCloudDeps);
 
       setCloudSync((currentSync) => ({
         ...currentSync,
@@ -1050,8 +1104,8 @@ export default function App() {
     }));
 
     try {
-      const companyRecord = await ensureCloudCompany(authUser, companySettings);
-      await saveCloudProposals(companyRecord.id, proposals);
+      const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
+      await saveCloudProposals(companyRecord.id, proposals, proposalCloudDeps);
 
       setCloudSync((currentSync) => ({
         ...currentSync,
@@ -1111,9 +1165,9 @@ export default function App() {
     }));
 
     try {
-      const companyRecord = await ensureCloudCompany(authUser, companySettings);
-      const cloudProposals = await fetchCloudProposals(companyRecord.id);
-      const mergeResult = mergeProposalCollections(savedProposals, cloudProposals);
+      const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
+      const cloudProposals = await fetchCloudProposals(companyRecord.id, proposalCloudDeps);
+      const mergeResult = mergeProposalCollections(savedProposals, cloudProposals, proposalCloudDeps);
       const syncedAt = new Date().toISOString();
 
       setSavedProposals(mergeResult.proposals);
@@ -1157,11 +1211,11 @@ export default function App() {
     }));
 
     try {
-      const companyRecord = await ensureCloudCompany(authUser, companySettings);
-      const cloudProposals = await fetchCloudProposals(companyRecord.id);
-      const mergeResult = mergeProposalCollections(savedProposals, cloudProposals);
+      const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
+      const cloudProposals = await fetchCloudProposals(companyRecord.id, proposalCloudDeps);
+      const mergeResult = mergeProposalCollections(savedProposals, cloudProposals, proposalCloudDeps);
 
-      await saveCloudProposals(companyRecord.id, mergeResult.proposals);
+      await saveCloudProposals(companyRecord.id, mergeResult.proposals, proposalCloudDeps);
       setSavedProposals(mergeResult.proposals);
       syncDraftAfterProposalRestore(mergeResult.proposals);
       setCloudSync((currentSync) => ({
@@ -1830,6 +1884,7 @@ export default function App() {
             area: "featured",
             companySettings,
             companyUser: authUser,
+            companyDeps: companyCloudDeps,
             fileStem: `photo-${index + 1}`,
             proposalId: proposalDraft.id,
           })
@@ -1992,6 +2047,7 @@ export default function App() {
             area: "plans",
             companySettings,
             companyUser: authUser,
+            companyDeps: companyCloudDeps,
             fileStem: sheet.id || sheet.matchKey || `plan-${index + 1}`,
             proposalId: proposalDraft.id,
           })
@@ -2148,7 +2204,7 @@ export default function App() {
 
     try {
       const activeUser = await getActiveSupabaseUser();
-      const companyRecord = await ensureCloudCompany(activeUser, companySettings);
+      const companyRecord = await ensureCloudCompany(activeUser, companySettings, companyCloudDeps);
       const storagePath = `company/${companyRecord.id}/diagnostics/${fileName}`;
       setStorageDiagnostics((currentDiagnostics) => ({
         ...currentDiagnostics,
@@ -6501,92 +6557,6 @@ function createStorageDiagnosticsState() {
     lastUploadType: "",
   };
 }
-
-function canUseCloudSync(authUser) {
-  return Boolean(isSupabaseConfigured && supabase && authUser?.id);
-}
-
-function getAssetLocalStorageReason(authUser) {
-  if (!isSupabaseConfigured || !supabase) {
-    return "Supabase is not configured.";
-  }
-
-  if (!authUser?.id) {
-    return "Sign in to upload images to cloud.";
-  }
-
-  return "cloud storage is unavailable.";
-}
-
-function getCloudSignInMessage() {
-  if (!isSupabaseConfigured) {
-    return "Supabase is not configured. Proposals, contacts, and settings are stored locally.";
-  }
-
-  return cloudSignInLabel;
-}
-
-function getCloudReadyMessage(authUser, cloudMessage, localMessage) {
-  return canUseCloudSync(authUser) ? cloudMessage : localMessage;
-}
-
-function getImageAssetSource(asset = {}) {
-  if (hasTextValue(asset.dataUrl)) {
-    return asset.dataUrl;
-  }
-
-  if (hasTextValue(asset.src) && isDataUrl(asset.src)) {
-    return asset.src;
-  }
-
-  if (hasTextValue(asset.imageSrc) && isDataUrl(asset.imageSrc)) {
-    return asset.imageSrc;
-  }
-
-  if (hasTextValue(asset.publicUrl)) {
-    return asset.publicUrl;
-  }
-
-  if (hasTextValue(asset.signedUrl)) {
-    return asset.signedUrl;
-  }
-
-  if (hasTextValue(asset.src)) {
-    return asset.src;
-  }
-
-  if (hasTextValue(asset.imageSrc)) {
-    return asset.imageSrc;
-  }
-
-  if (hasTextValue(asset.storagePath) && isSupabaseConfigured && supabase) {
-    return getStoragePublicUrl(asset.storagePath);
-  }
-
-  return "";
-}
-
-function getImageAssetLabel(asset = {}) {
-  if (hasTextValue(asset.storagePath)) {
-    return "Cloud image";
-  }
-
-  if (hasTextValue(asset.dataUrl) || isDataUrl(asset.src) || isDataUrl(asset.imageSrc)) {
-    return "Local image";
-  }
-
-  return "No image";
-}
-
-function getStoragePublicUrl(storagePath) {
-  if (!hasTextValue(storagePath) || !isSupabaseConfigured || !supabase) {
-    return "";
-  }
-
-  const { data } = supabase.storage.from(proposalAssetsBucket).getPublicUrl(storagePath);
-  return data?.publicUrl || "";
-}
-
 function clearImageAssetFields(asset = {}) {
   return {
     ...asset,
@@ -6600,10 +6570,6 @@ function clearImageAssetFields(asset = {}) {
     storagePath: "",
     uploadedAt: "",
   };
-}
-
-function isDataUrl(value) {
-  return String(value || "").startsWith("data:");
 }
 
 function getAuthStatusLabel(authUser, authLoading = false) {
@@ -6707,906 +6673,6 @@ function saveStoredContacts(contacts) {
     // Local contact saving is best-effort for this phase.
   }
 }
-
-async function ensureCloudCompany(user, settings = getDefaultCompanySettings()) {
-  if (!canUseCloudSync(user)) {
-    throw new Error("Sign in to sync proposals, contacts, and settings.");
-  }
-
-  const normalizedSettings = normalizeCompanySettings(settings);
-  const email = user.email || "";
-
-  const { error: profileError } = await supabase.from("profiles").upsert(
-    {
-      email,
-      id: user.id,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "id" },
-  );
-
-  if (profileError) {
-    throw profileError;
-  }
-
-  const activeMembership = await claimInvitedMembership(user);
-
-  if (activeMembership?.companyId) {
-    const memberCompany = await fetchCloudCompanyById(activeMembership.companyId);
-
-    if (memberCompany?.id) {
-      return {
-        ...memberCompany,
-        role: activeMembership.role,
-      };
-    }
-  }
-
-  const { data: existingCompanies, error: companyLoadError } = await supabase
-    .from("companies")
-    .select("id,name")
-    .eq("owner_id", user.id)
-    .order("created_at", { ascending: true })
-    .limit(1);
-
-  if (companyLoadError) {
-    throw companyLoadError;
-  }
-
-  if (existingCompanies?.length > 0) {
-    const ownedCompany = {
-      ...existingCompanies[0],
-      role: "owner",
-    };
-    await ensureOwnerCompanyMembership(ownedCompany, user);
-    return ownedCompany;
-  }
-
-  const { data: createdCompany, error: companyCreateError } = await supabase
-    .from("companies")
-    .insert({
-      name: normalizedSettings.companyName || "Last Yard Concrete LLC",
-      owner_id: user.id,
-    })
-    .select("id,name")
-    .single();
-
-  if (companyCreateError) {
-    throw companyCreateError;
-  }
-
-  const ownedCompany = {
-    ...createdCompany,
-    role: "owner",
-  };
-  await ensureOwnerCompanyMembership(ownedCompany, user);
-  return ownedCompany;
-}
-
-function isMissingTeamTableError(error) {
-  const message = String(error?.message || error?.details || error?.hint || "").toLowerCase();
-  return error?.code === "42P01" || message.includes("company_members") || message.includes("does not exist");
-}
-
-async function fetchCloudCompanyById(companyId) {
-  if (!companyId) {
-    return null;
-  }
-
-  const { data, error } = await supabase.from("companies").select("id,name,owner_id").eq("id", companyId).maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data || null;
-}
-
-async function claimInvitedMembership(user) {
-  const email = String(user?.email || "").trim().toLowerCase();
-
-  if (!email) {
-    return null;
-  }
-
-  const inviteResult = await supabase
-    .from("company_members")
-    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
-    .ilike("invite_email", email)
-    .eq("status", "invited")
-    .order("created_at", { ascending: true })
-    .limit(1);
-
-  if (inviteResult.error) {
-    if (isMissingTeamTableError(inviteResult.error)) {
-      return null;
-    }
-
-    throw inviteResult.error;
-  }
-
-  const invite = inviteResult.data?.[0];
-
-  if (invite) {
-    const { data, error } = await supabase
-      .from("company_members")
-      .update({
-        status: "active",
-        updated_at: new Date().toISOString(),
-        user_id: user.id,
-      })
-      .eq("id", invite.id)
-      .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
-      .single();
-
-    if (error) {
-      if (isMissingTeamTableError(error)) {
-        return null;
-      }
-
-      throw error;
-    }
-
-    return normalizeTeamMember(data);
-  }
-
-  const activeResult = await supabase
-    .from("company_members")
-    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
-    .eq("user_id", user.id)
-    .eq("status", "active")
-    .order("created_at", { ascending: true })
-    .limit(1);
-
-  if (activeResult.error) {
-    if (isMissingTeamTableError(activeResult.error)) {
-      return null;
-    }
-
-    throw activeResult.error;
-  }
-
-  if (activeResult.data?.length > 0) {
-    return normalizeTeamMember(activeResult.data[0]);
-  }
-
-  return null;
-}
-
-async function ensureOwnerCompanyMembership(companyRecord, user) {
-  if (!companyRecord?.id || !user?.id) {
-    return null;
-  }
-
-  const email = String(user.email || "").trim().toLowerCase();
-  const { data: existingRows, error: loadError } = await supabase
-    .from("company_members")
-    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
-    .eq("company_id", companyRecord.id)
-    .eq("user_id", user.id)
-    .limit(1);
-
-  if (loadError) {
-    if (isMissingTeamTableError(loadError)) {
-      return null;
-    }
-
-    throw loadError;
-  }
-
-  if (existingRows?.length > 0) {
-    const existingMember = normalizeTeamMember(existingRows[0]);
-
-    if (existingMember.role === "owner" && existingMember.status === "active") {
-      return existingMember;
-    }
-
-    const { data, error } = await supabase
-      .from("company_members")
-      .update({
-        invite_email: existingMember.inviteEmail || email,
-        role: "owner",
-        status: "active",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", existingMember.id)
-      .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
-      .single();
-
-    if (error) {
-      if (isMissingTeamTableError(error)) {
-        return null;
-      }
-
-      throw error;
-    }
-
-    return normalizeTeamMember(data);
-  }
-
-  const { data, error } = await supabase
-    .from("company_members")
-    .insert({
-      company_id: companyRecord.id,
-      invite_email: email,
-      role: "owner",
-      status: "active",
-      user_id: user.id,
-    })
-    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
-    .single();
-
-  if (error) {
-    if (isMissingTeamTableError(error)) {
-      return null;
-    }
-
-    throw error;
-  }
-
-  return normalizeTeamMember(data);
-}
-
-async function fetchCloudTeamMembers(companyId) {
-  if (!companyId) {
-    return [];
-  }
-
-  const { data, error } = await supabase
-    .from("company_members")
-    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
-    .eq("company_id", companyId)
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    if (isMissingTeamTableError(error)) {
-      return [];
-    }
-
-    throw error;
-  }
-
-  return (data || []).map((row) => normalizeTeamMember(row));
-}
-
-async function createCloudTeamInvite(companyId, inviteEmail, role = "estimator") {
-  const normalizedEmail = String(inviteEmail || "").trim().toLowerCase();
-  const normalizedRole = TEAM_INVITE_ROLES.includes(normalizeTeamRole(role)) ? normalizeTeamRole(role) : "estimator";
-
-  if (!companyId) {
-    throw new Error("Cloud company is not ready yet.");
-  }
-
-  if (!normalizedEmail || !normalizedEmail.includes("@")) {
-    throw new Error("Enter a valid invite email.");
-  }
-
-  const existingResult = await supabase
-    .from("company_members")
-    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
-    .eq("company_id", companyId)
-    .eq("invite_email", normalizedEmail)
-    .limit(1);
-
-  if (existingResult.error) {
-    if (isMissingTeamTableError(existingResult.error)) {
-      throw new Error("Run the Phase 33 Supabase SQL before inviting team members.");
-    }
-
-    throw existingResult.error;
-  }
-
-  const existingMember = existingResult.data?.[0];
-
-  if (existingMember) {
-    const { data, error } = await supabase
-      .from("company_members")
-      .update({
-        role: normalizedRole,
-        status: existingMember.user_id ? "active" : "invited",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", existingMember.id)
-      .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
-      .single();
-
-    if (error) {
-      throw error;
-    }
-
-    return normalizeTeamMember(data);
-  }
-
-  const { data, error } = await supabase
-    .from("company_members")
-    .insert({
-      company_id: companyId,
-      invite_email: normalizedEmail,
-      role: normalizedRole,
-      status: "invited",
-    })
-    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
-    .single();
-
-  if (error) {
-    throw error;
-  }
-
-  return normalizeTeamMember(data);
-}
-
-async function deactivateCloudTeamMember(companyId, memberId) {
-  if (!companyId || !memberId) {
-    throw new Error("Choose a team member to deactivate.");
-  }
-
-  const { error } = await supabase
-    .from("company_members")
-    .update({
-      status: "inactive",
-      updated_at: new Date().toISOString(),
-    })
-    .eq("company_id", companyId)
-    .eq("id", memberId);
-
-  if (error) {
-    throw error;
-  }
-}
-
-async function uploadProposalAssetToCloud(file, { area, companySettings, companyUser, fileStem, proposalId }) {
-  if (!canUseCloudSync(companyUser)) {
-    throw new Error("Sign in to upload images to cloud storage.");
-  }
-
-  if (!file?.type?.startsWith("image/")) {
-    throw new Error("Choose an image file.");
-  }
-
-  const activeUser = await getActiveSupabaseUser();
-  const companyRecord = await ensureCloudCompany(activeUser, companySettings);
-  const safeArea = area === "plans" ? "plans" : "featured";
-  const timestamp = Date.now();
-  const extension = getFileExtension(file);
-  const safeFileStem = sanitizeStoragePathSegment(fileStem || file.name || "image");
-  const proposalPathSegment = sanitizeStoragePathSegment(proposalId || "unsaved");
-  const fileName = `${safeFileStem}-${timestamp}.${extension}`;
-  const storagePath = `company/${companyRecord.id}/proposals/${proposalPathSegment}/${safeArea}/${fileName}`;
-  const uploadOptions = {
-    cacheControl: "3600",
-    contentType: file.type || "image/jpeg",
-    upsert: false,
-  };
-  const { data, error } = await supabase.storage.from(proposalAssetsBucket).upload(storagePath, file, uploadOptions);
-
-  if (error) {
-    console.error("Supabase Storage upload failed:", {
-      bucket: proposalAssetsBucket,
-      error,
-      path: storagePath,
-    });
-    throw new Error(formatStorageUploadError(error));
-  }
-
-  if (!data?.path) {
-    const missingPathError = new Error("Supabase Storage upload did not return an uploaded file path.");
-    console.error("Supabase Storage upload returned no file path:", {
-      bucket: proposalAssetsBucket,
-      data,
-      path: storagePath,
-    });
-    throw missingPathError;
-  }
-
-  const uploadedPath = data.path || storagePath;
-  const publicUrl = getStoragePublicUrl(uploadedPath);
-
-  return {
-    companyId: companyRecord.id,
-    dataUrl: "",
-    fileName: file.name || `${safeFileStem}.${extension}`,
-    fileType: file.type || "image/jpeg",
-    publicUrl,
-    signedUrl: "",
-    src: publicUrl,
-    storagePath: uploadedPath,
-    uploadedAt: new Date().toISOString(),
-  };
-}
-
-async function getActiveSupabaseUser() {
-  const { data, error } = await supabase.auth.getSession();
-
-  if (error) {
-    console.error("Supabase auth session lookup failed before asset upload:", error);
-    throw new Error(formatStorageUploadError(error));
-  }
-
-  const user = data?.session?.user;
-
-  if (!user?.id) {
-    throw new Error("Sign in to upload images to cloud storage.");
-  }
-
-  return user;
-}
-
-async function createLocalImageAsset(file) {
-  if (!file?.type?.startsWith("image/")) {
-    throw new Error("Choose an image file.");
-  }
-
-  const dataUrl = await readFileAsDataUrl(file);
-
-  return {
-    dataUrl,
-    fileName: file.name || "local-image",
-    fileType: file.type || "image/jpeg",
-    publicUrl: "",
-    signedUrl: "",
-    src: dataUrl,
-    storagePath: "",
-    uploadedAt: new Date().toISOString(),
-  };
-}
-
-function readFileAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(new Error("Unable to read the selected image file."));
-    reader.readAsDataURL(file);
-  });
-}
-
-function getFileExtension(file) {
-  const nameExtension = String(file?.name || "").split(".").pop()?.toLowerCase();
-
-  if (nameExtension && /^[a-z0-9]{2,5}$/.test(nameExtension)) {
-    return nameExtension === "jpeg" ? "jpg" : nameExtension;
-  }
-
-  const mimeExtension = String(file?.type || "").split("/").pop()?.toLowerCase();
-
-  if (mimeExtension && /^[a-z0-9]{2,5}$/.test(mimeExtension)) {
-    return mimeExtension === "jpeg" ? "jpg" : mimeExtension;
-  }
-
-  return "jpg";
-}
-
-function sanitizeStoragePathSegment(value) {
-  return String(value || "asset")
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "asset";
-}
-
-function formatStorageUploadError(error) {
-  if (!error) {
-    return "Unknown storage upload error.";
-  }
-
-  if (typeof error === "string") {
-    return error;
-  }
-
-  if (hasTextValue(error.message)) {
-    return error.message;
-  }
-
-  if (hasTextValue(error.error_description)) {
-    return error.error_description;
-  }
-
-  if (hasTextValue(error.error)) {
-    return error.error;
-  }
-
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return "Unknown storage upload error.";
-  }
-}
-
-async function loadOrMergeCloudProposals(companyId, localProposals = []) {
-  const cloudProposals = await fetchCloudProposals(companyId);
-  const normalizedLocalProposals = localProposals.filter(isPlainObject).map((proposal) => createEditableProposal(proposal));
-
-  if (cloudProposals.length === 0 && normalizedLocalProposals.length > 0) {
-    return {
-      message: `Cloud has no proposals yet. Use Push Local Proposals to upload ${normalizedLocalProposals.length} local proposal${normalizedLocalProposals.length === 1 ? "" : "s"}.`,
-      proposals: normalizedLocalProposals,
-      status: cloudNeedsSyncLabel,
-    };
-  }
-
-  if (cloudProposals.length > 0 && normalizedLocalProposals.length === 0) {
-    return {
-      message: `Loaded ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"}.`,
-      proposals: cloudProposals,
-      status: cloudSyncedLabel,
-    };
-  }
-
-  if (cloudProposals.length > 0 && normalizedLocalProposals.length > 0) {
-    const mergeResult = mergeProposalCollections(normalizedLocalProposals, cloudProposals);
-
-    return {
-      message: mergeResult.warning || `Merged ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"} with local proposals.`,
-      proposals: mergeResult.proposals,
-      status: mergeResult.needsSync ? cloudNeedsSyncLabel : cloudSyncedLabel,
-    };
-  }
-
-  return {
-    message: "No cloud proposals found yet.",
-    proposals: [],
-    status: cloudSyncedLabel,
-  };
-}
-
-async function fetchCloudProposals(companyId) {
-  const { data, error } = await supabase
-    .from("proposals")
-    .select("id,proposal_data,created_at,updated_at")
-    .eq("company_id", companyId)
-    .order("updated_at", { ascending: false });
-
-  if (error) {
-    throw error;
-  }
-
-  return (data || []).map((row) => normalizeCloudProposalRow(row));
-}
-
-async function saveCloudProposals(companyId, proposals = []) {
-  for (const proposal of proposals.filter(isPlainObject)) {
-    await saveCloudProposal(companyId, proposal);
-  }
-}
-
-async function saveCloudProposal(companyId, proposal) {
-  const normalizedProposal = createEditableProposal({
-    ...proposal,
-    updatedAt: proposal.updatedAt || new Date().toISOString(),
-  });
-  const row = createCloudProposalRow(companyId, normalizedProposal);
-
-  if (row.id) {
-    const { error } = await supabase.from("proposals").upsert(row, { onConflict: "id" });
-
-    if (error) {
-      throw error;
-    }
-
-    return;
-  }
-
-  const existingRowId = await findCloudProposalRowId(companyId, normalizedProposal.id);
-
-  if (existingRowId) {
-    const { error } = await supabase.from("proposals").update(row).eq("id", existingRowId);
-
-    if (error) {
-      throw error;
-    }
-
-    return;
-  }
-
-  const { error } = await supabase.from("proposals").insert(row);
-
-  if (error) {
-    throw error;
-  }
-}
-
-async function findCloudProposalRowId(companyId, proposalId) {
-  const { data, error } = await supabase
-    .from("proposals")
-    .select("id,proposal_data")
-    .eq("company_id", companyId);
-
-  if (error) {
-    throw error;
-  }
-
-  const match = (data || []).find((row) => row.proposal_data?.id === proposalId);
-  return match?.id || "";
-}
-
-function createCloudProposalRow(companyId, proposal) {
-  const normalizedProposal = createEditableProposal(proposal);
-  const row = {
-    company_id: companyId,
-    contact_id: isUuid(normalizedProposal.contactId) ? normalizedProposal.contactId : null,
-    packet_mode: normalizedProposal.packetMode || "summary",
-    proposal_data: normalizedProposal,
-    proposal_number: normalizedProposal.proposalNumber || "",
-    proposal_type: normalizedProposal.proposalType || normalizedProposal.type || "",
-    status: normalizedProposal.status || "draft",
-  };
-
-  if (isUuid(normalizedProposal.id)) {
-    row.id = normalizedProposal.id;
-  }
-
-  return row;
-}
-
-function normalizeCloudProposalRow(row = {}) {
-  const proposalData = isPlainObject(row.proposal_data) ? row.proposal_data : {};
-
-  return createEditableProposal({
-    ...proposalData,
-    id: proposalData.id || row.id,
-    createdAt: proposalData.createdAt || row.created_at,
-    updatedAt: proposalData.updatedAt || row.updated_at,
-  });
-}
-
-function mergeProposalCollections(localProposals = [], cloudProposals = []) {
-  const mergedById = new Map();
-  const cloudIds = new Set(cloudProposals.filter(isPlainObject).map((proposal) => createEditableProposal(proposal).id));
-  const warnings = [];
-  let needsSync = false;
-
-  localProposals.filter(isPlainObject).forEach((proposal) => {
-    const normalizedProposal = createEditableProposal(proposal);
-    mergedById.set(normalizedProposal.id, normalizedProposal);
-  });
-
-  cloudProposals.filter(isPlainObject).forEach((proposal) => {
-    const cloudProposal = createEditableProposal(proposal);
-    const localProposal = mergedById.get(cloudProposal.id);
-
-    if (!localProposal) {
-      mergedById.set(cloudProposal.id, cloudProposal);
-      return;
-    }
-
-    const comparison = compareProposalUpdatedAt(localProposal, cloudProposal);
-
-    if (comparison > 0) {
-      needsSync = true;
-      return;
-    }
-
-    if (comparison < 0 || proposalsAreEquivalent(localProposal, cloudProposal)) {
-      mergedById.set(cloudProposal.id, cloudProposal);
-      return;
-    }
-
-    const copiedCloudProposal = createEditableProposal({
-      ...cloudProposal,
-      id: createProposalId(),
-      proposalNumber: cloudProposal.proposalNumber || localProposal.proposalNumber,
-      updatedAt: cloudProposal.updatedAt || new Date().toISOString(),
-    });
-    mergedById.set(copiedCloudProposal.id, copiedCloudProposal);
-    needsSync = true;
-    warnings.push(`Kept both local and cloud copies for ${cloudProposal.proposalNumber || cloudProposal.id} because the latest update was unclear.`);
-  });
-
-  if (localProposals.filter(isPlainObject).some((proposal) => !cloudIds.has(createEditableProposal(proposal).id))) {
-    needsSync = true;
-  }
-
-  return {
-    needsSync,
-    proposals: [...mergedById.values()].sort((a, b) => getProposalTimestamp(b) - getProposalTimestamp(a)),
-    warning: warnings.join(" "),
-  };
-}
-
-function compareProposalUpdatedAt(localProposal = {}, cloudProposal = {}) {
-  const localTimestamp = getProposalTimestamp(localProposal);
-  const cloudTimestamp = getProposalTimestamp(cloudProposal);
-
-  if (!localTimestamp && !cloudTimestamp) {
-    return 0;
-  }
-
-  if (localTimestamp > cloudTimestamp) {
-    return 1;
-  }
-
-  if (cloudTimestamp > localTimestamp) {
-    return -1;
-  }
-
-  return 0;
-}
-
-function proposalsAreEquivalent(firstProposal = {}, secondProposal = {}) {
-  return JSON.stringify(createEditableProposal(firstProposal)) === JSON.stringify(createEditableProposal(secondProposal));
-}
-
-async function loadOrSeedCloudCompanySettings(companyId, localSettings = getDefaultCompanySettings()) {
-  const cloudSettingsRow = await fetchCloudCompanySettingsRow(companyId);
-
-  if (isPlainObject(cloudSettingsRow?.settings) && Object.keys(cloudSettingsRow.settings).length > 0) {
-    return {
-      message: "Loaded company settings from Supabase.",
-      settings: normalizeCompanySettings(cloudSettingsRow.settings),
-    };
-  }
-
-  const normalizedSettings = normalizeCompanySettings(localSettings);
-  await saveCloudCompanySettings(companyId, normalizedSettings, cloudSettingsRow?.id);
-
-  return {
-    message: "Seeded Supabase company settings from local defaults.",
-    settings: normalizedSettings,
-  };
-}
-
-async function fetchCloudCompanySettingsRow(companyId) {
-  const { data, error } = await supabase
-    .from("company_settings")
-    .select("id,settings")
-    .eq("company_id", companyId)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data || null;
-}
-
-async function saveCloudCompanySettings(companyId, settings, existingRowId = "") {
-  const normalizedSettings = normalizeCompanySettings(settings);
-  const rowId = existingRowId || (await fetchCloudCompanySettingsRow(companyId))?.id;
-  const payload = {
-    company_id: companyId,
-    settings: normalizedSettings,
-  };
-
-  if (rowId) {
-    const { error } = await supabase.from("company_settings").update(payload).eq("id", rowId);
-
-    if (error) {
-      throw error;
-    }
-
-    return;
-  }
-
-  const { error } = await supabase.from("company_settings").insert(payload);
-
-  if (error) {
-    throw error;
-  }
-}
-
-async function loadOrSeedCloudContacts(companyId, localContacts = []) {
-  const cloudContacts = await fetchCloudContacts(companyId);
-
-  if (cloudContacts.length > 0) {
-    return {
-      contacts: cloudContacts,
-      message: `Loaded ${cloudContacts.length} cloud contact${cloudContacts.length === 1 ? "" : "s"}.`,
-    };
-  }
-
-  const normalizedContacts = localContacts.filter(isPlainObject).map((contact) => normalizeContact(contact));
-
-  if (normalizedContacts.length > 0) {
-    await replaceCloudContacts(companyId, normalizedContacts);
-
-    return {
-      contacts: normalizedContacts,
-      message: `Seeded ${normalizedContacts.length} local contact${normalizedContacts.length === 1 ? "" : "s"} to Supabase.`,
-    };
-  }
-
-  return {
-    contacts: [],
-    message: "No cloud contacts found yet.",
-  };
-}
-
-async function fetchCloudContacts(companyId) {
-  const { data, error } = await supabase
-    .from("contacts")
-    .select("id,contact_data,created_at,updated_at")
-    .eq("company_id", companyId)
-    .order("updated_at", { ascending: false });
-
-  if (error) {
-    throw error;
-  }
-
-  return (data || []).map((row) => normalizeCloudContactRow(row));
-}
-
-async function replaceCloudContacts(companyId, contacts = []) {
-  const { error: deleteError } = await supabase.from("contacts").delete().eq("company_id", companyId);
-
-  if (deleteError) {
-    throw deleteError;
-  }
-
-  const rows = contacts.filter(isPlainObject).map((contact) => createCloudContactRow(companyId, contact));
-
-  if (rows.length === 0) {
-    return [];
-  }
-
-  const { data, error } = await supabase.from("contacts").insert(rows).select("id,contact_data,created_at,updated_at");
-
-  if (error) {
-    throw error;
-  }
-
-  return (data || []).map((row) => normalizeCloudContactRow(row));
-}
-
-async function saveCloudContact(companyId, contact) {
-  const row = createCloudContactRow(companyId, contact);
-
-  if (row.id) {
-    const { error } = await supabase.from("contacts").upsert(row, { onConflict: "id" });
-
-    if (error) {
-      throw error;
-    }
-
-    return;
-  }
-
-  const { error } = await supabase.from("contacts").insert(row);
-
-  if (error) {
-    throw error;
-  }
-}
-
-async function deleteCloudContact(companyId, contactId) {
-  if (!isUuid(contactId)) {
-    return;
-  }
-
-  const { error } = await supabase.from("contacts").delete().eq("company_id", companyId).eq("id", contactId);
-
-  if (error) {
-    throw error;
-  }
-}
-
-function createCloudContactRow(companyId, contact) {
-  const normalizedContact = normalizeContact(contact);
-  const row = {
-    company_id: companyId,
-    contact_data: normalizedContact,
-  };
-
-  if (isUuid(normalizedContact.id)) {
-    row.id = normalizedContact.id;
-  }
-
-  return row;
-}
-
-function normalizeCloudContactRow(row = {}) {
-  return normalizeContact({
-    ...(isPlainObject(row.contact_data) ? row.contact_data : {}),
-    id: row.contact_data?.id || row.id,
-    createdAt: row.contact_data?.createdAt || row.created_at,
-    updatedAt: row.contact_data?.updatedAt || row.updated_at,
-  });
-}
-
-function isUuid(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
-}
-
 function isDemoRecord(record = {}) {
   return Boolean(record.demo || record.metadata?.isDemo);
 }
