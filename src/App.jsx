@@ -34,6 +34,7 @@ const cloudSyncedLabel = "Synced";
 const cloudSignInLabel = "Sign in to sync proposals, contacts, and settings";
 const cloudSyncErrorLabel = "Sync error";
 const SENT_METHODS = ["", "Email", "Text", "In Person", "Portal Upload", "Other"];
+const SUBMITTED_PACKET_STATUSES = ["generated", "sent", "superseded", "approved", "rejected"];
 const CONTACT_TYPES = [
   "",
   "GC / Prime",
@@ -1314,6 +1315,92 @@ export default function App() {
     }
   }
 
+  async function saveSubmittedPacketRecord() {
+    if (!canCompleteProposal("saving a packet record")) {
+      setSaveMessage("Fix required fields before saving a packet record.");
+      return;
+    }
+
+    const packetRecord = createSubmittedPacketRecord(proposalDraft, authUser);
+    const existingRecords = normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).map((record) =>
+      record.status === "generated" ? { ...record, status: "superseded" } : record,
+    );
+    const updatedProposal = createEditableProposal({
+      ...proposalDraft,
+      submittedPacketRecords: [packetRecord, ...existingRecords],
+      updatedAt: new Date().toISOString(),
+    });
+
+    await persistProposalAfterPacketChange(
+      updatedProposal,
+      "Packet record saved locally.",
+      "Packet record saved locally and synced to cloud.",
+    );
+  }
+
+  function updateSubmittedPacketRecord(recordId, field, value) {
+    setProposalDirty(true);
+    setProposalDraft((currentProposal) =>
+      createEditableProposal({
+        ...currentProposal,
+        submittedPacketRecords: normalizeSubmittedPacketRecords(currentProposal.submittedPacketRecords).map((record) =>
+          record.id === recordId ? { ...record, [field]: value } : record,
+        ),
+      }),
+    );
+  }
+
+  async function markSubmittedPacketSent(recordId) {
+    const updatedProposal = createEditableProposal({
+      ...proposalDraft,
+      submittedPacketRecords: normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).map((record) =>
+        record.id === recordId
+          ? {
+              ...record,
+              status: "sent",
+              sentDate: record.sentDate || formatInputDate(new Date()),
+              sentToName: record.sentToName || proposalDraft.sentToName || proposalDraft.client?.contactName || proposalDraft.client?.companyName || "",
+              sentToEmail: record.sentToEmail || proposalDraft.sentToEmail || proposalDraft.client?.email || "",
+              sentMethod: record.sentMethod || proposalDraft.sentMethod || "Email",
+            }
+          : record,
+      ),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await persistProposalAfterPacketChange(
+      updatedProposal,
+      "Packet marked as sent locally.",
+      "Packet marked as sent locally and synced to cloud.",
+    );
+  }
+
+  async function persistProposalAfterPacketChange(updatedProposal, localMessage, cloudMessage) {
+    const savedAt = new Date().toISOString();
+
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
+    setProposalDraft(updatedProposal);
+    setProposalDirty(false);
+    setSaveState((currentState) => ({
+      ...currentState,
+      lastLocalSavedAt: savedAt,
+      status: canUseCloudSync(authUser) ? "Saved locally. Syncing to cloud..." : "Saved locally",
+    }));
+    setSaveMessage(canUseCloudSync(authUser) ? "Saved locally. Syncing to cloud..." : localMessage);
+
+    if (canUseCloudSync(authUser)) {
+      const synced = await syncSingleProposalToCloud(updatedProposal, cloudMessage);
+      setSaveState((currentState) => ({
+        ...currentState,
+        lastCloudSavedAt: synced ? new Date().toISOString() : currentState.lastCloudSavedAt,
+        status: synced ? "Saved locally and synced to cloud" : "Saved locally. Cloud sync failed",
+      }));
+      if (synced) {
+        setSaveMessage(cloudMessage);
+      }
+    }
+  }
+
   function printCurrentProposal() {
     if (!canCompleteProposal("printing")) {
       return;
@@ -2419,7 +2506,11 @@ export default function App() {
         <>
           {isPrintView ? (
             <>
-              <PrintRouteToolbar onBackToList={() => navigate("/proposals")} onPrint={printCurrentProposal} />
+              <PrintRouteToolbar
+                onBackToList={() => navigate("/proposals")}
+                onPrint={printCurrentProposal}
+                onSavePacketRecord={saveSubmittedPacketRecord}
+              />
               <ValidationPanel
                 className="print-route-validation"
                 notice={validationNotice}
@@ -2435,11 +2526,14 @@ export default function App() {
                 saveState={saveState}
                 onBackToList={() => navigate("/proposals")}
                 onCreateRevision={createRevision}
+                onCreatePacketRecord={saveSubmittedPacketRecord}
                 onDuplicate={() => duplicateCurrentProposal(proposalDraft)}
+                onMarkPacketSent={markSubmittedPacketSent}
                 onOpenPrintView={openPrintView}
-              onSave={saveCurrentProposal}
-              onStatusChange={updateCurrentStatus}
-            />
+                onSave={saveCurrentProposal}
+                onStatusChange={updateCurrentStatus}
+                onUpdatePacketRecord={updateSubmittedPacketRecord}
+              />
           )}
           {!isPrintView ? backupTools : null}
 
@@ -2681,6 +2775,15 @@ function DashboardView({
           <span>Last Updated Proposal</span>
           <strong>{stats.lastUpdated ? stats.lastUpdated.project?.name || stats.lastUpdated.proposalNumber : "None yet"}</strong>
           {stats.lastUpdated ? <small>{formatDashboardDate(stats.lastUpdated.updatedAt || stats.lastUpdated.createdAt || stats.lastUpdated.proposalDate)}</small> : null}
+        </div>
+        <div className="dashboard-summary-card">
+          <span>Last Submitted Packet</span>
+          <strong>{stats.lastSubmittedPacket ? stats.lastSubmittedPacket.packetTitle : "No packet records"}</strong>
+          {stats.lastSubmittedPacket ? (
+            <small>
+              {formatOptionLabel(stats.lastSubmittedPacket.status)} | {formatDashboardDate(stats.lastSubmittedPacket.createdAt)}
+            </small>
+          ) : null}
         </div>
       </div>
 
@@ -3010,6 +3113,7 @@ function ProposalSummaryRow({ compact = false, contacts = [], onDuplicate, onExp
   const total = calculateProposalTotals(proposal).total;
   const packetMode = getPacketModeLabel(proposal);
   const linkedContact = getLinkedContact(proposal, contacts);
+  const latestPacketRecord = getLatestSubmittedPacketRecord(proposal);
 
   return (
     <div className={`proposal-summary-row ${compact ? "compact" : ""}`}>
@@ -3022,6 +3126,9 @@ function ProposalSummaryRow({ compact = false, contacts = [], onDuplicate, onExp
       <div className="proposal-summary-meta">
         <Badge>{formatOptionLabel(proposal.proposalType ?? proposal.type)}</Badge>
         <Badge className={packetMode === "Full GC Packet" ? "packet-full" : "packet-summary"}>{packetMode}</Badge>
+        <Badge className={latestPacketRecord ? `packet-record-${latestPacketRecord.status}` : "packet-record-none"}>
+          {latestPacketRecord ? formatOptionLabel(latestPacketRecord.status) : "No packet record"}
+        </Badge>
         <StatusBadge status={proposal.status} />
       </div>
       <div className="proposal-summary-total">
@@ -3368,6 +3475,7 @@ function ProposalListView({
               <th>Project</th>
               <th>Type</th>
               <th>Packet</th>
+              <th>Packet Record</th>
               <th>Status</th>
               <th>Sent</th>
               <th>Follow-Up</th>
@@ -3381,6 +3489,7 @@ function ProposalListView({
               const total = calculateProposalTotals(proposal).total;
               const packetMode = getPacketModeLabel(proposal);
               const linkedContact = getLinkedContact(proposal, contacts);
+              const latestPacketRecord = getLatestSubmittedPacketRecord(proposal);
 
               return (
                 <tr key={proposal.id} onClick={() => onOpen(proposal.id)}>
@@ -3400,6 +3509,18 @@ function ProposalListView({
                     <Badge className={packetMode === "Full GC Packet" ? "packet-full" : "packet-summary"}>
                       {packetMode}
                     </Badge>
+                  </td>
+                  <td>
+                    {latestPacketRecord ? (
+                      <>
+                        <Badge className={`packet-record-${latestPacketRecord.status}`}>
+                          {formatOptionLabel(latestPacketRecord.status)}
+                        </Badge>
+                        <span>{formatDashboardDate(latestPacketRecord.createdAt)}</span>
+                      </>
+                    ) : (
+                      <Badge className="packet-record-none">No packet record</Badge>
+                    )}
                   </td>
                   <td onClick={(event) => event.stopPropagation()}>
                     <StatusBadge status={proposal.status} />
@@ -3805,11 +3926,14 @@ function StorageDiagnosticsPanel({ authLoading, authUser, cloudSync, diagnostics
   );
 }
 
-function PrintRouteToolbar({ onBackToList, onPrint }) {
+function PrintRouteToolbar({ onBackToList, onPrint, onSavePacketRecord }) {
   return (
     <div className="print-route-toolbar no-print">
       <button type="button" onClick={onBackToList}>
         Back to proposals
+      </button>
+      <button type="button" onClick={onSavePacketRecord}>
+        Save Packet Record
       </button>
       <button type="button" onClick={onPrint}>
         Print / Save PDF
@@ -3825,14 +3949,18 @@ function ProposalActionBar({
   saveMessage,
   saveState,
   onBackToList,
+  onCreatePacketRecord,
   onCreateRevision,
   onDuplicate,
+  onMarkPacketSent,
   onOpenPrintView,
   onSave,
   onStatusChange,
+  onUpdatePacketRecord,
 }) {
   const revisedTotal = calculateProposalTotals(proposal).total;
   const previousTotal = toEditableNumber(proposal.previousTotal);
+  const packetRecords = normalizeSubmittedPacketRecords(proposal.submittedPacketRecords);
 
   return (
     <section className="proposal-action-bar no-print">
@@ -3878,12 +4006,22 @@ function ProposalActionBar({
           </button>
         ) : null}
         {!isPrintView ? (
+          <button type="button" onClick={onCreatePacketRecord}>
+            Create Packet Record
+          </button>
+        ) : null}
+        {!isPrintView ? (
           <button type="button" onClick={onOpenPrintView}>
             Print View
           </button>
         ) : null}
       </div>
       <RevisionHistory revisions={revisionHistory} currentProposalId={proposal.id} />
+      <SubmittedPacketHistory
+        records={packetRecords}
+        onMarkSent={onMarkPacketSent}
+        onUpdateRecord={onUpdatePacketRecord}
+      />
     </section>
   );
 }
@@ -3909,6 +4047,63 @@ function RevisionHistory({ currentProposalId, revisions = [] }) {
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+function SubmittedPacketHistory({ records = [], onMarkSent, onUpdateRecord }) {
+  const visibleRecords = normalizeSubmittedPacketRecords(records);
+
+  return (
+    <div className="submitted-packet-history">
+      <div className="submitted-packet-history-heading">
+        <div>
+          <strong>Submitted Packet History</strong>
+          <span>Historical records of generated, sent, and superseded packet versions.</span>
+        </div>
+      </div>
+
+      {visibleRecords.length === 0 ? (
+        <p className="submitted-packet-empty">No packet records yet. Use Create Packet Record or Save Packet Record from print view.</p>
+      ) : (
+        <div className="submitted-packet-list">
+          {visibleRecords.map((record) => (
+            <article className="submitted-packet-card" key={record.id}>
+              <div className="submitted-packet-card-main">
+                <div>
+                  <div className="submitted-packet-card-title">
+                    <Badge className={`packet-record-${record.status}`}>{formatOptionLabel(record.status)}</Badge>
+                    <strong>{record.revisionLabel || formatRevisionLabel(record.revisionNumber)}</strong>
+                    <span>{record.packetTitle}</span>
+                  </div>
+                  <div className="submitted-packet-meta">
+                    <span>Created {formatCloudSyncTime(record.createdAt)}</span>
+                    <span>Total {formatCurrency(record.totalAmount)}</span>
+                    <span>{record.packetPageCount ? `${record.packetPageCount} page${record.packetPageCount === 1 ? "" : "s"}` : "Page count pending"}</span>
+                    {record.sentDate ? <span>Sent {formatDisplayDate(record.sentDate)}</span> : null}
+                    {record.sentToName || record.sentToEmail ? <span>To {[record.sentToName, record.sentToEmail].filter(Boolean).join(" | ")}</span> : null}
+                  </div>
+                </div>
+                <div className="submitted-packet-actions">
+                  {record.status !== "sent" ? (
+                    <button type="button" onClick={() => onMarkSent(record.id)}>
+                      Mark Packet as Sent
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <label className="submitted-packet-notes">
+                <span>Internal notes</span>
+                <textarea
+                  value={record.internalNotes || ""}
+                  rows={2}
+                  onChange={(event) => onUpdateRecord(record.id, "internalNotes", event.target.value)}
+                />
+              </label>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -7388,6 +7583,12 @@ function resolveImportedProposalIdentity(proposal, existingProposals = []) {
     importedProposal.proposalNumber = getNextProposalNumber(existingProposals, new Date(importedProposal.proposalDate || Date.now()));
   }
 
+  importedProposal.submittedPacketRecords = normalizeSubmittedPacketRecords(importedProposal.submittedPacketRecords).map((record) => ({
+    ...record,
+    proposalId: importedProposal.id,
+    proposalNumber: importedProposal.proposalNumber || record.proposalNumber,
+  }));
+
   return importedProposal;
 }
 
@@ -7620,6 +7821,7 @@ function duplicateProposalDraft(sourceProposal, existingProposals) {
     parentProposalId: "",
     previousTotal: "",
     revisedTotal: "",
+    submittedPacketRecords: [],
     proposalDate: formatInputDate(now),
     validUntil: formatInputDate(validUntil),
     createdAt: now.toISOString(),
@@ -8264,6 +8466,9 @@ function buildDashboardStats(proposals = [], contacts = []) {
   const overdueFollowUpCount = getOverdueFollowUpProposals(proposals).length;
   const decidedCount = (statusCounts.approved || 0) + (statusCounts.rejected || 0);
   const winRate = decidedCount > 0 ? Math.round(((statusCounts.approved || 0) / decidedCount) * 100) : 0;
+  const submittedPackets = getSubmittedPacketRecordsForDashboard(proposals);
+  const packetsGeneratedThisMonth = submittedPackets.filter((record) => isCurrentMonthDate(record.createdAt)).length;
+  const lastSubmittedPacket = submittedPackets[0] || null;
 
   return {
     cards: [
@@ -8278,9 +8483,11 @@ function buildDashboardStats(proposals = [], contacts = []) {
       { label: "Needs Follow-Up", value: followUpDueCount },
       { label: "Overdue Follow-Up", value: overdueFollowUpCount },
       { label: "Contacts", value: contacts.length },
+      { label: "Packets This Month", value: packetsGeneratedThisMonth },
       { label: "Win Rate", value: decidedCount > 0 ? `${winRate}%` : "-" },
     ],
     fullPacketCount: proposals.filter((proposal) => getPacketModeLabel(proposal) === "Full GC Packet").length,
+    lastSubmittedPacket,
     lastUpdated,
     totalValue,
   };
@@ -8772,6 +8979,7 @@ function createEditableProposal(seedProposal) {
       taxable: item.taxable ?? true,
     })),
     pricingSections: normalizePricingSections(proposal.pricingSections),
+    submittedPacketRecords: normalizeSubmittedPacketRecords(proposal.submittedPacketRecords),
     client: {
       ...client,
       billingAddress: client.billingAddress ?? client.address ?? "",
@@ -8802,6 +9010,153 @@ function createEditableProposal(seedProposal) {
 
 function cloneObject(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function normalizeSubmittedPacketRecords(records = []) {
+  return (Array.isArray(records) ? records : [])
+    .filter(Boolean)
+    .map((record) => ({
+      id: record.id || createPacketRecordId(),
+      proposalId: record.proposalId || "",
+      proposalNumber: record.proposalNumber || "",
+      revisionNumber: normalizeRevisionNumber(record.revisionNumber),
+      revisionLabel: record.revisionLabel || formatRevisionLabel(record.revisionNumber),
+      packetMode: record.packetMode || "summary",
+      packetTitle: record.packetTitle || "Proposal Packet",
+      createdAt: record.createdAt || new Date().toISOString(),
+      createdByUserId: record.createdByUserId || "",
+      createdByEmail: record.createdByEmail || "",
+      status: SUBMITTED_PACKET_STATUSES.includes(record.status) ? record.status : "generated",
+      sentDate: record.sentDate || "",
+      sentToName: record.sentToName || "",
+      sentToEmail: record.sentToEmail || "",
+      sentMethod: record.sentMethod || "",
+      internalNotes: record.internalNotes || "",
+      totalAmount: toEditableNumber(record.totalAmount),
+      baseAmount: toEditableNumber(record.baseAmount),
+      includedAlternatesAmount: toEditableNumber(record.includedAlternatesAmount),
+      totalIfAllAccepted: toEditableNumber(record.totalIfAllAccepted),
+      includedSections: Array.isArray(record.includedSections) ? record.includedSections : [],
+      addendaAcknowledged: record.addendaAcknowledged || "",
+      rfiCount: Number.parseInt(record.rfiCount, 10) || 0,
+      planSheetCount: Number.parseInt(record.planSheetCount, 10) || 0,
+      appendixPageCount: Number.parseInt(record.appendixPageCount, 10) || 0,
+      packetPageCount: Number.parseInt(record.packetPageCount, 10) || 0,
+      proposalSnapshot: record.proposalSnapshot || {},
+    }))
+    .sort((a, b) => getPacketRecordTimestamp(b) - getPacketRecordTimestamp(a));
+}
+
+function createSubmittedPacketRecord(proposal = {}, authUser = null, overrides = {}) {
+  const snapshotSource = createEditableProposal({ ...proposal, submittedPacketRecords: [] });
+  const totals = calculateProposalTotals(snapshotSource);
+  const appendixPlan = buildAppendixPlan(snapshotSource);
+  const structuredPacketPages = buildStructuredPacketPages(snapshotSource);
+  const enabledPlanSheets = getEnabledPlanSheets(snapshotSource.planSheets);
+  const appendixPageCount = appendixPlan.pages.length;
+  const planSheetCount = enabledPlanSheets.length;
+  const structuredPageCount = structuredPacketPages.length;
+  const packetPageCount = 2 + structuredPageCount + appendixPageCount + planSheetCount;
+
+  const record = {
+    id: createPacketRecordId(),
+    proposalId: snapshotSource.id,
+    proposalNumber: snapshotSource.proposalNumber,
+    revisionNumber: snapshotSource.revisionNumber,
+    revisionLabel: snapshotSource.revisionLabel || formatRevisionLabel(snapshotSource.revisionNumber),
+    packetMode: snapshotSource.packetMode || "summary",
+    packetTitle: `${snapshotSource.project?.name || "Proposal"} - ${getPacketModeLabel(snapshotSource)}`,
+    createdAt: new Date().toISOString(),
+    createdByUserId: authUser?.id || "",
+    createdByEmail: authUser?.email || "",
+    status: "generated",
+    sentDate: snapshotSource.sentDate || "",
+    sentToName: snapshotSource.sentToName || snapshotSource.client?.contactName || snapshotSource.client?.companyName || "",
+    sentToEmail: snapshotSource.sentToEmail || snapshotSource.client?.email || "",
+    sentMethod: snapshotSource.sentMethod || "",
+    internalNotes: "",
+    totalAmount: totals.total,
+    baseAmount: totals.baseBid,
+    includedAlternatesAmount: totals.includedPricingSectionsTotal,
+    totalIfAllAccepted: totals.totalIfAllAlternatesAccepted,
+    includedSections: getSubmittedPacketIncludedSections(snapshotSource, {
+      appendixPageCount,
+      planSheetCount,
+      structuredPageCount,
+    }),
+    addendaAcknowledged: snapshotSource.gcPrime?.addendaAcknowledged || "",
+    rfiCount: countPacketTextLines(snapshotSource.gcPrime?.rfiClarificationNotes),
+    planSheetCount,
+    appendixPageCount,
+    packetPageCount,
+    proposalSnapshot: cloneObject(snapshotSource),
+    ...overrides,
+  };
+
+  return normalizeSubmittedPacketRecords([record])[0];
+}
+
+function createPacketRecordId() {
+  return `packet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getSubmittedPacketIncludedSections(proposal = {}, counts = {}) {
+  const sections = ["Cover Page", "Proposal Details"];
+
+  if (getVisiblePricingSections(proposal.pricingSections).length > 0) {
+    sections.push("Alternates / Allowances");
+  }
+
+  if (counts.structuredPageCount > 0) {
+    sections.push("Structured GC Tables");
+  }
+
+  if (counts.appendixPageCount > 0) {
+    sections.push("Appendix Backup");
+  }
+
+  if (counts.planSheetCount > 0) {
+    sections.push("Plan / Takeoff Pages");
+  }
+
+  return sections;
+}
+
+function countPacketTextLines(value = "") {
+  return splitAppendixText(value).length;
+}
+
+function getPacketRecordTimestamp(record = {}) {
+  const date = new Date(record.createdAt || record.sentDate || "");
+  return Number.isNaN(date.valueOf()) ? 0 : date.valueOf();
+}
+
+function getLatestSubmittedPacketRecord(proposal = {}) {
+  return normalizeSubmittedPacketRecords(proposal.submittedPacketRecords)[0] || null;
+}
+
+function getSubmittedPacketRecordsForDashboard(proposals = []) {
+  return proposals
+    .flatMap((proposal) =>
+      normalizeSubmittedPacketRecords(proposal.submittedPacketRecords).map((record) => ({
+        ...record,
+        proposalId: proposal.id,
+        projectName: proposal.project?.name || record.packetTitle,
+        clientName: proposal.client?.companyName || proposal.client?.contactName || "",
+      })),
+    )
+    .sort((a, b) => getPacketRecordTimestamp(b) - getPacketRecordTimestamp(a));
+}
+
+function isCurrentMonthDate(value = "") {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.valueOf())) {
+    return false;
+  }
+
+  const now = new Date();
+  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
 }
 
 function updateNestedValue(source, path, value) {

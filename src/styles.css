@@ -365,6 +365,96 @@ h4 {
   color: var(--blue);
 }
 
+.submitted-packet-history {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.submitted-packet-history-heading strong {
+  display: block;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.submitted-packet-history-heading span,
+.submitted-packet-empty {
+  color: #556171;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.submitted-packet-list {
+  display: grid;
+  gap: 10px;
+}
+
+.submitted-packet-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #c9d1dc;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 12px;
+}
+
+.submitted-packet-card-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.submitted-packet-card-title,
+.submitted-packet-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.submitted-packet-card-title strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.submitted-packet-card-title span,
+.submitted-packet-meta span {
+  margin: 0;
+}
+
+.submitted-packet-actions button {
+  border-radius: 9px;
+  background: var(--blue);
+  color: white;
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.submitted-packet-notes {
+  display: grid;
+  gap: 5px;
+}
+
+.submitted-packet-notes span {
+  margin: 0;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.submitted-packet-notes textarea {
+  min-height: 62px;
+  resize: vertical;
+}
+
 .list-toolbar button,
 .settings-actions button,
 .proposal-actions button,
@@ -968,7 +1058,7 @@ h4 {
 
 .proposal-list-table {
   width: 100%;
-  min-width: 1260px;
+  min-width: 1380px;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -1189,7 +1279,7 @@ h4 {
 
 .dashboard-summary-grid {
   display: grid;
-  grid-template-columns: 1fr 0.55fr 1.2fr;
+  grid-template-columns: 1fr 0.55fr 1.2fr 1.2fr;
   gap: 12px;
   margin-top: 12px;
 }
@@ -1372,6 +1462,32 @@ h4 {
   border-color: rgba(6, 43, 69, 0.22);
   background: rgba(6, 43, 69, 0.06);
   color: var(--blue);
+}
+
+.packet-record-generated {
+  border-color: rgba(6, 43, 69, 0.35);
+  background: rgba(6, 43, 69, 0.08);
+  color: var(--blue);
+}
+
+.packet-record-sent,
+.packet-record-approved {
+  border-color: rgba(22, 101, 52, 0.35);
+  background: rgba(22, 101, 52, 0.1);
+  color: #166534;
+}
+
+.packet-record-superseded,
+.packet-record-none {
+  border-color: rgba(85, 97, 113, 0.28);
+  background: rgba(85, 97, 113, 0.08);
+  color: #556171;
+}
+
+.packet-record-rejected {
+  border-color: rgba(153, 27, 27, 0.32);
+  background: rgba(153, 27, 27, 0.08);
+  color: #991b1b;
 }
 
 .revision-latest {
