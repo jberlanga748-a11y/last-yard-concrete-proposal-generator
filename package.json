@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "check": "node scripts/check.mjs",
+    "ci": "node scripts/check.mjs && node --test && vite build",
     "test": "node --test",
     "preview": "vite preview"
   },
