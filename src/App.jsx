@@ -65,6 +65,7 @@ import {
   proposalAssetsBucket,
   sanitizeStoragePathSegment,
   uploadProposalAssetToCloud,
+  uploadSubmittedPacketPdfToCloud,
 } from "./utils/cloud/storageCloud.js";
 import { formatCloudSyncTime, formatDashboardDate, formatDisplayDate, formatOptionLabel } from "./utils/formatting/display.js";
 import { parseBidSmartPasteNotes } from "./utils/smartPaste/bidSmartPasteParser.js";
@@ -359,7 +360,7 @@ export default function App() {
   const isPriceLibraryView = route.view === "priceLibrary";
   const isBidsView = route.view === "bids";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
-  const proposalValidation = validateProposalCompleteness(proposalDraft);
+  const proposalValidation = getProposalValidationWithPacketPdfWarnings(proposalDraft);
 
   useEffect(() => {
     saveStoredProposals(savedProposals);
@@ -1908,6 +1909,79 @@ export default function App() {
     );
   }
 
+  async function attachSubmittedPacketPdf(recordId, file) {
+    if (!file) {
+      return;
+    }
+
+    if (!canUseCloudSync(authUser)) {
+      setSaveMessage("PDF file archive requires cloud sign-in.");
+      return;
+    }
+
+    if (file.type !== "application/pdf" && !String(file.name || "").toLowerCase().endsWith(".pdf")) {
+      setSaveMessage("Choose a PDF file to attach.");
+      return;
+    }
+
+    const record = normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).find((item) => item.id === recordId);
+
+    if (!record) {
+      setSaveMessage("Choose a valid packet record before attaching a PDF.");
+      return;
+    }
+
+    setSaveMessage(`Uploading ${file.name || "submitted packet PDF"} to Supabase Storage...`);
+
+    try {
+      const pdfAttachment = await uploadSubmittedPacketPdfToCloud(file, {
+        companySettings,
+        companyUser: authUser,
+        companyDeps: companyCloudDeps,
+        packetRecordId: record.id,
+        proposalId: proposalDraft.id,
+      });
+      const updatedProposal = updateSubmittedPacketRecordInProposal(proposalDraft, recordId, {
+        pdfAttachment,
+        updatedAt: new Date().toISOString(),
+      });
+
+      await persistProposalAfterPacketChange(
+        updatedProposal,
+        "Submitted PDF attached locally.",
+        "Submitted PDF attached and synced to cloud.",
+      );
+      setSaveMessage(`Submitted PDF uploaded: ${pdfAttachment.storagePath}`);
+    } catch (error) {
+      console.error("Submitted packet PDF upload failed:", error);
+      setSaveMessage(`PDF upload failed: ${formatStorageUploadError(error)}`);
+    }
+  }
+
+  async function removeSubmittedPacketPdf(recordId) {
+    const record = normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).find((item) => item.id === recordId);
+
+    if (!record?.pdfAttachment?.storagePath && !record?.pdfAttachment?.publicUrl) {
+      setSaveMessage("No submitted PDF is attached to this packet record.");
+      return;
+    }
+
+    if (!window.confirm("Remove this PDF attachment from the packet record? The storage file will not be deleted in this phase.")) {
+      return;
+    }
+
+    const updatedProposal = updateSubmittedPacketRecordInProposal(proposalDraft, recordId, {
+      pdfAttachment: createEmptyPdfAttachment(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await persistProposalAfterPacketChange(
+      updatedProposal,
+      "Submitted PDF attachment removed locally.",
+      "Submitted PDF attachment removed and synced to cloud.",
+    );
+  }
+
   async function persistProposalAfterPacketChange(updatedProposal, localMessage, cloudMessage) {
     const savedAt = new Date().toISOString();
 
@@ -3323,8 +3397,10 @@ export default function App() {
                 onCreateRevision={createRevision}
                 onCreatePacketRecord={saveSubmittedPacketRecord}
                 onDuplicate={() => duplicateCurrentProposal(proposalDraft)}
+                onAttachPacketPdf={attachSubmittedPacketPdf}
                 onMarkPacketSent={markSubmittedPacketSent}
                 onOpenPrintView={openPrintView}
+                onRemovePacketPdf={removeSubmittedPacketPdf}
                 onSave={saveCurrentProposal}
                 onStatusChange={updateCurrentStatus}
                 onUpdatePacketRecord={updateSubmittedPacketRecord}
@@ -3710,6 +3786,8 @@ function BidsView({
             <div className="bid-list">
               {filteredBids.map((bid) => {
                 const bidProposal = proposals.find((proposal) => proposal.id === bid.proposalId);
+                const bidPacketRecord = getBidLinkedPacketRecord(bid, bidProposal);
+                const bidPacketHasPdf = hasPacketPdfAttachment(bidPacketRecord);
 
                 return (
                   <article className="bid-card" key={bid.id}>
@@ -3719,6 +3797,11 @@ function BidsView({
                           <strong>{bid.projectName || "Untitled bid"}</strong>
                           <Badge className={getBidStatusClass(bid.bidStatus)}>{bid.bidStatus}</Badge>
                           <Badge className={getBidPriorityClass(bid.priority)}>{bid.priority}</Badge>
+                          {bid.bidStatus === "Submitted" || bidPacketRecord ? (
+                            <Badge className={bidPacketHasPdf ? "packet-pdf-attached" : "packet-pdf-missing"}>
+                              {bidPacketHasPdf ? "Submitted PDF attached" : "PDF not attached"}
+                            </Badge>
+                          ) : null}
                         </div>
                         <p>{[bid.gcCompany, bid.projectLocation].filter(Boolean).join(" | ") || "No GC/location entered"}</p>
                         <small>
@@ -4427,6 +4510,11 @@ function ProposalSummaryRow({ compact = false, contacts = [], onDuplicate, onExp
         <Badge className={latestPacketRecord ? `packet-record-${latestPacketRecord.status}` : "packet-record-none"}>
           {latestPacketRecord ? formatOptionLabel(latestPacketRecord.status) : "No packet record"}
         </Badge>
+        {latestPacketRecord ? (
+          <Badge className={hasPacketPdfAttachment(latestPacketRecord) ? "packet-pdf-attached" : "packet-pdf-missing"}>
+            {hasPacketPdfAttachment(latestPacketRecord) ? "Packet PDF attached" : "Submitted PDF missing"}
+          </Badge>
+        ) : null}
         <StatusBadge status={proposal.status} />
       </div>
       <div className="proposal-summary-total">
@@ -4729,6 +4817,9 @@ function ProposalListView({
                         <Badge className={`packet-record-${latestPacketRecord.status}`}>
                           {formatOptionLabel(latestPacketRecord.status)}
                         </Badge>
+                        <Badge className={hasPacketPdfAttachment(latestPacketRecord) ? "packet-pdf-attached" : "packet-pdf-missing"}>
+                          {hasPacketPdfAttachment(latestPacketRecord) ? "PDF attached" : "PDF missing"}
+                        </Badge>
                         <span>{formatDashboardDate(latestPacketRecord.createdAt)}</span>
                       </>
                     ) : (
@@ -4956,11 +5047,13 @@ function ProposalActionBar({
   saveMessage,
   saveState,
   onBackToList,
+  onAttachPacketPdf,
   onCreatePacketRecord,
   onCreateRevision,
   onDuplicate,
   onMarkPacketSent,
   onOpenPrintView,
+  onRemovePacketPdf,
   onSave,
   onStatusChange,
   onUpdatePacketRecord,
@@ -5026,7 +5119,9 @@ function ProposalActionBar({
       <RevisionHistory revisions={revisionHistory} currentProposalId={proposal.id} />
       <SubmittedPacketHistory
         records={packetRecords}
+        onAttachPdf={onAttachPacketPdf}
         onMarkSent={onMarkPacketSent}
+        onRemovePdf={onRemovePacketPdf}
         onUpdateRecord={onUpdatePacketRecord}
       />
     </section>
@@ -5058,7 +5153,7 @@ function RevisionHistory({ currentProposalId, revisions = [] }) {
   );
 }
 
-function SubmittedPacketHistory({ records = [], onMarkSent, onUpdateRecord }) {
+function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onRemovePdf, onUpdateRecord }) {
   const visibleRecords = normalizeSubmittedPacketRecords(records);
 
   return (
@@ -5076,19 +5171,36 @@ function SubmittedPacketHistory({ records = [], onMarkSent, onUpdateRecord }) {
         <div className="submitted-packet-list">
           {visibleRecords.map((record) => (
             <article className="submitted-packet-card" key={record.id}>
+              {(() => {
+                const pdfUrl = getSubmittedPacketPdfUrl(record);
+                const hasPdf = hasPacketPdfAttachment(record);
+
+                return (
+                  <>
               <div className="submitted-packet-card-main">
                 <div>
                   <div className="submitted-packet-card-title">
                     <Badge className={`packet-record-${record.status}`}>{formatOptionLabel(record.status)}</Badge>
                     <strong>{record.revisionLabel || formatRevisionLabel(record.revisionNumber)}</strong>
                     <span>{record.packetTitle}</span>
+                    <Badge className={hasPdf ? "packet-pdf-attached" : "packet-pdf-missing"}>
+                      {hasPdf ? "Packet PDF attached" : "Submitted PDF missing"}
+                    </Badge>
                   </div>
                   <div className="submitted-packet-meta">
+                    <span>{record.proposalNumber}</span>
                     <span>Created {formatCloudSyncTime(record.createdAt)}</span>
                     <span>Total {formatCurrency(record.totalAmount)}</span>
                     <span>{record.packetPageCount ? `${record.packetPageCount} page${record.packetPageCount === 1 ? "" : "s"}` : "Page count pending"}</span>
                     {record.sentDate ? <span>Sent {formatDisplayDate(record.sentDate)}</span> : null}
                     {record.sentToName || record.sentToEmail ? <span>To {[record.sentToName, record.sentToEmail].filter(Boolean).join(" | ")}</span> : null}
+                    {hasPdf ? (
+                      <>
+                        <span>{record.pdfAttachment.fileName}</span>
+                        <span>Uploaded {formatCloudSyncTime(record.pdfAttachment.uploadedAt)}</span>
+                        {record.pdfAttachment.uploadedByEmail ? <span>By {record.pdfAttachment.uploadedByEmail}</span> : null}
+                      </>
+                    ) : null}
                   </div>
                 </div>
                 <div className="submitted-packet-actions">
@@ -5097,8 +5209,38 @@ function SubmittedPacketHistory({ records = [], onMarkSent, onUpdateRecord }) {
                       Mark Packet as Sent
                     </button>
                   ) : null}
+                  <label className="submitted-packet-upload-button">
+                    <span>{hasPdf ? "Replace PDF" : "Attach PDF"}</span>
+                    <input
+                      accept="application/pdf,.pdf"
+                      type="file"
+                      onChange={(event) => {
+                        const [file] = event.target.files || [];
+                        onAttachPdf(record.id, file);
+                        event.target.value = "";
+                      }}
+                    />
+                  </label>
+                  {hasPdf && pdfUrl ? (
+                    <>
+                      <a href={pdfUrl} rel="noreferrer" target="_blank">
+                        Open PDF
+                      </a>
+                      <a href={pdfUrl} download={record.pdfAttachment.fileName || "submitted-packet.pdf"}>
+                        Download PDF
+                      </a>
+                    </>
+                  ) : null}
+                  {hasPdf ? (
+                    <button type="button" onClick={() => onRemovePdf(record.id)}>
+                      Remove PDF
+                    </button>
+                  ) : null}
                 </div>
               </div>
+              </>
+                );
+              })()}
               <label className="submitted-packet-notes">
                 <span>Internal notes</span>
                 <textarea
@@ -9261,9 +9403,102 @@ function normalizeSubmittedPacketRecords(records = []) {
       planSheetCount: Number.parseInt(record.planSheetCount, 10) || 0,
       appendixPageCount: Number.parseInt(record.appendixPageCount, 10) || 0,
       packetPageCount: Number.parseInt(record.packetPageCount, 10) || 0,
+      pdfAttachment: normalizePdfAttachment(record.pdfAttachment),
       proposalSnapshot: record.proposalSnapshot || {},
     }))
     .sort((a, b) => getPacketRecordTimestamp(b) - getPacketRecordTimestamp(a));
+}
+
+function createEmptyPdfAttachment() {
+  return {
+    fileName: "",
+    fileSize: 0,
+    fileType: "",
+    publicUrl: "",
+    storagePath: "",
+    uploadedAt: "",
+    uploadedByEmail: "",
+    uploadedByUserId: "",
+  };
+}
+
+function normalizePdfAttachment(pdfAttachment = {}) {
+  if (!isPlainObject(pdfAttachment)) {
+    return createEmptyPdfAttachment();
+  }
+
+  return {
+    ...createEmptyPdfAttachment(),
+    fileName: pdfAttachment.fileName || "",
+    fileSize: Number.parseInt(pdfAttachment.fileSize, 10) || 0,
+    fileType: pdfAttachment.fileType || "",
+    publicUrl: pdfAttachment.publicUrl || "",
+    storagePath: pdfAttachment.storagePath || "",
+    uploadedAt: pdfAttachment.uploadedAt || "",
+    uploadedByEmail: pdfAttachment.uploadedByEmail || "",
+    uploadedByUserId: pdfAttachment.uploadedByUserId || "",
+  };
+}
+
+function hasPacketPdfAttachment(record = {}) {
+  const pdfAttachment = normalizePdfAttachment(record.pdfAttachment);
+  return hasTextValue(pdfAttachment.storagePath) || hasTextValue(pdfAttachment.publicUrl);
+}
+
+function getSubmittedPacketPdfUrl(record = {}) {
+  const pdfAttachment = normalizePdfAttachment(record.pdfAttachment);
+
+  if (hasTextValue(pdfAttachment.publicUrl)) {
+    return pdfAttachment.publicUrl;
+  }
+
+  if (hasTextValue(pdfAttachment.storagePath)) {
+    return getStoragePublicUrl(pdfAttachment.storagePath);
+  }
+
+  return "";
+}
+
+function updateSubmittedPacketRecordInProposal(proposal = {}, recordId, patch = {}) {
+  return createEditableProposal({
+    ...proposal,
+    submittedPacketRecords: normalizeSubmittedPacketRecords(proposal.submittedPacketRecords).map((record) =>
+      record.id === recordId
+        ? {
+            ...record,
+            ...patch,
+          }
+        : record,
+    ),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function getProposalValidationWithPacketPdfWarnings(proposal = {}) {
+  const validation = validateProposalCompleteness(proposal);
+
+  if (String(proposal.status || "").toLowerCase() !== "sent" || proposalHasSubmittedPdf(proposal)) {
+    return validation;
+  }
+
+  return {
+    ...validation,
+    warnings: [...validation.warnings, "Sent proposal has no submitted PDF attached."],
+  };
+}
+
+function proposalHasSubmittedPdf(proposal = {}) {
+  return normalizeSubmittedPacketRecords(proposal.submittedPacketRecords).some(hasPacketPdfAttachment);
+}
+
+function getBidLinkedPacketRecord(bid = {}, proposal = {}) {
+  const records = normalizeSubmittedPacketRecords(proposal?.submittedPacketRecords);
+
+  if (!records.length) {
+    return null;
+  }
+
+  return records.find((record) => record.id === bid.submittedPacketRecordId) || records[0];
 }
 
 function createSubmittedPacketRecord(proposal = {}, authUser = null, overrides = {}) {

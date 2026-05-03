@@ -137,6 +137,62 @@ export async function uploadProposalAssetToCloud(file, { area, companySettings, 
   };
 }
 
+export async function uploadSubmittedPacketPdfToCloud(file, { companySettings, companyUser, packetRecordId, proposalId, companyDeps = {} }) {
+  if (!canUseCloudSync(companyUser)) {
+    throw new Error("PDF file archive requires cloud sign-in.");
+  }
+
+  if (!isPdfFile(file)) {
+    throw new Error("Choose a PDF file.");
+  }
+
+  const activeUser = await getActiveSupabaseUser();
+  const companyRecord = await ensureCloudCompany(activeUser, companySettings, companyDeps);
+  const timestamp = Date.now();
+  const safePacketRecordId = sanitizeStoragePathSegment(packetRecordId || "packet-record");
+  const proposalPathSegment = sanitizeStoragePathSegment(proposalId || "unsaved");
+  const storagePath = `company/${companyRecord.id}/proposals/${proposalPathSegment}/submitted-packets/${safePacketRecordId}-${timestamp}.pdf`;
+  const uploadOptions = {
+    cacheControl: "3600",
+    contentType: file.type || "application/pdf",
+    upsert: false,
+  };
+  const { data, error } = await supabase.storage.from(proposalAssetsBucket).upload(storagePath, file, uploadOptions);
+
+  if (error) {
+    console.error("Supabase Storage PDF upload failed:", {
+      bucket: proposalAssetsBucket,
+      error,
+      path: storagePath,
+    });
+    throw new Error(formatStorageUploadError(error));
+  }
+
+  if (!data?.path) {
+    const missingPathError = new Error("Supabase Storage PDF upload did not return an uploaded file path.");
+    console.error("Supabase Storage PDF upload returned no file path:", {
+      bucket: proposalAssetsBucket,
+      data,
+      path: storagePath,
+    });
+    throw missingPathError;
+  }
+
+  const uploadedPath = data.path || storagePath;
+  const publicUrl = getStoragePublicUrl(uploadedPath);
+
+  return {
+    fileName: file.name || `${safePacketRecordId}.pdf`,
+    fileSize: file.size || 0,
+    fileType: file.type || "application/pdf",
+    publicUrl,
+    storagePath: uploadedPath,
+    uploadedAt: new Date().toISOString(),
+    uploadedByEmail: activeUser.email || "",
+    uploadedByUserId: activeUser.id || "",
+  };
+}
+
 export async function getActiveSupabaseUser() {
   const { data, error } = await supabase.auth.getSession();
 
@@ -196,6 +252,10 @@ function getFileExtension(file) {
   }
 
   return "jpg";
+}
+
+function isPdfFile(file) {
+  return file?.type === "application/pdf" || String(file?.name || "").toLowerCase().endsWith(".pdf");
 }
 
 export function sanitizeStoragePathSegment(value) {
