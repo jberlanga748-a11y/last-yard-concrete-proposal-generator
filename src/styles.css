@@ -259,6 +259,7 @@ h4 {
 .dashboard-panel,
 .backup-page-panel,
 .contacts-panel,
+.price-library-panel,
 .login-panel {
   max-width: 1500px;
   margin: 0 auto 24px;
@@ -273,6 +274,7 @@ h4 {
 .dashboard-panel,
 .backup-page-panel,
 .contacts-panel,
+.price-library-panel,
 .login-panel {
   padding: 22px;
 }
@@ -1175,6 +1177,86 @@ h4 {
   gap: 8px;
 }
 
+.price-library-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.65fr);
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.price-library-list-card,
+.price-library-form-card,
+.price-library-import-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 16px;
+}
+
+.price-library-list-card {
+  display: grid;
+  gap: 16px;
+}
+
+.price-library-form-card {
+  align-self: start;
+}
+
+.price-library-form-card h3,
+.price-library-import-card h3 {
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.price-library-table-wrap {
+  overflow-x: auto;
+}
+
+.price-library-table {
+  min-width: 920px;
+}
+
+.price-library-table tbody tr {
+  cursor: default;
+}
+
+.price-library-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.price-library-wide-field {
+  grid-column: 1 / -1;
+}
+
+.price-library-check {
+  min-height: 40px;
+  border: 1px solid #c9d1dc;
+  border-radius: 7px;
+  background: white;
+  padding: 9px 10px;
+}
+
+.price-library-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.price-library-form-actions button,
+.price-library-import-card button {
+  border-radius: 8px;
+  background: var(--blue);
+  color: white;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .list-filters {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) 220px;
@@ -2014,6 +2096,90 @@ h4 {
 .line-item-editor {
   display: grid;
   gap: 12px;
+}
+
+.price-library-picker-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.price-library-picker-toolbar span {
+  color: #556171;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.price-library-picker-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(6, 43, 69, 0.16);
+  border-radius: 9px;
+  background: white;
+  padding: 12px;
+}
+
+.price-library-picker-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 180px;
+  gap: 10px;
+}
+
+.price-library-picker-filters label {
+  display: grid;
+  gap: 5px;
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.price-library-picker-filters input,
+.price-library-picker-filters select {
+  border: 1px solid #c9d1dc;
+  border-radius: 7px;
+  background: white;
+  color: var(--body);
+  padding: 9px 10px;
+  font-size: 13px;
+}
+
+.price-library-picker-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.price-library-picker-list button {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--body);
+  padding: 10px;
+  text-align: left;
+}
+
+.price-library-picker-list button:hover {
+  border-color: rgba(201, 166, 74, 0.75);
+  background: #fffaf0;
+}
+
+.price-library-picker-list strong {
+  color: var(--blue);
+  font-size: 13px;
+}
+
+.price-library-picker-list span {
+  color: #556171;
+  font-size: 12px;
+  font-weight: 750;
 }
 
 .pricing-section-editor {

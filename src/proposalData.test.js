@@ -3,10 +3,15 @@ import assert from "node:assert/strict";
 
 import {
   DEFAULT_EXCLUSIONS,
+  DEFAULT_PRICE_LIBRARY_ITEMS,
   DEFAULT_TERMS,
+  PRICE_LIBRARY_CATEGORIES,
   SEED_PROPOSAL,
   applyTemplateToProposal,
   calculateProposalTotals,
+  createPriceLibraryLineItem,
+  getDefaultPriceLibrary,
+  normalizePriceLibrary,
   validateProposalCompleteness,
 } from "./proposalData.js";
 
@@ -193,4 +198,59 @@ test("Driveway template sets residential summary proposal defaults", () => {
   assert.ok(proposal.exclusions.length > 0);
   assert.ok(proposal.terms.payment);
   assert.ok(proposal.lineItems.length > 0);
+});
+
+test("default price library includes active categorized unit price items", () => {
+  const library = getDefaultPriceLibrary();
+
+  assert.equal(library.length, DEFAULT_PRICE_LIBRARY_ITEMS.length);
+  assert.ok(library.some((item) => item.name === "4 in broom finish sidewalk"));
+  assert.ok(library.every((item) => PRICE_LIBRARY_CATEGORIES.includes(item.category)));
+  assert.ok(library.every((item) => item.active === true));
+});
+
+test("normalizes price library list fields and allowed units", () => {
+  const library = normalizePriceLibrary([
+    {
+      name: "Custom Item",
+      category: "Sidewalk / Flatwork",
+      defaultExclusions: "Permits\nTesting",
+      defaultScopeBullets: ["Place concrete", ""],
+      defaultUnitPrice: "12.50",
+      defaultQuantity: "4",
+      unit: "BAD",
+    },
+  ]);
+
+  assert.equal(library[0].unit, "LS");
+  assert.equal(library[0].defaultUnitPrice, 12.5);
+  assert.equal(library[0].defaultQuantity, 4);
+  assert.deepEqual(library[0].defaultExclusions, ["Permits", "Testing"]);
+  assert.deepEqual(library[0].defaultScopeBullets, ["Place concrete"]);
+});
+
+test("creates proposal line items from price library items", () => {
+  const lineItem = createPriceLibraryLineItem(
+    {
+      name: "Curb and gutter",
+      category: "Curb / Gutter",
+      description: "Curb and gutter",
+      defaultNotes: "Per plan",
+      defaultQuantity: 600,
+      defaultUnitPrice: 14.5,
+      taxable: false,
+      unit: "LF",
+    },
+    "3",
+  );
+
+  assert.deepEqual(lineItem, {
+    description: "Curb and gutter",
+    itemNumber: "3",
+    notes: "Per plan",
+    quantity: 600,
+    taxable: false,
+    unit: "LF",
+    unitPrice: 14.5,
+  });
 });

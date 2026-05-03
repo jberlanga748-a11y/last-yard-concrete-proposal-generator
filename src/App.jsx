@@ -12,14 +12,19 @@ import { ProposalPrintToolbar } from "./components/proposalPacket/ProposalPrintT
 import {
   LINE_ITEM_UNITS,
   PRICING_SECTION_TYPES,
+  PRICE_LIBRARY_CATEGORIES,
   PROPOSAL_TEMPLATES,
   PROPOSAL_STATUSES,
   PROPOSAL_TYPES,
   SEED_PROPOSAL,
   applyTemplateToProposal,
   calculateProposalTotals,
+  createPriceLibraryLineItem,
   formatCurrency,
   generateProposalNumber,
+  getDefaultPriceLibrary,
+  normalizePriceLibrary,
+  normalizePriceLibraryItem,
   validateProposalCompleteness,
 } from "./proposalData.js";
 import { isSupabaseConfigured, supabase } from "./supabaseClient.js";
@@ -66,6 +71,7 @@ const logoSrc = "/assets/last-yard-logo.jpg";
 const storageKey = "last-yard-proposals-v1";
 const companySettingsStorageKey = "last-yard-company-settings-v1";
 const contactsStorageKey = "last-yard-contacts-v1";
+const priceLibraryStorageKey = "last-yard-price-library-v1";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
 const demoContactId = "demo-contact-abc-prime-contractors";
@@ -286,6 +292,8 @@ export default function App() {
   const [settingsMessage, setSettingsMessage] = useState("");
   const [savedProposals, setSavedProposals] = useState(() => loadSavedProposals(loadCompanySettings()));
   const [savedContacts, setSavedContacts] = useState(() => loadSavedContacts());
+  const [priceLibrary, setPriceLibrary] = useState(() => loadPriceLibrary());
+  const [priceLibraryMessage, setPriceLibraryMessage] = useState("");
   const [route, setRoute] = useState(() => parseRoute(window.location.pathname));
   const [proposalDraft, setProposalDraft] = useState(() =>
     getInitialProposalForRoute(parseRoute(window.location.pathname), loadSavedProposals(loadCompanySettings()), loadCompanySettings()),
@@ -320,6 +328,7 @@ export default function App() {
   const isBackupView = route.view === "backup";
   const isContactsView = route.view === "contacts";
   const isLoginView = route.view === "login";
+  const isPriceLibraryView = route.view === "priceLibrary";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
   const proposalValidation = validateProposalCompleteness(proposalDraft);
 
@@ -330,6 +339,10 @@ export default function App() {
   useEffect(() => {
     saveStoredContacts(savedContacts);
   }, [savedContacts]);
+
+  useEffect(() => {
+    saveStoredPriceLibrary(priceLibrary);
+  }, [priceLibrary]);
 
   useEffect(() => {
     saveCompanySettings(companySettings);
@@ -468,7 +481,16 @@ export default function App() {
     function handlePrintShortcut(event) {
       const isPrintShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p";
 
-      if (!isPrintShortcut || isDashboardView || isListView || isSettingsView || isBackupView || isContactsView || isLoginView) {
+      if (
+        !isPrintShortcut ||
+        isDashboardView ||
+        isListView ||
+        isSettingsView ||
+        isBackupView ||
+        isContactsView ||
+        isLoginView ||
+        isPriceLibraryView
+      ) {
         return;
       }
 
@@ -482,7 +504,7 @@ export default function App() {
 
     window.addEventListener("keydown", handlePrintShortcut);
     return () => window.removeEventListener("keydown", handlePrintShortcut);
-  }, [isBackupView, isContactsView, isDashboardView, isListView, isLoginView, isSettingsView, proposalDraft]);
+  }, [isBackupView, isContactsView, isDashboardView, isListView, isLoginView, isPriceLibraryView, isSettingsView, proposalDraft]);
 
   useEffect(() => {
     if (validationNotice && proposalValidation.errors.length === 0) {
@@ -680,7 +702,7 @@ export default function App() {
   }
 
   function saveSettings() {
-    const normalizedSettings = normalizeCompanySettings(settingsDraft);
+    const normalizedSettings = getSettingsWithPriceLibrary(settingsDraft, priceLibrary);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     setSettingsMessage(getCloudReadyMessage(authUser, "Company settings saved locally. Syncing to cloud...", "Company settings saved locally."));
@@ -701,13 +723,17 @@ export default function App() {
     }));
 
     try {
-      const companyRecord = await ensureCloudCompany(user, companySettings, companyCloudDeps);
+      const companyRecord = await ensureCloudCompany(user, getSettingsWithPriceLibrary(companySettings, priceLibrary), companyCloudDeps);
 
       if (isCancelled()) {
         return;
       }
 
-      const settingsResult = await loadOrSeedCloudCompanySettings(companyRecord.id, companySettings, companyCloudDeps);
+      const settingsResult = await loadOrSeedCloudCompanySettings(
+        companyRecord.id,
+        getSettingsWithPriceLibrary(companySettings, priceLibrary),
+        companyCloudDeps,
+      );
 
       if (isCancelled()) {
         return;
@@ -727,8 +753,12 @@ export default function App() {
         return;
       }
 
-      setCompanySettings(settingsResult.settings);
-      setSettingsDraft(settingsResult.settings);
+      const syncedPriceLibrary = getPriceLibraryFromSettings(settingsResult.settings, priceLibrary);
+      const syncedSettings = getSettingsWithPriceLibrary(settingsResult.settings, syncedPriceLibrary);
+
+      setPriceLibrary(syncedPriceLibrary);
+      setCompanySettings(syncedSettings);
+      setSettingsDraft(syncedSettings);
       setSavedContacts(contactsResult.contacts);
       setSavedProposals(proposalsResult.proposals);
       setTeamMembers(cloudTeamMembers);
@@ -773,7 +803,8 @@ export default function App() {
   }
 
   async function syncSettingsToCloud(settings = companySettings) {
-    const normalizedSettings = normalizeCompanySettings(settings);
+    const libraryForSettings = Array.isArray(settings?.priceLibrary) ? settings.priceLibrary : priceLibrary;
+    const normalizedSettings = getSettingsWithPriceLibrary(settings, libraryForSettings);
 
     if (!canUseCloudSync(authUser)) {
       setCloudSync((currentSync) => ({
@@ -944,7 +975,7 @@ export default function App() {
   }
 
   async function pushLocalDataToCloud() {
-    const normalizedSettings = normalizeCompanySettings(settingsDraft);
+    const normalizedSettings = getSettingsWithPriceLibrary(settingsDraft, priceLibrary);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     await syncSettingsToCloud(normalizedSettings);
@@ -1666,6 +1697,118 @@ export default function App() {
     }
   }
 
+  async function commitPriceLibrary(nextLibrary, message = "Price library saved locally.") {
+    const normalizedLibrary = normalizePriceLibrary(nextLibrary);
+    const settingsWithLibrary = getSettingsWithPriceLibrary(companySettings, normalizedLibrary);
+
+    setPriceLibrary(normalizedLibrary);
+    setCompanySettings(settingsWithLibrary);
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibrary(currentSettings, normalizedLibrary));
+    setPriceLibraryMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
+
+    if (canUseCloudSync(authUser)) {
+      const synced = await syncSettingsToCloud(settingsWithLibrary);
+      setPriceLibraryMessage(synced ? `${message} Synced to cloud settings.` : `${message} Cloud sync failed. See Settings for details.`);
+    }
+  }
+
+  async function savePriceLibraryItem(item) {
+    const now = new Date().toISOString();
+    const normalizedItem = normalizePriceLibraryItem({
+      ...item,
+      id: item.id || createProposalId(),
+      createdAt: item.createdAt || now,
+      updatedAt: now,
+    });
+    const nextLibrary = upsertPriceLibraryItem(priceLibrary, normalizedItem);
+
+    await commitPriceLibrary(nextLibrary, `Saved ${normalizedItem.name} to the price library.`);
+  }
+
+  async function togglePriceLibraryItem(itemId, active) {
+    const nextLibrary = priceLibrary.map((item) =>
+      item.id === itemId
+        ? normalizePriceLibraryItem({
+            ...item,
+            active,
+            updatedAt: new Date().toISOString(),
+          })
+        : item,
+    );
+
+    await commitPriceLibrary(nextLibrary, "Updated price library item status locally.");
+  }
+
+  async function deletePriceLibraryItem(itemId) {
+    const item = priceLibrary.find((libraryItem) => libraryItem.id === itemId);
+
+    if (!item) {
+      return;
+    }
+
+    if (!window.confirm(`Delete ${item.name} from the price library? This may affect local/cloud data after sync.`)) {
+      return;
+    }
+
+    await commitPriceLibrary(
+      priceLibrary.filter((libraryItem) => libraryItem.id !== itemId),
+      `Deleted ${item.name} from the price library.`,
+    );
+  }
+
+  async function duplicatePriceLibraryItem(itemId) {
+    const item = priceLibrary.find((libraryItem) => libraryItem.id === itemId);
+
+    if (!item) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const duplicate = normalizePriceLibraryItem({
+      ...item,
+      id: createProposalId(),
+      name: `${item.name} Copy`,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await commitPriceLibrary([...priceLibrary, duplicate], `Duplicated ${item.name}.`);
+  }
+
+  function exportPriceLibraryBackup() {
+    try {
+      downloadJsonFile(createPriceLibraryExport(priceLibrary), getPriceLibraryBackupFileName());
+      setPriceLibraryMessage(`Exported ${priceLibrary.length} price library items.`);
+    } catch (error) {
+      setPriceLibraryMessage(`Price library export failed: ${error.message}`);
+    }
+  }
+
+  async function importPriceLibraryBackup(file, mode = "merge") {
+    if (!file) {
+      setPriceLibraryMessage("Choose a price library JSON file before importing.");
+      return;
+    }
+
+    try {
+      const importedJson = await readJsonFile(file);
+      const importedLibrary = parsePriceLibraryImport(importedJson);
+      const nextLibrary = mergeOrReplaceImportedPriceLibrary(importedLibrary, priceLibrary, mode);
+
+      if (!nextLibrary) {
+        setPriceLibraryMessage("Price library import cancelled.");
+        return;
+      }
+
+      await commitPriceLibrary(
+        nextLibrary,
+        `${mode === "replace" ? "Replaced" : "Merged"} ${importedLibrary.length} price library items locally.`,
+      );
+    } catch (error) {
+      setPriceLibraryMessage(`Price library import failed: ${error.message}`);
+    }
+  }
+
   function updateLineItem(index, field, value) {
     setProposalDirty(true);
     setProposalDraft((currentProposal) => {
@@ -1695,6 +1838,27 @@ export default function App() {
         lineItems: [...currentProposal.lineItems, nextLineItem],
       };
     });
+  }
+
+  function addLineItemFromPriceLibrary(itemId) {
+    const libraryItem = priceLibrary.find((item) => item.id === itemId);
+
+    if (!libraryItem) {
+      setSaveMessage("Choose a price library item to add.");
+      return;
+    }
+
+    setProposalDirty(true);
+    setProposalDraft((currentProposal) => {
+      const nextItemNumber = String((currentProposal.lineItems || []).length + 1);
+      const nextLineItem = createPriceLibraryLineItem(libraryItem, nextItemNumber);
+
+      return {
+        ...currentProposal,
+        lineItems: [...(currentProposal.lineItems || []), nextLineItem],
+      };
+    });
+    setSaveMessage(`Added ${libraryItem.name} from the price library.`);
   }
 
   function removeLineItem(index) {
@@ -2419,7 +2583,7 @@ export default function App() {
       }
 
       if (type === "settings") {
-        downloadJsonFile(createCompanySettingsExport(companySettings), getCompanySettingsBackupFileName());
+        downloadJsonFile(createCompanySettingsExport(getSettingsWithPriceLibrary(companySettings, priceLibrary)), getCompanySettingsBackupFileName());
         setBackupMessage("Exported company settings.");
         return;
       }
@@ -2431,9 +2595,9 @@ export default function App() {
       }
 
       if (type === "full") {
-        downloadJsonFile(createFullAppBackup(savedProposals, companySettings, savedContacts), getFullBackupFileName());
+        downloadJsonFile(createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary), getFullBackupFileName());
         setBackupMessage(
-          `Exported full app backup with ${savedProposals.length} proposals, ${savedContacts.length} contacts, and company settings.`,
+          `Exported full app backup with ${savedProposals.length} proposals, ${savedContacts.length} contacts, ${priceLibrary.length} price items, and company settings.`,
         );
       }
     } catch (error) {
@@ -2479,9 +2643,12 @@ export default function App() {
 
       if (type === "settings") {
         const importedSettings = parseCompanySettingsImport(importedJson);
+        const importedPriceLibrary = getPriceLibraryFromSettings(importedSettings, priceLibrary);
+        const settingsWithLibrary = getSettingsWithPriceLibrary(importedSettings, importedPriceLibrary);
 
-        setCompanySettings(importedSettings);
-        setSettingsDraft(importedSettings);
+        setPriceLibrary(importedPriceLibrary);
+        setCompanySettings(settingsWithLibrary);
+        setSettingsDraft(settingsWithLibrary);
         setBackupMessage("Imported company settings. New proposals will use the restored defaults.");
         return;
       }
@@ -2522,14 +2689,19 @@ export default function App() {
             ? importedBackup.contacts.map((contact) => normalizeContact(contact))
             : mergeImportedContacts(importedBackup.contacts, savedContacts),
         );
-        setCompanySettings(importedBackup.companySettings);
-        setSettingsDraft(importedBackup.companySettings);
+        const importedPriceLibrary =
+          importedBackup.priceLibrary.length > 0 ? normalizePriceLibrary(importedBackup.priceLibrary) : priceLibrary;
+        const importedSettings = getSettingsWithPriceLibrary(importedBackup.companySettings, importedPriceLibrary);
+
+        setPriceLibrary(importedPriceLibrary);
+        setCompanySettings(importedSettings);
+        setSettingsDraft(importedSettings);
         setContactDraft(createEmptyContact());
         setContactEditorOpen(false);
         syncDraftAfterProposalRestore(nextProposals);
         markProposalsNeedCloudSync("Imported full backup locally. Use Sync Proposals or Push Local Data to Cloud when ready.");
         setBackupMessage(
-          `${mode === "replace" ? "Restored" : "Merged"} full backup with ${importedBackup.proposals.length} proposals, ${importedBackup.contacts.length} contacts, and company settings.`,
+          `${mode === "replace" ? "Restored" : "Merged"} full backup with ${importedBackup.proposals.length} proposals, ${importedBackup.contacts.length} contacts, ${importedPriceLibrary.length} price items, and company settings.`,
         );
       }
     } catch (error) {
@@ -2604,6 +2776,7 @@ export default function App() {
           onOpenList={() => navigate("/proposals")}
           onOpenPrint={openProposalPrintView}
           onOpenSampleProposal={openSampleProposal}
+          onOpenPriceLibrary={() => navigate("/price-library")}
           onOpenSettings={() => navigate("/settings")}
           onPrintSamplePacket={printSamplePacket}
           onPullCloudProposals={pullCloudProposals}
@@ -2623,6 +2796,18 @@ export default function App() {
           onSignIn={signInWithEmail}
           onSignOut={signOut}
           onSignUp={signUpWithEmail}
+        />
+      ) : isPriceLibraryView ? (
+        <PriceLibraryView
+          items={priceLibrary}
+          message={priceLibraryMessage}
+          onBackToDashboard={() => navigate("/dashboard")}
+          onDelete={deletePriceLibraryItem}
+          onDuplicate={duplicatePriceLibraryItem}
+          onExport={exportPriceLibraryBackup}
+          onImport={importPriceLibraryBackup}
+          onSave={savePriceLibraryItem}
+          onToggleActive={togglePriceLibraryItem}
         />
       ) : isSettingsView ? (
         <CompanySettingsView
@@ -2740,6 +2925,7 @@ export default function App() {
                 assetUploadMessage={assetUploadMessage}
                 showTemplatePicker={route.view === "new"}
                 onAddLineItem={addLineItem}
+                onAddLineItemFromLibrary={addLineItemFromPriceLibrary}
                 onAddPricingSection={addPricingSection}
                 onApplyTemplate={applyProposalTemplate}
                 onChange={updateProposalField}
@@ -2769,6 +2955,7 @@ export default function App() {
                 onSmartPasteFill={fillProposalFromNotes}
                 onSmartPasteNotesChange={setSmartPasteNotes}
                 onSelectContact={applyContactToCurrentProposal}
+                priceLibrary={priceLibrary}
                 smartPasteNotes={smartPasteNotes}
                 smartPasteResult={smartPasteResult}
                 validation={proposalValidation}
@@ -2802,6 +2989,7 @@ function DashboardView({
   onOpenContacts,
   onOpenList,
   onOpenPrint,
+  onOpenPriceLibrary,
   onOpenSampleProposal,
   onOpenSettings,
   onPrintSamplePacket,
@@ -2844,6 +3032,9 @@ function DashboardView({
           </button>
           <button type="button" onClick={onOpenContacts}>
             Contacts
+          </button>
+          <button type="button" onClick={onOpenPriceLibrary}>
+            Price Library
           </button>
           <button type="button" onClick={onOpenSettings}>
             Company Settings
@@ -3137,6 +3328,275 @@ function ContactsView({
           </div>
 
           {filteredContacts.length === 0 ? <p className="empty-list-message">No contacts match those filters.</p> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PriceLibraryView({
+  items = [],
+  message = "",
+  onBackToDashboard,
+  onDelete,
+  onDuplicate,
+  onExport,
+  onImport,
+  onSave,
+  onToggleActive,
+}) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [importMode, setImportMode] = useState("merge");
+  const [importFile, setImportFile] = useState(null);
+  const [draft, setDraft] = useState(() => createEmptyPriceLibraryDraft());
+  const filteredItems = filterPriceLibraryItems(items, searchQuery, categoryFilter);
+  const activeCount = items.filter((item) => item.active !== false).length;
+
+  function updateDraft(field, value) {
+    setDraft((currentDraft) => ({
+      ...currentDraft,
+      [field]: value,
+    }));
+  }
+
+  function editItem(item) {
+    setDraft({
+      ...normalizePriceLibraryItem(item),
+      defaultScopeBullets: formatPriceLibraryListInput(item.defaultScopeBullets),
+      defaultExclusions: formatPriceLibraryListInput(item.defaultExclusions),
+    });
+  }
+
+  async function saveDraft() {
+    await onSave(draft);
+    setDraft(createEmptyPriceLibraryDraft());
+  }
+
+  return (
+    <section className="price-library-panel no-print">
+      <div className="list-toolbar">
+        <div>
+          <p className="list-kicker">Reusable estimating items</p>
+          <h2>Unit Price Library</h2>
+          <span className="settings-message">
+            {activeCount} active items | {items.length} total items
+          </span>
+          {message ? <span className="settings-message">{message}</span> : null}
+        </div>
+        <div className="settings-actions">
+          <button type="button" onClick={onBackToDashboard}>
+            Back to Dashboard
+          </button>
+          <button type="button" onClick={() => setDraft(createEmptyPriceLibraryDraft())}>
+            New Item
+          </button>
+          <button type="button" onClick={onExport}>
+            Export Library
+          </button>
+        </div>
+      </div>
+
+      <div className="price-library-layout">
+        <div className="price-library-list-card">
+          <div className="list-filters">
+            <label>
+              <span>Search</span>
+              <input
+                type="search"
+                value={searchQuery}
+                placeholder="Name, category, unit, or description"
+                onChange={(event) => setSearchQuery(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Category</span>
+              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+                <option value="all">All categories</option>
+                {PRICE_LIBRARY_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="price-library-table-wrap">
+            <table className="proposal-list-table price-library-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Category</th>
+                  <th>Unit</th>
+                  <th>Default</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredItems.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <strong>{item.name}</strong>
+                      <span>{item.description}</span>
+                    </td>
+                    <td>{item.category}</td>
+                    <td>{item.unit}</td>
+                    <td>
+                      <strong>{formatCurrency(item.defaultUnitPrice)}</strong>
+                      <span>Qty {item.defaultQuantity || 1}</span>
+                    </td>
+                    <td>
+                      <label className="editor-check">
+                        <input
+                          checked={item.active !== false}
+                          type="checkbox"
+                          onChange={(event) => onToggleActive(item.id, event.target.checked)}
+                        />
+                        <span>{item.active === false ? "Inactive" : "Active"}</span>
+                      </label>
+                    </td>
+                    <td>
+                      <div className="table-actions">
+                        <button type="button" onClick={() => editItem(item)}>
+                          Edit
+                        </button>
+                        <button type="button" onClick={() => onDuplicate(item.id)}>
+                          Duplicate
+                        </button>
+                        <button type="button" onClick={() => onDelete(item.id)}>
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {filteredItems.length === 0 ? <p className="empty-list-message">No price library items match those filters.</p> : null}
+
+          <div className="price-library-import-card">
+            <h3>Import Price Library</h3>
+            <p className="backup-help">Import a saved price library JSON file. Replace mode requires confirmation.</p>
+            <div className="backup-import-grid">
+              <label>
+                <span>Import Mode</span>
+                <select value={importMode} onChange={(event) => setImportMode(event.target.value)}>
+                  <option value="merge">Merge with Existing</option>
+                  <option value="replace">Replace Existing</option>
+                </select>
+              </label>
+              <label className="backup-file-field">
+                <span>JSON File</span>
+                <input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] || null)} />
+              </label>
+              <button type="button" onClick={() => onImport(importFile, importMode)}>
+                Import Price Library
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="price-library-form-card">
+          <h3>{draft.id ? "Edit Price Item" : "Add Price Item"}</h3>
+          <div className="price-library-form-grid">
+            <EditorField label="Name" path="priceLibrary.name" value={draft.name} onChange={(_, value) => updateDraft("name", value)} />
+            <EditorField
+              label="Category"
+              path="priceLibrary.category"
+              value={draft.category}
+              onChange={(_, value) => updateDraft("category", value)}
+              options={PRICE_LIBRARY_CATEGORIES}
+            />
+            <div className="price-library-wide-field">
+              <EditorField
+                label="Description"
+                path="priceLibrary.description"
+                value={draft.description}
+                onChange={(_, value) => updateDraft("description", value)}
+              />
+            </div>
+            <EditorField
+              label="Unit"
+              path="priceLibrary.unit"
+              value={draft.unit}
+              onChange={(_, value) => updateDraft("unit", value)}
+              options={LINE_ITEM_UNITS}
+            />
+            <EditorField
+              label="Default Quantity"
+              path="priceLibrary.defaultQuantity"
+              type="number"
+              value={draft.defaultQuantity}
+              onChange={(_, value) => updateDraft("defaultQuantity", value)}
+            />
+            <EditorField
+              label="Default Unit Price"
+              path="priceLibrary.defaultUnitPrice"
+              type="number"
+              value={draft.defaultUnitPrice}
+              onChange={(_, value) => updateDraft("defaultUnitPrice", value)}
+            />
+            <div className="editor-field">
+              <span>Taxable</span>
+              <label className="editor-check price-library-check">
+                <input
+                  checked={draft.taxable !== false}
+                  type="checkbox"
+                  onChange={(event) => updateDraft("taxable", event.target.checked)}
+                />
+                <span>Taxable line item</span>
+              </label>
+            </div>
+            <div className="editor-field">
+              <span>Active</span>
+              <label className="editor-check price-library-check">
+                <input
+                  checked={draft.active !== false}
+                  type="checkbox"
+                  onChange={(event) => updateDraft("active", event.target.checked)}
+                />
+                <span>Show in proposal picker</span>
+              </label>
+            </div>
+            <div className="price-library-wide-field">
+              <EditorField
+                label="Notes"
+                path="priceLibrary.defaultNotes"
+                value={draft.defaultNotes}
+                onChange={(_, value) => updateDraft("defaultNotes", value)}
+                multiline
+              />
+            </div>
+            <div className="price-library-wide-field">
+              <EditorField
+                label="Default Scope Bullets"
+                path="priceLibrary.defaultScopeBullets"
+                value={draft.defaultScopeBullets}
+                onChange={(_, value) => updateDraft("defaultScopeBullets", value)}
+                multiline
+              />
+            </div>
+            <div className="price-library-wide-field">
+              <EditorField
+                label="Default Exclusions"
+                path="priceLibrary.defaultExclusions"
+                value={draft.defaultExclusions}
+                onChange={(_, value) => updateDraft("defaultExclusions", value)}
+                multiline
+              />
+            </div>
+          </div>
+          <div className="price-library-form-actions">
+            <button type="button" onClick={saveDraft}>
+              Save Price Item
+            </button>
+            <button type="button" onClick={() => setDraft(createEmptyPriceLibraryDraft())}>
+              Clear Form
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -3894,6 +4354,7 @@ function ProposalEditor({
   proposal,
   showTemplatePicker = false,
   onAddLineItem,
+  onAddLineItemFromLibrary,
   onAddPricingSection,
   onAddScopeBullet,
   onAddScopeSection,
@@ -3923,6 +4384,7 @@ function ProposalEditor({
   onSmartPasteFill,
   onSmartPasteNotesChange,
   onSelectContact,
+  priceLibrary = [],
   validation,
   validationNotice,
   smartPasteNotes,
@@ -4177,6 +4639,8 @@ function ProposalEditor({
       <EditorSection title="Pricing">
         <LineItemEditor
           lineItems={proposal.lineItems}
+          priceLibrary={priceLibrary}
+          onAddLineItemFromLibrary={onAddLineItemFromLibrary}
           onAddLineItem={onAddLineItem}
           onLineItemChange={onLineItemChange}
           onRemoveLineItem={onRemoveLineItem}
@@ -4321,9 +4785,75 @@ function SmartPasteSummary({ result }) {
   );
 }
 
-function LineItemEditor({ lineItems, onAddLineItem, onLineItemChange, onRemoveLineItem }) {
+function LineItemEditor({
+  lineItems,
+  priceLibrary = [],
+  onAddLineItem,
+  onAddLineItemFromLibrary,
+  onLineItemChange,
+  onRemoveLineItem,
+}) {
+  const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
+  const [librarySearch, setLibrarySearch] = useState("");
+  const [libraryCategoryFilter, setLibraryCategoryFilter] = useState("all");
+  const activeLibraryItems = priceLibrary.filter((item) => item.active !== false);
+  const filteredLibraryItems = filterPriceLibraryItems(activeLibraryItems, librarySearch, libraryCategoryFilter);
+
   return (
     <div className="line-item-editor">
+      <div className="price-library-picker-toolbar">
+        <button className="editor-secondary-button" type="button" onClick={() => setLibraryPickerOpen((isOpen) => !isOpen)}>
+          Add from Price Library
+        </button>
+        <span>{activeLibraryItems.length} active reusable items</span>
+      </div>
+
+      {libraryPickerOpen ? (
+        <div className="price-library-picker-panel">
+          <div className="price-library-picker-filters">
+            <label>
+              <span>Search Library</span>
+              <input
+                type="search"
+                value={librarySearch}
+                placeholder="Item, category, or unit"
+                onChange={(event) => setLibrarySearch(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Category</span>
+              <select value={libraryCategoryFilter} onChange={(event) => setLibraryCategoryFilter(event.target.value)}>
+                <option value="all">All categories</option>
+                {PRICE_LIBRARY_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="price-library-picker-list">
+            {filteredLibraryItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  onAddLineItemFromLibrary(item.id);
+                  setLibraryPickerOpen(false);
+                }}
+              >
+                <strong>{item.name}</strong>
+                <span>
+                  {item.category} | {item.unit} | {formatCurrency(item.defaultUnitPrice)}
+                </span>
+              </button>
+            ))}
+            {filteredLibraryItems.length === 0 ? <p className="empty-list-message">No active library items match those filters.</p> : null}
+          </div>
+        </div>
+      ) : null}
+
       {lineItems.map((item, index) => {
         const amount = toEditableNumber(item.quantity) * toEditableNumber(item.unitPrice);
 
@@ -5487,6 +6017,10 @@ function parseRoute(pathname) {
     return { view: "contacts", path: "/contacts" };
   }
 
+  if (segments[0] === "price-library") {
+    return { view: "priceLibrary", path: "/price-library" };
+  }
+
   if (segments[0] !== "proposals") {
     return { view: "list", path: "/proposals" };
   }
@@ -5665,6 +6199,58 @@ function saveStoredContacts(contacts) {
     // Local contact saving is best-effort for this phase.
   }
 }
+
+function loadPriceLibrary() {
+  try {
+    const storedValue = window.localStorage.getItem(priceLibraryStorageKey);
+
+    if (storedValue) {
+      const parsedValue = JSON.parse(storedValue);
+
+      if (Array.isArray(parsedValue)) {
+        return normalizePriceLibrary(parsedValue);
+      }
+    }
+
+    const storedSettings = window.localStorage.getItem(companySettingsStorageKey);
+
+    if (storedSettings) {
+      const parsedSettings = JSON.parse(storedSettings);
+
+      if (Array.isArray(parsedSettings?.priceLibrary)) {
+        return normalizePriceLibrary(parsedSettings.priceLibrary);
+      }
+    }
+  } catch {
+    // Fall through to starter items if local storage is unavailable or malformed.
+  }
+
+  return getDefaultPriceLibrary();
+}
+
+function saveStoredPriceLibrary(items) {
+  try {
+    window.localStorage.setItem(priceLibraryStorageKey, JSON.stringify(normalizePriceLibrary(items)));
+  } catch {
+    // Local price library saving is best-effort for this phase.
+  }
+}
+
+function getSettingsWithPriceLibrary(settings = {}, priceLibrary = []) {
+  return normalizeCompanySettings({
+    ...(settings || {}),
+    priceLibrary: normalizePriceLibrary(priceLibrary),
+  });
+}
+
+function getPriceLibraryFromSettings(settings = {}, fallbackLibrary = []) {
+  if (Array.isArray(settings?.priceLibrary)) {
+    return normalizePriceLibrary(settings.priceLibrary);
+  }
+
+  return normalizePriceLibrary(fallbackLibrary);
+}
+
 function isDemoRecord(record = {}) {
   return Boolean(record.demo || record.metadata?.isDemo);
 }
@@ -5712,7 +6298,20 @@ function createContactsExport(contacts) {
   };
 }
 
-function createFullAppBackup(proposals, settings, contacts = []) {
+function createPriceLibraryExport(priceLibrary = []) {
+  return {
+    backupVersion,
+    exportedAt: new Date().toISOString(),
+    source: backupSource,
+    type: "price_library",
+    storageKey: priceLibraryStorageKey,
+    priceLibrary: cloneObject(normalizePriceLibrary(priceLibrary)),
+  };
+}
+
+function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = []) {
+  const normalizedPriceLibrary = normalizePriceLibrary(priceLibrary);
+
   return {
     backupVersion,
     exportedAt: new Date().toISOString(),
@@ -5722,10 +6321,12 @@ function createFullAppBackup(proposals, settings, contacts = []) {
       proposals: storageKey,
       companySettings: companySettingsStorageKey,
       contacts: contactsStorageKey,
+      priceLibrary: priceLibraryStorageKey,
     },
     proposals: cloneObject(proposals),
-    companySettings: cloneObject(settings),
+    companySettings: cloneObject(getSettingsWithPriceLibrary(settings, normalizedPriceLibrary)),
     contacts: cloneObject(contacts),
+    priceLibrary: cloneObject(normalizedPriceLibrary),
   };
 }
 
@@ -5804,15 +6405,31 @@ function parseContactCollectionImport(importedJson) {
   return contacts.filter(isPlainObject).map((contact) => normalizeContact(contact));
 }
 
+function parsePriceLibraryImport(importedJson) {
+  const priceLibrary = Array.isArray(importedJson) ? importedJson : importedJson?.priceLibrary || importedJson?.companySettings?.priceLibrary;
+
+  if (!Array.isArray(priceLibrary)) {
+    throw new Error("This file does not include a priceLibrary array.");
+  }
+
+  return normalizePriceLibrary(priceLibrary).filter((item) => hasTextValue(item.name));
+}
+
 function parseFullAppBackupImport(importedJson) {
   if (!isPlainObject(importedJson) || (!Array.isArray(importedJson.proposals) && !isPlainObject(importedJson.companySettings))) {
     throw new Error("This file does not look like a full app backup.");
   }
 
+  const importedSettings = parseCompanySettingsImport(importedJson.companySettings || importedJson);
+  const importedPriceLibrary = Array.isArray(importedJson.priceLibrary)
+    ? parsePriceLibraryImport(importedJson)
+    : getPriceLibraryFromSettings(importedSettings, []);
+
   return {
     proposals: parseProposalCollectionImport(importedJson),
-    companySettings: parseCompanySettingsImport(importedJson.companySettings || importedJson),
+    companySettings: getSettingsWithPriceLibrary(importedSettings, importedPriceLibrary),
     contacts: Array.isArray(importedJson.contacts) ? parseContactCollectionImport(importedJson) : [],
+    priceLibrary: importedPriceLibrary,
   };
 }
 
@@ -5855,6 +6472,36 @@ function mergeImportedContacts(importedContacts = [], existingContacts = []) {
   return importedContacts.reduce((contacts, contact) => upsertContact(contacts, resolveImportedContactIdentity(contact, contacts)), [
     ...existingContacts,
   ]);
+}
+
+function mergeOrReplaceImportedPriceLibrary(importedItems, existingItems, mode) {
+  if (mode === "replace") {
+    const confirmed = window.confirm(
+      "Replace existing price library items with this import? This may affect local and cloud data after your next settings sync.",
+    );
+
+    if (!confirmed) {
+      return null;
+    }
+
+    return normalizePriceLibrary(importedItems);
+  }
+
+  return importedItems.reduce((items, item) => upsertPriceLibraryItem(items, resolveImportedPriceLibraryIdentity(item, items)), [
+    ...normalizePriceLibrary(existingItems),
+  ]);
+}
+
+function resolveImportedPriceLibraryIdentity(item, existingItems = []) {
+  const normalizedItem = normalizePriceLibraryItem(item);
+  const existingIds = new Set(existingItems.map((existingItem) => existingItem.id));
+
+  if (!normalizedItem.id || existingIds.has(normalizedItem.id)) {
+    normalizedItem.id = createProposalId();
+  }
+
+  normalizedItem.updatedAt = new Date().toISOString();
+  return normalizedItem;
 }
 
 function resolveImportedProposalIdentity(proposal, existingProposals = []) {
@@ -5929,6 +6576,10 @@ function getCompanySettingsBackupFileName() {
 
 function getContactsBackupFileName() {
   return `Last_Yard_Contacts_Backup_${getBackupDateStamp()}.json`;
+}
+
+function getPriceLibraryBackupFileName() {
+  return `Last_Yard_Price_Library_${getBackupDateStamp()}.json`;
 }
 
 function getFullBackupFileName() {
@@ -6179,6 +6830,48 @@ function upsertContact(contacts, contact) {
   const otherContacts = contacts.filter((item) => item.id !== normalizedContact.id);
 
   return [normalizedContact, ...otherContacts].sort((a, b) => formatContactName(a).localeCompare(formatContactName(b)));
+}
+
+function createEmptyPriceLibraryDraft() {
+  return {
+    id: "",
+    name: "",
+    category: "Sidewalk / Flatwork",
+    description: "",
+    unit: "SF",
+    defaultUnitPrice: 0,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "",
+    defaultScopeBullets: "",
+    defaultExclusions: "",
+    active: true,
+    createdAt: "",
+    updatedAt: "",
+  };
+}
+
+function upsertPriceLibraryItem(items, item) {
+  const normalizedItem = normalizePriceLibraryItem(item);
+  const otherItems = normalizePriceLibrary(items).filter((libraryItem) => libraryItem.id !== normalizedItem.id);
+
+  return [normalizedItem, ...otherItems].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function filterPriceLibraryItems(items = [], searchQuery = "", categoryFilter = "all") {
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
+  return normalizePriceLibrary(items).filter((item) => {
+    const searchText = [item.name, item.category, item.description, item.unit].filter(Boolean).join(" ").toLowerCase();
+    const matchesSearch = !normalizedSearch || searchText.includes(normalizedSearch);
+    const matchesCategory = categoryFilter === "all" || item.category === categoryFilter;
+
+    return matchesSearch && matchesCategory;
+  });
+}
+
+function formatPriceLibraryListInput(value) {
+  return Array.isArray(value) ? value.join("\n") : value || "";
 }
 
 function getProposalCountForContact(contactId, proposals = []) {

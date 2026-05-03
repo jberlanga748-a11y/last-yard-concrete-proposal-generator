@@ -16,6 +16,223 @@ export const LINE_ITEM_UNITS = ["LS", "SF", "SY", "LF", "CY", "EA", "HR", "DAY",
 
 export const PRICING_SECTION_TYPES = ["base_bid", "allowance", "add_alternate", "deduct_alternate", "unit_price"];
 
+export const PRICE_LIBRARY_CATEGORIES = [
+  "Mobilization",
+  "Demo / Removal",
+  "Sidewalk / Flatwork",
+  "Slabs",
+  "Curb / Gutter",
+  "Mowband",
+  "ADA / Ramps",
+  "Stairs / Walls",
+  "Footings",
+  "Reinforcement",
+  "Sawcut / Joints",
+  "Sealer / Cure",
+  "Cleanup / Closeout",
+  "Allowances",
+  "Other",
+];
+
+export const DEFAULT_PRICE_LIBRARY_ITEMS = [
+  {
+    id: "price-mobilization",
+    name: "Mobilization",
+    category: "Mobilization",
+    description: "Mobilization / project setup",
+    unit: "LS",
+    defaultUnitPrice: 1850,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Includes basic project startup, coordination, and closeout setup.",
+    defaultScopeBullets: ["Mobilize crew, tools, and basic equipment", "Coordinate project startup"],
+    defaultExclusions: [],
+    active: true,
+  },
+  {
+    id: "price-demo-haul-off-concrete",
+    name: "Demo and haul-off concrete",
+    category: "Demo / Removal",
+    description: "Demo and haul-off existing concrete",
+    unit: "SF",
+    defaultUnitPrice: 2.25,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Existing concrete removal where listed.",
+    defaultScopeBullets: ["Sawcut or break out existing concrete as listed", "Haul off removed concrete debris"],
+    defaultExclusions: ["Hazardous materials or contaminated soils"],
+    active: true,
+  },
+  {
+    id: "price-4in-broom-sidewalk",
+    name: "4 in broom finish sidewalk",
+    category: "Sidewalk / Flatwork",
+    description: "Sidewalks - 4 in broom finish",
+    unit: "SF",
+    defaultUnitPrice: 8.75,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Broom finish pedestrian flatwork.",
+    defaultScopeBullets: ["Form and place 4 in sidewalk concrete", "Broom finish and tool edges"],
+    defaultExclusions: ["Detectable warning panels unless listed separately"],
+    active: true,
+  },
+  {
+    id: "price-5in-concrete-slab",
+    name: "5 in concrete slab",
+    category: "Slabs",
+    description: "Concrete pads / slabs - 5 in thick",
+    unit: "SF",
+    defaultUnitPrice: 9.75,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Standard flatwork slab item.",
+    defaultScopeBullets: ["Form and place 5 in concrete slab", "Finish per proposal specifications"],
+    defaultExclusions: ["Vapor barrier or special reinforcement unless listed"],
+    active: true,
+  },
+  {
+    id: "price-curb-gutter",
+    name: "Curb and gutter",
+    category: "Curb / Gutter",
+    description: "Curb and gutter",
+    unit: "LF",
+    defaultUnitPrice: 14.5,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Concrete curb and gutter as listed.",
+    defaultScopeBullets: ["Form and place curb and gutter", "Tool joints and finish exposed faces"],
+    defaultExclusions: ["Survey staking by others unless noted"],
+    active: true,
+  },
+  {
+    id: "price-concrete-mowband",
+    name: "Concrete mowband",
+    category: "Mowband",
+    description: "Concrete mowband",
+    unit: "LF",
+    defaultUnitPrice: 12.5,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Concrete mow strip or banding as listed.",
+    defaultScopeBullets: ["Form and place concrete mowband", "Finish exposed edges cleanly"],
+    defaultExclusions: ["Landscape restoration beyond immediate work area"],
+    active: true,
+  },
+  {
+    id: "price-ada-ramp-landing",
+    name: "ADA ramp / landing",
+    category: "ADA / Ramps",
+    description: "ADA ramp / landing",
+    unit: "EA",
+    defaultUnitPrice: 2500,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "ADA ramp or landing starter item; final pricing subject to layout.",
+    defaultScopeBullets: ["Construct ADA ramp or landing as listed", "Broom finish and tool edges"],
+    defaultExclusions: ["ADA design certification by others"],
+    active: true,
+  },
+  {
+    id: "price-concrete-stairs-allowance",
+    name: "Concrete stairs allowance",
+    category: "Stairs / Walls",
+    description: "Concrete stairs allowance",
+    unit: "LS",
+    defaultUnitPrice: 0,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Allowance placeholder for concrete stair scope pending final details.",
+    defaultScopeBullets: ["Concrete stair work as listed in proposal"],
+    defaultExclusions: ["Handrails, guardrails, or engineering unless listed"],
+    active: true,
+  },
+  {
+    id: "price-trench-drain-collar",
+    name: "Trench drain concrete collar",
+    category: "Sidewalk / Flatwork",
+    description: "Trench drain concrete collar",
+    unit: "LF",
+    defaultUnitPrice: 45,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Concrete collar around trench drain where listed.",
+    defaultScopeBullets: ["Form and place concrete collar at trench drain", "Coordinate elevation with adjacent flatwork"],
+    defaultExclusions: ["Trench drain fixture, plumbing, or utility connections"],
+    active: true,
+  },
+  {
+    id: "price-control-joints-sawcut",
+    name: "Control joints / sawcut allowance",
+    category: "Sawcut / Joints",
+    description: "Control joints / sawcut allowance",
+    unit: "LF",
+    defaultUnitPrice: 1.1,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Control joint sawcut or jointing allowance.",
+    defaultScopeBullets: ["Sawcut or install control joints as listed", "Coordinate joint layout with panel geometry"],
+    defaultExclusions: ["Joint sealant unless listed separately"],
+    active: true,
+  },
+  {
+    id: "price-rebar-reinforcement-allowance",
+    name: "Rebar / reinforcement allowance",
+    category: "Reinforcement",
+    description: "Rebar / reinforcement allowance",
+    unit: "LS",
+    defaultUnitPrice: 0,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Allowance placeholder for reinforcement pending final details.",
+    defaultScopeBullets: ["Install reinforcement as listed in proposal"],
+    defaultExclusions: ["Engineered reinforcement design by others"],
+    active: true,
+  },
+  {
+    id: "price-cleanup-closeout",
+    name: "Cleanup / closeout",
+    category: "Cleanup / Closeout",
+    description: "Cleanup / closeout",
+    unit: "LS",
+    defaultUnitPrice: 750,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Final cleanup and closeout support.",
+    defaultScopeBullets: ["Final cleanup of concrete work area", "Haul off excess concrete-related debris"],
+    defaultExclusions: [],
+    active: true,
+  },
+  {
+    id: "price-shade-footing-allowance",
+    name: "Shade footing allowance",
+    category: "Allowances",
+    description: "Shade footing allowance",
+    unit: "LS",
+    defaultUnitPrice: 0,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Allowance for shade footing concrete pending final engineered details.",
+    defaultScopeBullets: ["Concrete shade footing allowance as listed"],
+    defaultExclusions: ["Final engineered footing design by others"],
+    active: true,
+  },
+  {
+    id: "price-concrete-interface-rfi-allowance",
+    name: "Concrete interface / RFI allowance",
+    category: "Allowances",
+    description: "Concrete interface / RFI allowance",
+    unit: "LS",
+    defaultUnitPrice: 0,
+    defaultQuantity: 1,
+    taxable: true,
+    defaultNotes: "Allowance for unresolved concrete interface items pending RFI response.",
+    defaultScopeBullets: ["Concrete interface allowance as listed"],
+    defaultExclusions: ["Unresolved scope outside accepted allowance"],
+    active: true,
+  },
+];
+
 export const DEFAULT_SCOPE_SECTIONS = [
   {
     title: "Site Preparation",
@@ -637,6 +854,52 @@ export function generateProposalNumber(sequence = 1, date = new Date()) {
   return `LYC-${year}-${paddedSequence}`;
 }
 
+export function getDefaultPriceLibrary() {
+  return normalizePriceLibrary(DEFAULT_PRICE_LIBRARY_ITEMS);
+}
+
+export function normalizePriceLibrary(items = []) {
+  return (Array.isArray(items) ? items : []).filter(Boolean).map((item, index) => normalizePriceLibraryItem(item, index));
+}
+
+export function normalizePriceLibraryItem(item = {}, index = 0) {
+  const now = new Date().toISOString();
+  const fallbackName = `Price Item ${index + 1}`;
+  const unit = LINE_ITEM_UNITS.includes(item.unit) ? item.unit : "LS";
+  const category = PRICE_LIBRARY_CATEGORIES.includes(item.category) ? item.category : "Other";
+
+  return {
+    id: item.id || `price-library-${index + 1}`,
+    name: hasText(item.name) ? String(item.name).trim() : fallbackName,
+    category,
+    description: hasText(item.description) ? String(item.description).trim() : hasText(item.name) ? String(item.name).trim() : fallbackName,
+    unit,
+    defaultUnitPrice: toNumber(item.defaultUnitPrice),
+    defaultQuantity: item.defaultQuantity === "" ? "" : toNumber(item.defaultQuantity ?? 1),
+    taxable: item.taxable ?? true,
+    defaultNotes: item.defaultNotes || "",
+    defaultScopeBullets: normalizePriceLibraryTextList(item.defaultScopeBullets),
+    defaultExclusions: normalizePriceLibraryTextList(item.defaultExclusions),
+    active: item.active ?? true,
+    createdAt: item.createdAt || now,
+    updatedAt: item.updatedAt || item.createdAt || now,
+  };
+}
+
+export function createPriceLibraryLineItem(item = {}, itemNumber = "") {
+  const normalizedItem = normalizePriceLibraryItem(item);
+
+  return {
+    itemNumber: String(itemNumber || ""),
+    description: normalizedItem.description || normalizedItem.name,
+    quantity: normalizedItem.defaultQuantity === "" ? 1 : normalizedItem.defaultQuantity,
+    unit: normalizedItem.unit,
+    unitPrice: normalizedItem.defaultUnitPrice,
+    taxable: normalizedItem.taxable,
+    notes: normalizedItem.defaultNotes,
+  };
+}
+
 export function calculateProposalTotals(proposalOrLineItems, overrides = {}) {
   const proposal = Array.isArray(proposalOrLineItems)
     ? { lineItems: proposalOrLineItems, financials: {} }
@@ -886,6 +1149,21 @@ function normalizeTemplateLineItems(items = []) {
     unitPrice: item.unitPrice ?? 0,
     taxable: item.taxable ?? true,
   }));
+}
+
+function normalizePriceLibraryTextList(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
 }
 
 function cloneTemplateValue(value) {

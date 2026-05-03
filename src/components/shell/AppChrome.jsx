@@ -17,6 +17,7 @@ export function AppChrome({
     ["dashboard", "Dashboard", () => onNavigate("/dashboard")],
     ["list", "Proposals", () => onNavigate("/proposals")],
     ["contacts", "Contacts", () => onNavigate("/contacts")],
+    ["priceLibrary", "Price Library", () => onNavigate("/price-library")],
     ["settings", "Company Settings", () => onNavigate("/settings")],
     ["backup", "Backup / Restore", () => onNavigate("/backup")],
   ];
