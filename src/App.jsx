@@ -12,6 +12,7 @@ import {
   generateProposalNumber,
   validateProposalCompleteness,
 } from "./proposalData.js";
+import { isSupabaseConfigured } from "./supabaseClient.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
 const storageKey = "last-yard-proposals-v1";
@@ -1957,6 +1958,8 @@ function CompanySettingsView({ backupTools, message, settings, onBackToList, onC
 
       {backupTools}
 
+      <CloudStatusCard />
+
       <div className="settings-grid">
         <EditorField label="Company Name" path="settings.companyName" value={settings.companyName} onChange={(_, value) => onChange("companyName", value)} />
         <EditorField label="Phone" path="settings.phone" value={settings.phone} onChange={(_, value) => onChange("phone", value)} />
@@ -2020,6 +2023,32 @@ function CompanySettingsView({ backupTools, message, settings, onBackToList, onC
           />
         </div>
       </div>
+    </section>
+  );
+}
+
+function CloudStatusCard() {
+  return (
+    <section className="cloud-status-card no-print">
+      <div>
+        <p className="list-kicker">Cloud save foundation</p>
+        <h3>Cloud Status</h3>
+      </div>
+      <div className="cloud-status-grid">
+        <div>
+          <span>Cloud save</span>
+          <strong>{isSupabaseConfigured ? "Configured" : "Not configured"}</strong>
+        </div>
+        <div>
+          <span>Current storage mode</span>
+          <strong>Local browser storage</strong>
+        </div>
+        <div>
+          <span>Connection</span>
+          <strong>{isSupabaseConfigured ? "Supabase connected" : "Local mode fallback"}</strong>
+        </div>
+      </div>
+      <p>Cloud sync will be enabled in a later phase.</p>
     </section>
   );
 }
