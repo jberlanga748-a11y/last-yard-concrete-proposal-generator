@@ -233,6 +233,22 @@ export const DEFAULT_PRICE_LIBRARY_ITEMS = [
   },
 ];
 
+export const PACKET_BUILDER_SECTIONS = [
+  { id: "cover_summary", title: "Cover / Proposal Summary", defaultIncluded: true, defaultOrder: 10 },
+  { id: "details_pricing", title: "Details / Pricing Summary", defaultIncluded: true, defaultOrder: 20 },
+  { id: "scope_control_summary", title: "Scope Control Summary", defaultIncluded: true, defaultOrder: 30 },
+  { id: "pricing_summary", title: "Pricing Summary", defaultIncluded: true, defaultOrder: 40 },
+  { id: "schedule_of_values", title: "Schedule of Values", defaultIncluded: true, defaultOrder: 50 },
+  { id: "takeoff_quantities", title: "Takeoff Quantities", defaultIncluded: true, defaultOrder: 60 },
+  { id: "addenda_acknowledgement", title: "Addenda Acknowledgement", defaultIncluded: true, defaultOrder: 70 },
+  { id: "rfi_clarification_register", title: "RFI / Clarification Register", defaultIncluded: true, defaultOrder: 80 },
+  { id: "legal_terms", title: "Legal / Terms", defaultIncluded: true, defaultOrder: 90 },
+  { id: "appendix_overflow", title: "Appendix / Overflow Pages", defaultIncluded: true, defaultOrder: 100 },
+  { id: "plan_sheet_pages", title: "Plan Sheet Pages", defaultIncluded: true, defaultOrder: 110 },
+  { id: "shade_footing_estimate", title: "Shade Footing Estimate", defaultIncluded: true, defaultOrder: 120 },
+  { id: "proposal_notes_acceptance_summary", title: "Proposal Notes / Acceptance Summary", defaultIncluded: true, defaultOrder: 130 },
+];
+
 export const DEFAULT_SCOPE_SECTIONS = [
   {
     title: "Site Preparation",
@@ -898,6 +914,27 @@ export function createPriceLibraryLineItem(item = {}, itemNumber = "") {
     taxable: normalizedItem.taxable,
     notes: normalizedItem.defaultNotes,
   };
+}
+
+export function getDefaultPacketBuilder() {
+  return normalizePacketBuilder();
+}
+
+export function normalizePacketBuilder(sections = []) {
+  const sourceSections = Array.isArray(sections) ? sections : [];
+  const sourceById = new Map(sourceSections.filter((section) => section?.id).map((section) => [section.id, section]));
+
+  return PACKET_BUILDER_SECTIONS.map((defaultSection) => {
+    const source = sourceById.get(defaultSection.id) || {};
+    const order = Number.parseInt(source.order, 10);
+
+    return {
+      id: defaultSection.id,
+      title: defaultSection.title,
+      included: source.included ?? defaultSection.defaultIncluded,
+      order: Number.isFinite(order) ? order : defaultSection.defaultOrder,
+    };
+  }).sort((a, b) => a.order - b.order);
 }
 
 export function calculateProposalTotals(proposalOrLineItems, overrides = {}) {

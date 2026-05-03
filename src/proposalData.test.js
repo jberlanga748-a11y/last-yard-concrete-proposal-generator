@@ -5,12 +5,14 @@ import {
   DEFAULT_EXCLUSIONS,
   DEFAULT_PRICE_LIBRARY_ITEMS,
   DEFAULT_TERMS,
+  PACKET_BUILDER_SECTIONS,
   PRICE_LIBRARY_CATEGORIES,
   SEED_PROPOSAL,
   applyTemplateToProposal,
   calculateProposalTotals,
   createPriceLibraryLineItem,
   getDefaultPriceLibrary,
+  normalizePacketBuilder,
   normalizePriceLibrary,
   validateProposalCompleteness,
 } from "./proposalData.js";
@@ -253,4 +255,18 @@ test("creates proposal line items from price library items", () => {
     unit: "LF",
     unitPrice: 14.5,
   });
+});
+
+test("normalizes packet builder defaults and custom ordering", () => {
+  const builder = normalizePacketBuilder([
+    { id: "plan_sheet_pages", included: false, order: 5 },
+    { id: "pricing_summary", included: true, order: 15 },
+  ]);
+
+  assert.equal(builder.length, PACKET_BUILDER_SECTIONS.length);
+  assert.equal(builder[0].id, "plan_sheet_pages");
+  assert.equal(builder[0].included, false);
+  assert.equal(builder[2].id, "pricing_summary");
+  assert.equal(builder.find((section) => section.id === "cover_summary").included, true);
+  assert.ok(builder.every((section) => section.title));
 });

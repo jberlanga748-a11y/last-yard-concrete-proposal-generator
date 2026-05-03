@@ -1,5 +1,5 @@
-import { createContext, useContext, useState } from "react";
-import { calculateProposalTotals, formatCurrency } from "../../proposalData.js";
+import { Fragment, createContext, useContext, useState } from "react";
+import { calculateProposalTotals, formatCurrency, normalizePacketBuilder } from "../../proposalData.js";
 import { formatDisplayDate, formatOptionLabel } from "../../utils/formatting/display.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
@@ -17,6 +17,79 @@ const trustCards = [
   ["hardhat", "SAFETY FIRST", "Safe jobsites for your team and ours."],
   ["handshake", "BUILT ON INTEGRITY", "Clear communication. Honest work. Local service."],
 ];
+
+function orderPacketRenderItems(proposal, items, getPacketBuilderSectionStatus) {
+  if (proposal.packetMode !== "full_gc_packet") {
+    return items;
+  }
+
+  const builder = normalizePacketBuilder(proposal.packetBuilder);
+  const orderBySectionId = new Map(builder.map((section) => [section.id, section.order]));
+  const includedBySectionId = new Map(builder.map((section) => [section.id, section.included !== false]));
+
+  return items
+    .map((item, index) => ({ ...item, originalIndex: index }))
+    .filter((item) => {
+      if (includedBySectionId.get(item.sectionId) === false) {
+        return false;
+      }
+
+      const status = getPacketBuilderSectionStatus?.(proposal, item.sectionId);
+      return !status || status.hasData;
+    })
+    .sort((a, b) => {
+      const orderA = orderBySectionId.get(a.sectionId) ?? 999;
+      const orderB = orderBySectionId.get(b.sectionId) ?? 999;
+
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+
+      return a.originalIndex - b.originalIndex;
+    });
+}
+
+function getStructuredPacketBuilderSectionId(page = {}) {
+  const key = String(page.key || "");
+
+  if (key === "structured-scope-control-summary") {
+    return "scope_control_summary";
+  }
+
+  if (key === "structured-pricing-summary" || page.kind === "pricing-summary") {
+    return "pricing_summary";
+  }
+
+  if (key.startsWith("structured-scheduleOfValues")) {
+    return "schedule_of_values";
+  }
+
+  if (key.startsWith("structured-takeoffQuantities")) {
+    return "takeoff_quantities";
+  }
+
+  if (key.startsWith("structured-addendaRegister")) {
+    return "addenda_acknowledgement";
+  }
+
+  if (key.startsWith("structured-rfiRegister")) {
+    return "rfi_clarification_register";
+  }
+
+  if (key.startsWith("structured-legal-terms")) {
+    return "legal_terms";
+  }
+
+  if (key.startsWith("structured-shadeFootingEstimate")) {
+    return "shade_footing_estimate";
+  }
+
+  if (key === "structured-proposal-notes" || page.kind === "proposalNotes") {
+    return "proposal_notes_acceptance_summary";
+  }
+
+  return "appendix_overflow";
+}
 
 function usePacketHelpers() {
   const helpers = useContext(PacketRenderContext);
@@ -43,6 +116,7 @@ function ProposalPacketContent({ proposal }) {
     buildStructuredPacketPages,
     buildTermsCopy,
     formatQuantity,
+    getPacketBuilderSectionStatus,
     getEnabledPlanSheets,
     toEditableNumber,
   } = usePacketHelpers();
@@ -78,97 +152,121 @@ function ProposalPacketContent({ proposal }) {
   const planSheetPages = getEnabledPlanSheets(proposal.planSheets);
   const hasExtendedPacketPages = structuredPacketPages.length > 0 || appendixPlan.pages.length > 0 || planSheetPages.length > 0;
   const showCoverGcPrimeNotes = gcPrimeRows.length > 0 && !hasExtendedPacketPages;
-  const firstAppendixPageNumber = structuredPacketPages.length + 3;
-  const firstPlanSheetPageNumber = structuredPacketPages.length + appendixPlan.pages.length + 3;
+  const packetItems = orderPacketRenderItems(
+    proposal,
+    [
+      {
+        key: "cover-summary",
+        sectionId: "cover_summary",
+        render: () => (
+          <ProposalPage className="first-page">
+            <CoverHeader company={company} />
+            <CompanyIntro company={company} companyCredentials={companyCredentials} />
+            <ProjectCards proposal={proposal} />
+            {showCoverGcPrimeNotes ? <GcPrimeNotes rows={gcPrimeRows} /> : null}
+            <div className="page-one-feature-block">
+              <PhotoBand photos={proposal.projectPhotos} />
+              <WhyChoose />
+            </div>
+            <PageFooter company={company} companyCredentials={companyCredentials} compact />
+          </ProposalPage>
+        ),
+      },
+      {
+        key: "details-pricing",
+        sectionId: "details_pricing",
+        render: () => (
+          <ProposalPage>
+            <SectionTitle icon="clipboard" title="Scope of Work" />
+            <div className="two-column section-pad">
+              <ScopeColumn groups={scopeLeft} />
+              <ScopeColumn groups={scopeRight} />
+            </div>
+            {appendixPlan.scopeNeedsAppendix ? <AppendixReferenceNote message="See Appendix for detailed scope backup." /> : null}
+
+            <SectionTitle icon="gear" title="Concrete Specifications" className="section-title-spaced" />
+            <div className="two-column spec-grid">
+              <SpecTable rows={specsLeft} />
+              <SpecTable rows={specsRight} />
+            </div>
+
+            <SectionTitle icon="dollar" title="Pricing" className="section-title-spaced" />
+            <PricingTable items={lineItems} total={totalProposalPrice} />
+            {visiblePricingSections.length > 0 ? (
+              <AlternatesAllowancesTable sections={visiblePricingSections} totals={proposalTotals} />
+            ) : null}
+
+            <div className="two-column lower-grid">
+              <div>
+                <MiniHeading icon="minus" title="Exclusions / Assumptions" />
+                <ul className="bullet-list compact-list">
+                  {appendixPlan.mainExclusions.map((item) => (
+                    <li key={item}>
+                      <span />
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div>
+                <MiniHeading icon="check" title="Terms & Acceptance" />
+                <p className="terms-copy">{termsCopy}</p>
+                <SignatureBlock companyName={company.name} />
+              </div>
+            </div>
+            {appendixPlan.referenceNotes.length > 0 ? <AppendixReferenceNote notes={appendixPlan.referenceNotes} /> : null}
+
+            <div className="footer-push">
+              <PageFooter company={company} companyCredentials={companyCredentials} />
+            </div>
+          </ProposalPage>
+        ),
+      },
+      ...structuredPacketPages.map((page) => ({
+        key: page.key,
+        sectionId: getStructuredPacketBuilderSectionId(page),
+        render: (pageNumber) => (
+          <StructuredPacketPage
+            company={company}
+            page={page}
+            pageNumber={pageNumber}
+            projectName={proposal.project?.name}
+          />
+        ),
+      })),
+      ...appendixPlan.pages.map((page, index) => ({
+        key: `appendix-page-${index}`,
+        sectionId: "appendix_overflow",
+        render: (pageNumber) => (
+          <AppendixPage
+            company={company}
+            page={page}
+            pageNumber={pageNumber}
+            projectName={proposal.project?.name}
+          />
+        ),
+      })),
+      ...planSheetPages.map((sheet, index) => ({
+        key: sheet.id || sheet.matchKey || `plan-sheet-page-${index}`,
+        sectionId: "plan_sheet_pages",
+        render: (pageNumber) => (
+          <PlanSheetPage
+            company={company}
+            pageNumber={pageNumber}
+            projectName={proposal.project?.name}
+            sheet={sheet}
+          />
+        ),
+      })),
+    ],
+    getPacketBuilderSectionStatus,
+  );
 
   return (
     <section className="proposal-grid">
-      <ProposalPage className="first-page">
-        <CoverHeader company={company} />
-        <CompanyIntro company={company} companyCredentials={companyCredentials} />
-        <ProjectCards proposal={proposal} />
-        {showCoverGcPrimeNotes ? <GcPrimeNotes rows={gcPrimeRows} /> : null}
-        <div className="page-one-feature-block">
-          <PhotoBand photos={proposal.projectPhotos} />
-          <WhyChoose />
-        </div>
-        <PageFooter company={company} companyCredentials={companyCredentials} compact />
-      </ProposalPage>
-
-      <ProposalPage>
-        <SectionTitle icon="clipboard" title="Scope of Work" />
-        <div className="two-column section-pad">
-          <ScopeColumn groups={scopeLeft} />
-          <ScopeColumn groups={scopeRight} />
-        </div>
-        {appendixPlan.scopeNeedsAppendix ? <AppendixReferenceNote message="See Appendix for detailed scope backup." /> : null}
-
-        <SectionTitle icon="gear" title="Concrete Specifications" className="section-title-spaced" />
-        <div className="two-column spec-grid">
-          <SpecTable rows={specsLeft} />
-          <SpecTable rows={specsRight} />
-        </div>
-
-        <SectionTitle icon="dollar" title="Pricing" className="section-title-spaced" />
-        <PricingTable items={lineItems} total={totalProposalPrice} />
-        {visiblePricingSections.length > 0 ? (
-          <AlternatesAllowancesTable sections={visiblePricingSections} totals={proposalTotals} />
-        ) : null}
-
-        <div className="two-column lower-grid">
-          <div>
-            <MiniHeading icon="minus" title="Exclusions / Assumptions" />
-            <ul className="bullet-list compact-list">
-              {appendixPlan.mainExclusions.map((item) => (
-                <li key={item}>
-                  <span />
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          <div>
-            <MiniHeading icon="check" title="Terms & Acceptance" />
-            <p className="terms-copy">{termsCopy}</p>
-            <SignatureBlock companyName={company.name} />
-          </div>
-        </div>
-        {appendixPlan.referenceNotes.length > 0 ? <AppendixReferenceNote notes={appendixPlan.referenceNotes} /> : null}
-
-        <div className="footer-push">
-          <PageFooter company={company} companyCredentials={companyCredentials} />
-        </div>
-      </ProposalPage>
-
-      {structuredPacketPages.map((page, index) => (
-        <StructuredPacketPage
-          company={company}
-          key={page.key}
-          page={page}
-          pageNumber={index + 3}
-          projectName={proposal.project?.name}
-        />
-      ))}
-
-      {appendixPlan.pages.map((page, index) => (
-        <AppendixPage
-          company={company}
-          key={`appendix-page-${index}`}
-          page={page}
-          pageNumber={firstAppendixPageNumber + index}
-          projectName={proposal.project?.name}
-        />
-      ))}
-
-      {planSheetPages.map((sheet, index) => (
-        <PlanSheetPage
-          company={company}
-          key={sheet.id || sheet.matchKey || `plan-sheet-page-${index}`}
-          pageNumber={firstPlanSheetPageNumber + index}
-          projectName={proposal.project?.name}
-          sheet={sheet}
-        />
+      {packetItems.map((item, index) => (
+        <Fragment key={item.key}>{item.render(index + 1)}</Fragment>
       ))}
     </section>
   );

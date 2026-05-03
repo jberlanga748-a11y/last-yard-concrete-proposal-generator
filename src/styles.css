@@ -2378,6 +2378,129 @@ h4 {
   font-weight: 950;
 }
 
+.packet-builder-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.packet-builder-intro {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.packet-builder-intro p {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.packet-builder-list {
+  display: grid;
+  gap: 8px;
+}
+
+.packet-builder-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px 116px auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  padding: 10px;
+}
+
+.packet-builder-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.packet-builder-toggle input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--blue);
+}
+
+.packet-builder-order {
+  display: grid;
+  gap: 3px;
+}
+
+.packet-builder-order span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.packet-builder-order input {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 7px 8px;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.packet-builder-status {
+  justify-self: start;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #eef2f7;
+  color: #475569;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.packet-builder-status.included {
+  background: rgba(6, 43, 69, 0.1);
+  color: var(--blue);
+}
+
+.packet-builder-status.hidden {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.packet-builder-status.missing {
+  background: rgba(201, 166, 74, 0.18);
+  color: #7a5c0f;
+}
+
+.packet-builder-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.packet-builder-actions button,
+.packet-builder-reset {
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: white;
+  color: var(--blue);
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.packet-builder-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .packet-row-list {
   display: grid;
   gap: 10px;

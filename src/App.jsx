@@ -11,6 +11,7 @@ import { ProposalPreview } from "./components/proposalPacket/ProposalPacket.jsx"
 import { ProposalPrintToolbar } from "./components/proposalPacket/ProposalPrintToolbar.jsx";
 import {
   LINE_ITEM_UNITS,
+  PACKET_BUILDER_SECTIONS,
   PRICING_SECTION_TYPES,
   PRICE_LIBRARY_CATEGORIES,
   PROPOSAL_TEMPLATES,
@@ -23,6 +24,7 @@ import {
   formatCurrency,
   generateProposalNumber,
   getDefaultPriceLibrary,
+  normalizePacketBuilder,
   normalizePriceLibrary,
   normalizePriceLibraryItem,
   validateProposalCompleteness,
@@ -124,6 +126,7 @@ const proposalPacketHelpers = {
   buildGcPrimeRows,
   buildStructuredPacketPages,
   buildTermsCopy,
+  getPacketBuilderSectionStatus,
   formatPricingSectionAmount,
   formatQuantity,
   formatRevisionLabel,
@@ -131,6 +134,7 @@ const proposalPacketHelpers = {
   getEnabledPlanSheets,
   getImageAssetSource,
   normalizePlanSheetNotes,
+  normalizePacketBuilder,
   normalizeProjectPhotos,
   splitAppendixText,
   toEditableNumber,
@@ -2541,6 +2545,52 @@ export default function App() {
     });
   }
 
+  function updatePacketBuilderSection(sectionId, field, value) {
+    setProposalDirty(true);
+    setProposalDraft((currentProposal) => {
+      const packetBuilder = normalizePacketBuilder(currentProposal.packetBuilder).map((section) =>
+        section.id === sectionId ? { ...section, [field]: value } : section,
+      );
+
+      return createEditableProposal({
+        ...currentProposal,
+        packetBuilder,
+      });
+    });
+  }
+
+  function movePacketBuilderSection(sectionId, direction) {
+    setProposalDirty(true);
+    setProposalDraft((currentProposal) => {
+      const packetBuilder = normalizePacketBuilder(currentProposal.packetBuilder);
+      const currentIndex = packetBuilder.findIndex((section) => section.id === sectionId);
+      const nextIndex = currentIndex + direction;
+
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= packetBuilder.length) {
+        return currentProposal;
+      }
+
+      const reorderedSections = [...packetBuilder];
+      const [movedSection] = reorderedSections.splice(currentIndex, 1);
+      reorderedSections.splice(nextIndex, 0, movedSection);
+
+      return createEditableProposal({
+        ...currentProposal,
+        packetBuilder: resequencePacketBuilder(reorderedSections),
+      });
+    });
+  }
+
+  function resetPacketBuilderOrder() {
+    setProposalDirty(true);
+    setProposalDraft((currentProposal) =>
+      createEditableProposal({
+        ...currentProposal,
+        packetBuilder: normalizePacketBuilder([]),
+      }),
+    );
+  }
+
   function fillProposalFromNotes() {
     const { proposal: parsedProposal, summary } = parseSmartPasteNotes(smartPasteNotes, proposalDraft);
 
@@ -2952,6 +3002,9 @@ export default function App() {
                 onGcPacketTableChange={updateGcPacketTable}
                 onGcPacketTableRowChange={updateGcPacketTableRow}
                 onRemoveGcPacketTableRow={removeGcPacketTableRow}
+                onMovePacketBuilderSection={movePacketBuilderSection}
+                onPacketBuilderChange={updatePacketBuilderSection}
+                onResetPacketBuilder={resetPacketBuilderOrder}
                 onSmartPasteFill={fillProposalFromNotes}
                 onSmartPasteNotesChange={setSmartPasteNotes}
                 onSelectContact={applyContactToCurrentProposal}
@@ -4380,7 +4433,10 @@ function ProposalEditor({
   onAddGcPacketTableRow,
   onGcPacketTableChange,
   onGcPacketTableRowChange,
+  onMovePacketBuilderSection,
+  onPacketBuilderChange,
   onRemoveGcPacketTableRow,
+  onResetPacketBuilder,
   onSmartPasteFill,
   onSmartPasteNotesChange,
   onSelectContact,
@@ -4629,6 +4685,17 @@ function ProposalEditor({
       {isGcPrime ? (
         <EditorSection title="GC / Prime Contractor">
           <GcPrimeEditor gcPrime={proposal.gcPrime} onChange={onGcPrimeChange} />
+        </EditorSection>
+      ) : null}
+
+      {proposal.packetMode === "full_gc_packet" ? (
+        <EditorSection title="Packet Builder">
+          <PacketBuilderEditor
+            proposal={proposal}
+            onChange={onPacketBuilderChange}
+            onMove={onMovePacketBuilderSection}
+            onReset={onResetPacketBuilder}
+          />
         </EditorSection>
       ) : null}
 
@@ -5335,6 +5402,60 @@ function PacketEditorHeader({ checked, label, onChange }) {
         <input checked={Boolean(checked)} type="checkbox" onChange={(event) => onChange(event.target.checked)} />
         <span>Include page</span>
       </label>
+    </div>
+  );
+}
+
+function PacketBuilderEditor({ proposal, onChange, onMove, onReset }) {
+  const sections = normalizePacketBuilder(proposal.packetBuilder);
+
+  return (
+    <div className="packet-builder-editor">
+      <div className="packet-builder-intro">
+        <p className="smart-paste-help">Control what appears in the final GC packet and the order it prints.</p>
+        <button className="packet-builder-reset" type="button" onClick={onReset}>
+          Reset to Default Order
+        </button>
+      </div>
+
+      <div className="packet-builder-list">
+        {sections.map((section, index) => {
+          const status = getPacketBuilderSectionStatus(proposal, section.id);
+          const statusClass = section.included ? (status.hasData ? "included" : "missing") : "hidden";
+
+          return (
+            <div className="packet-builder-row" key={section.id}>
+              <label className="packet-builder-toggle">
+                <input
+                  checked={Boolean(section.included)}
+                  type="checkbox"
+                  onChange={(event) => onChange(section.id, "included", event.target.checked)}
+                />
+                <span>{section.title}</span>
+              </label>
+              <label className="packet-builder-order">
+                <span>Order</span>
+                <input
+                  type="number"
+                  value={section.order}
+                  onChange={(event) => onChange(section.id, "order", event.target.value)}
+                />
+              </label>
+              <span className={`packet-builder-status ${statusClass}`}>
+                {section.included ? (status.hasData ? "Included" : "Missing data") : "Hidden"}
+              </span>
+              <div className="packet-builder-actions">
+                <button type="button" onClick={() => onMove(section.id, -1)} disabled={index === 0}>
+                  Up
+                </button>
+                <button type="button" onClick={() => onMove(section.id, 1)} disabled={index === sections.length - 1}>
+                  Down
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -7940,6 +8061,7 @@ function createEditableProposal(seedProposal) {
     proposalType,
     type: proposalType,
     packetMode: proposal.packetMode || (proposalType === "gc_prime" ? "full_gc_packet" : "summary"),
+    packetBuilder: normalizePacketBuilder(proposal.packetBuilder),
     revisionNumber,
     revisionLabel,
     revisionDate: proposal.revisionDate || proposal.proposalDate || "",
@@ -8060,6 +8182,11 @@ function normalizeSubmittedPacketRecords(records = []) {
       includedAlternatesAmount: toEditableNumber(record.includedAlternatesAmount),
       totalIfAllAccepted: toEditableNumber(record.totalIfAllAccepted),
       includedSections: Array.isArray(record.includedSections) ? record.includedSections : [],
+      packetSectionOrder: Array.isArray(record.packetSectionOrder)
+        ? record.packetSectionOrder
+        : Array.isArray(record.includedSections)
+          ? record.includedSections
+          : [],
       addendaAcknowledged: record.addendaAcknowledged || "",
       rfiCount: Number.parseInt(record.rfiCount, 10) || 0,
       planSheetCount: Number.parseInt(record.planSheetCount, 10) || 0,
@@ -8073,13 +8200,7 @@ function normalizeSubmittedPacketRecords(records = []) {
 function createSubmittedPacketRecord(proposal = {}, authUser = null, overrides = {}) {
   const snapshotSource = createEditableProposal({ ...proposal, submittedPacketRecords: [] });
   const totals = calculateProposalTotals(snapshotSource);
-  const appendixPlan = buildAppendixPlan(snapshotSource);
-  const structuredPacketPages = buildStructuredPacketPages(snapshotSource);
-  const enabledPlanSheets = getEnabledPlanSheets(snapshotSource.planSheets);
-  const appendixPageCount = appendixPlan.pages.length;
-  const planSheetCount = enabledPlanSheets.length;
-  const structuredPageCount = structuredPacketPages.length;
-  const packetPageCount = 2 + structuredPageCount + appendixPageCount + planSheetCount;
+  const packetSummary = getSubmittedPacketRenderSummary(snapshotSource);
 
   const record = {
     id: createPacketRecordId(),
@@ -8102,11 +8223,8 @@ function createSubmittedPacketRecord(proposal = {}, authUser = null, overrides =
     baseAmount: totals.baseBid,
     includedAlternatesAmount: totals.includedPricingSectionsTotal,
     totalIfAllAccepted: totals.totalIfAllAlternatesAccepted,
-    includedSections: getSubmittedPacketIncludedSections(snapshotSource, {
-      appendixPageCount,
-      planSheetCount,
-      structuredPageCount,
-    }),
+    includedSections: packetSummary.includedSections,
+    packetSectionOrder: packetSummary.sectionOrder,
     addendaAcknowledged:
       snapshotSource.gcPrime?.addendaAcknowledged ||
       getPrintableAddendaRows(snapshotSource.gcPrime)
@@ -8114,9 +8232,9 @@ function createSubmittedPacketRecord(proposal = {}, authUser = null, overrides =
         .filter(hasTextValue)
         .join("; "),
     rfiCount: countPacketTextLines(snapshotSource.gcPrime?.rfiClarificationNotes) + getPrintableRfiRows(snapshotSource.gcPrime).length,
-    planSheetCount,
-    appendixPageCount,
-    packetPageCount,
+    planSheetCount: packetSummary.planSheetCount,
+    appendixPageCount: packetSummary.appendixPageCount,
+    packetPageCount: packetSummary.packetPageCount,
     proposalSnapshot: cloneObject(snapshotSource),
     ...overrides,
   };
@@ -8129,6 +8247,10 @@ function createPacketRecordId() {
 }
 
 function getSubmittedPacketIncludedSections(proposal = {}, counts = {}) {
+  if (proposal.packetMode === "full_gc_packet") {
+    return getSubmittedPacketRenderSummary(proposal).includedSections;
+  }
+
   const sections = ["Cover Page", "Proposal Details"];
 
   if (getVisiblePricingSections(proposal.pricingSections).length > 0) {
@@ -8148,6 +8270,50 @@ function getSubmittedPacketIncludedSections(proposal = {}, counts = {}) {
   }
 
   return sections;
+}
+
+function getSubmittedPacketRenderSummary(proposal = {}) {
+  if (proposal.packetMode === "full_gc_packet") {
+    const orderedSections = getOrderedFullGcPacketSections(proposal);
+
+    return {
+      appendixPageCount: orderedSections.filter((section) => section.kind === "appendix").length,
+      planSheetCount: orderedSections.filter((section) => section.kind === "plan").length,
+      structuredPageCount: orderedSections.filter((section) => section.kind === "structured").length,
+      packetPageCount: orderedSections.length,
+      includedSections: orderedSections.map((section, index) => `${String(index + 1).padStart(2, "0")}. ${section.title}`),
+      sectionOrder: orderedSections.map((section, index) => ({
+        id: section.id,
+        title: section.title,
+        order: index + 1,
+      })),
+    };
+  }
+
+  const appendixPlan = buildAppendixPlan(proposal);
+  const structuredPacketPages = buildStructuredPacketPages(proposal);
+  const enabledPlanSheets = getEnabledPlanSheets(proposal.planSheets);
+  const appendixPageCount = appendixPlan.pages.length;
+  const planSheetCount = enabledPlanSheets.length;
+  const structuredPageCount = structuredPacketPages.length;
+  const includedSections = getSubmittedPacketIncludedSections(proposal, {
+    appendixPageCount,
+    planSheetCount,
+    structuredPageCount,
+  });
+
+  return {
+    appendixPageCount,
+    planSheetCount,
+    structuredPageCount,
+    packetPageCount: 2 + structuredPageCount + appendixPageCount + planSheetCount,
+    includedSections,
+    sectionOrder: includedSections.map((title, index) => ({
+      id: title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, ""),
+      title,
+      order: index + 1,
+    })),
+  };
 }
 
 function countPacketTextLines(value = "") {
@@ -8223,6 +8389,162 @@ function getVisiblePricingSections(pricingSections = []) {
       hasTextValue(section.amount) ||
       section.included,
   );
+}
+
+function resequencePacketBuilder(sections = []) {
+  return normalizePacketBuilder(sections).map((section, index) => ({
+    ...section,
+    order: (index + 1) * 10,
+  }));
+}
+
+function getPacketBuilderTitle(sectionId = "") {
+  return PACKET_BUILDER_SECTIONS.find((section) => section.id === sectionId)?.title || sectionId;
+}
+
+function getPacketBuilderSectionStatus(proposal = {}, sectionId = "") {
+  const tables = normalizeGcPacketTables(proposal.gcPacketTables);
+
+  switch (sectionId) {
+    case "cover_summary":
+    case "details_pricing":
+      return { hasData: true };
+    case "scope_control_summary":
+      return { hasData: buildScopeControlSummarySections(proposal).length > 0 };
+    case "pricing_summary":
+      return { hasData: Boolean(tables.pricingSummary.enabled) };
+    case "schedule_of_values":
+      return { hasData: hasGcPacketRows(tables.scheduleOfValues) };
+    case "takeoff_quantities":
+      return { hasData: hasGcPacketRows(tables.takeoffQuantities) };
+    case "addenda_acknowledgement":
+      return { hasData: getPrintableAddendaRows(proposal.gcPrime).length > 0 };
+    case "rfi_clarification_register":
+      return { hasData: getPrintableRfiRows(proposal.gcPrime).length > 0 };
+    case "legal_terms":
+      return { hasData: buildLegalTermsSections(proposal.terms).length > 0 };
+    case "appendix_overflow":
+      return { hasData: buildAppendixPlan(proposal).pages.length > 0 };
+    case "plan_sheet_pages":
+      return { hasData: getEnabledPlanSheets(proposal.planSheets).length > 0 };
+    case "shade_footing_estimate":
+      return { hasData: hasGcPacketRows(tables.shadeFootingEstimate) };
+    case "proposal_notes_acceptance_summary":
+      return { hasData: hasProposalNotesData(tables.proposalNotes) };
+    default:
+      return { hasData: false };
+  }
+}
+
+function hasGcPacketRows(table = {}) {
+  return (
+    Boolean(table.enabled) &&
+    Array.isArray(table.rows) &&
+    table.rows.some((row) =>
+      Object.entries(row).some(([key, value]) => key !== "id" && hasTextValue(value)),
+    )
+  );
+}
+
+function hasProposalNotesData(table = {}) {
+  return (
+    Boolean(table.enabled) &&
+    ["proposalBasis", "contractScopeControl", "acceptanceSummary", "gcPrimeReviewer"].some((field) =>
+      hasTextValue(table[field]),
+    )
+  );
+}
+
+function getStructuredPacketSectionIdForBuilder(page = {}) {
+  const key = String(page.key || "");
+
+  if (key === "structured-scope-control-summary") {
+    return "scope_control_summary";
+  }
+
+  if (key === "structured-pricing-summary" || page.kind === "pricing-summary") {
+    return "pricing_summary";
+  }
+
+  if (key.startsWith("structured-scheduleOfValues")) {
+    return "schedule_of_values";
+  }
+
+  if (key.startsWith("structured-takeoffQuantities")) {
+    return "takeoff_quantities";
+  }
+
+  if (key.startsWith("structured-addendaRegister")) {
+    return "addenda_acknowledgement";
+  }
+
+  if (key.startsWith("structured-rfiRegister")) {
+    return "rfi_clarification_register";
+  }
+
+  if (key.startsWith("structured-legal-terms")) {
+    return "legal_terms";
+  }
+
+  if (key.startsWith("structured-shadeFootingEstimate")) {
+    return "shade_footing_estimate";
+  }
+
+  if (key === "structured-proposal-notes" || page.kind === "proposalNotes") {
+    return "proposal_notes_acceptance_summary";
+  }
+
+  return "appendix_overflow";
+}
+
+function getOrderedFullGcPacketSections(proposal = {}) {
+  const builder = normalizePacketBuilder(proposal.packetBuilder);
+  const orderBySectionId = new Map(builder.map((section) => [section.id, section.order]));
+  const includedBySectionId = new Map(builder.map((section) => [section.id, section.included !== false]));
+  const appendixPlan = buildAppendixPlan(proposal);
+  const structuredPacketPages = buildStructuredPacketPages(proposal);
+  const enabledPlanSheets = getEnabledPlanSheets(proposal.planSheets);
+  const rawSections = [
+    { id: "cover_summary", title: getPacketBuilderTitle("cover_summary"), kind: "summary" },
+    { id: "details_pricing", title: getPacketBuilderTitle("details_pricing"), kind: "summary" },
+    ...structuredPacketPages.map((page, index) => {
+      const sectionId = getStructuredPacketSectionIdForBuilder(page);
+
+      return {
+        id: sectionId,
+        title: getPacketBuilderTitle(sectionId),
+        kind: "structured",
+        originalIndex: index + 2,
+      };
+    }),
+    ...appendixPlan.pages.map((page, index) => ({
+      id: "appendix_overflow",
+      title: getPacketBuilderTitle("appendix_overflow"),
+      kind: "appendix",
+      originalIndex: structuredPacketPages.length + index + 2,
+    })),
+    ...enabledPlanSheets.map((sheet, index) => ({
+      id: "plan_sheet_pages",
+      title: getPacketBuilderTitle("plan_sheet_pages"),
+      kind: "plan",
+      originalIndex: structuredPacketPages.length + appendixPlan.pages.length + index + 2,
+    })),
+  ];
+
+  return rawSections
+    .map((section, index) => ({ ...section, originalIndex: section.originalIndex ?? index }))
+    .filter((section) => includedBySectionId.get(section.id) !== false)
+    .filter((section) => getPacketBuilderSectionStatus(proposal, section.id).hasData)
+    .sort((a, b) => {
+      const orderA = orderBySectionId.get(a.id) ?? 999;
+      const orderB = orderBySectionId.get(b.id) ?? 999;
+
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+
+      return a.originalIndex - b.originalIndex;
+    });
 }
 
 function buildStructuredPacketPages(proposal) {
