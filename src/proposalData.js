@@ -85,6 +85,14 @@ export const DEFAULT_TERMS = {
   depositRate: 0.5,
   depositText: "A 50% deposit is required to schedule the project.",
   progressBilling: "Progress billings will be submitted monthly as work completes.",
+  proposalExpiration: "Proposal pricing is valid through the expiration date shown unless extended in writing.",
+  changeOrderLanguage: "Added, changed, or out-of-scope work requires written approval before proceeding.",
+  weatherSiteReadiness: "Schedule is subject to weather, access, approved subgrade, site readiness, and concrete supplier availability.",
+  utilityResponsibility: "Utility locating, private utility identification, and protection of unmarked utilities are by owner / GC unless noted otherwise.",
+  hiddenConditions: "Hidden, unsuitable, contaminated, unstable, or unshown conditions are excluded and may require a written change order.",
+  concreteCrackingDisclaimer: "Concrete is expected to crack; control joints reduce but do not eliminate random cracking.",
+  colorFinishVariationDisclaimer: "Color, texture, cure marks, and finish appearance may vary due to site conditions, weather, material batches, and curing.",
+  warrantyLimitation: "Warranty is limited to workmanship for accepted scope and excludes movement, settlement, abuse, deicing chemicals, and conditions outside contractor control.",
   acceptance: "This proposal, including terms and conditions, is accepted by signature below.",
 };
 
@@ -781,6 +789,7 @@ export function validateProposalCompleteness(proposal) {
   }
 
   getPricingSectionWarnings(proposal.pricingSections).forEach((warning) => warnings.push(warning));
+  getSovValidationWarnings(proposal).forEach((warning) => warnings.push(warning));
 
   return {
     isValid: errors.length === 0,
@@ -919,9 +928,50 @@ function getPricingSectionWarnings(pricingSections = []) {
         return `Alternate / allowance ${index + 1} is missing a valid amount.`;
       }
 
+      if (section.included !== true && section.included !== false) {
+        return `Alternate / allowance ${index + 1} should be clearly marked included or excluded.`;
+      }
+
       return "";
     })
     .filter(Boolean);
+}
+
+function getSovValidationWarnings(proposal = {}) {
+  const scheduleOfValues = proposal.gcPacketTables?.scheduleOfValues;
+  const rows = Array.isArray(scheduleOfValues?.rows) ? scheduleOfValues.rows : [];
+  const visibleRows = rows.filter((row) =>
+    ["item", "description", "pricingBasis", "amount"].some((field) => hasText(row?.[field])),
+  );
+  const warnings = [];
+
+  visibleRows.forEach((row, index) => {
+    const missingFields = ["item", "description", "pricingBasis", "amount"].filter((field) => !hasText(row?.[field]));
+
+    if (missingFields.length > 0) {
+      warnings.push(`Schedule of Values row ${index + 1} is incomplete.`);
+    }
+  });
+
+  if (visibleRows.length > 0) {
+    const sovTotal = roundMoney(visibleRows.reduce((sum, row) => sum + toNumber(row.amount), 0));
+    const proposalTotal = calculateProposalTotals(proposal).total;
+
+    if (proposalTotal > 0 && Math.abs(sovTotal - proposalTotal) > 1) {
+      warnings.push(
+        `Schedule of Values total (${formatValidationCurrency(sovTotal)}) does not match included proposal total (${formatValidationCurrency(proposalTotal)}).`,
+      );
+    }
+  }
+
+  return warnings;
+}
+
+function formatValidationCurrency(value) {
+  return new Intl.NumberFormat("en-US", {
+    currency: "USD",
+    style: "currency",
+  }).format(roundMoney(value));
 }
 
 function resolveDiscount(subtotal, financials) {
@@ -1009,7 +1059,7 @@ function hasUsableLineItems(lineItems) {
 }
 
 function hasTerms(terms = {}) {
-  return hasText(terms.payment) || hasText(terms.depositText) || hasText(terms.progressBilling) || hasText(terms.acceptance);
+  return Object.values(terms).some((value) => hasText(value));
 }
 
 function hasConcreteSpecs(concreteSpecs = {}) {

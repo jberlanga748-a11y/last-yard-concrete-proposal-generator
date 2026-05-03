@@ -4427,6 +4427,10 @@ function ProposalEditor({
         </EditorSection>
       ) : null}
 
+      <EditorSection title="Legal / Terms Blocks">
+        <LegalTermsEditor terms={proposal.terms} onChange={onChange} />
+      </EditorSection>
+
       <EditorSection title="Pricing">
         <LineItemEditor
           lineItems={proposal.lineItems}
@@ -4721,6 +4725,41 @@ function PricingSectionsEditor({
       <button className="editor-add-button" type="button" onClick={onAddPricingSection}>
         Add alternate / allowance
       </button>
+    </div>
+  );
+}
+
+function LegalTermsEditor({ terms = {}, onChange }) {
+  const fields = [
+    ["payment", "Payment Terms"],
+    ["proposalExpiration", "Proposal Expiration"],
+    ["depositText", "Deposit / Scheduling Language"],
+    ["progressBilling", "Progress Billing"],
+    ["changeOrderLanguage", "Change Order Language"],
+    ["weatherSiteReadiness", "Weather / Site Readiness"],
+    ["utilityResponsibility", "Utility Responsibility"],
+    ["hiddenConditions", "Hidden Conditions"],
+    ["concreteCrackingDisclaimer", "Concrete Cracking Disclaimer"],
+    ["colorFinishVariationDisclaimer", "Color / Finish Variation Disclaimer"],
+    ["warrantyLimitation", "Warranty Limitation"],
+    ["acceptance", "Acceptance Language"],
+  ];
+
+  return (
+    <div className="legal-terms-editor">
+      <p className="smart-paste-help">
+        Keep these client-facing. They can print in the full GC packet and remain editable per proposal.
+      </p>
+      {fields.map(([field, label]) => (
+        <EditorField
+          key={field}
+          label={label}
+          path={`terms.${field}`}
+          value={terms[field] || ""}
+          onChange={onChange}
+          multiline
+        />
+      ))}
     </div>
   );
 }
@@ -5234,6 +5273,55 @@ function ConcreteSpecsEditor({ concreteSpecs, onChange }) {
 }
 
 function GcPrimeEditor({ gcPrime, onChange }) {
+  const addendaRegister = normalizeAddendaRegister(gcPrime.addendaRegister);
+  const rfiRegister = normalizeRfiRegister(gcPrime.rfiRegister);
+  const scopeControlSummary = normalizeScopeControlSummary(gcPrime.scopeControlSummary);
+
+  function updateAddendum(index, field, value) {
+    onChange(
+      "addendaRegister",
+      addendaRegister.map((addendum, addendumIndex) =>
+        addendumIndex === index ? { ...addendum, [field]: value } : addendum,
+      ),
+    );
+  }
+
+  function addAddendum() {
+    onChange("addendaRegister", [...addendaRegister, createEmptyAddendumRecord()]);
+  }
+
+  function removeAddendum(index) {
+    onChange(
+      "addendaRegister",
+      addendaRegister.filter((_, addendumIndex) => addendumIndex !== index),
+    );
+  }
+
+  function updateRfi(index, field, value) {
+    onChange(
+      "rfiRegister",
+      rfiRegister.map((rfi, rfiIndex) => (rfiIndex === index ? { ...rfi, [field]: value } : rfi)),
+    );
+  }
+
+  function addRfi() {
+    onChange("rfiRegister", [...rfiRegister, createEmptyRfiRecord()]);
+  }
+
+  function removeRfi(index) {
+    onChange(
+      "rfiRegister",
+      rfiRegister.filter((_, rfiIndex) => rfiIndex !== index),
+    );
+  }
+
+  function updateScopeControl(field, value) {
+    onChange("scopeControlSummary", {
+      ...scopeControlSummary,
+      [field]: value,
+    });
+  }
+
   return (
     <div className="gc-prime-editor">
       <div className="editor-spec-grid">
@@ -5367,6 +5455,206 @@ function GcPrimeEditor({ gcPrime, onChange }) {
         onChange={(_, value) => onChange("rfiClarificationNotes", value)}
         multiline
       />
+
+      <div className="packet-editor-card">
+        <div className="pricing-section-editor-header">
+          <strong>Structured Addenda Acknowledgement</strong>
+          <span>Included rows print in the full GC packet and packet snapshots.</span>
+        </div>
+        {addendaRegister.map((addendum, index) => (
+          <div className="packet-row-card" key={addendum.id || `addendum-${index}`}>
+            <div className="line-item-card-header">
+              <strong>Addendum {index + 1}</strong>
+              <button type="button" onClick={() => removeAddendum(index)}>
+                Remove
+              </button>
+            </div>
+            <div className="packet-row-grid">
+              <EditorField
+                label="Addendum Number"
+                path={`gcPrime.addendaRegister.${index}.addendumNumber`}
+                value={addendum.addendumNumber}
+                onChange={(_, value) => updateAddendum(index, "addendumNumber", value)}
+              />
+              <EditorField
+                label="Addendum Date"
+                path={`gcPrime.addendaRegister.${index}.addendumDate`}
+                value={addendum.addendumDate}
+                onChange={(_, value) => updateAddendum(index, "addendumDate", value)}
+              />
+              <EditorField
+                label="Title / Description"
+                path={`gcPrime.addendaRegister.${index}.titleDescription`}
+                value={addendum.titleDescription}
+                onChange={(_, value) => updateAddendum(index, "titleDescription", value)}
+              />
+              <EditorField
+                label="Notes"
+                path={`gcPrime.addendaRegister.${index}.notes`}
+                value={addendum.notes}
+                onChange={(_, value) => updateAddendum(index, "notes", value)}
+              />
+            </div>
+            <div className="editor-check-row">
+              <label className="editor-check">
+                <input
+                  checked={Boolean(addendum.acknowledged)}
+                  type="checkbox"
+                  onChange={(event) => updateAddendum(index, "acknowledged", event.target.checked)}
+                />
+                <span>Acknowledged</span>
+              </label>
+              <label className="editor-check">
+                <input
+                  checked={Boolean(addendum.includedInPacket)}
+                  type="checkbox"
+                  onChange={(event) => updateAddendum(index, "includedInPacket", event.target.checked)}
+                />
+                <span>Included in packet</span>
+              </label>
+            </div>
+          </div>
+        ))}
+        <button className="editor-add-button" type="button" onClick={addAddendum}>
+          Add addendum
+        </button>
+      </div>
+
+      <div className="packet-editor-card">
+        <div className="pricing-section-editor-header">
+          <strong>Structured RFI / Clarification Register</strong>
+          <span>Track clarifications, proposal treatment, and scope/price impact.</span>
+        </div>
+        {rfiRegister.map((rfi, index) => (
+          <div className="packet-row-card" key={rfi.id || `rfi-${index}`}>
+            <div className="line-item-card-header">
+              <strong>RFI / Clarification {index + 1}</strong>
+              <button type="button" onClick={() => removeRfi(index)}>
+                Remove
+              </button>
+            </div>
+            <div className="packet-row-grid">
+              <EditorField
+                label="RFI / Clarification Number"
+                path={`gcPrime.rfiRegister.${index}.rfiNumber`}
+                value={rfi.rfiNumber}
+                onChange={(_, value) => updateRfi(index, "rfiNumber", value)}
+              />
+              <EditorField
+                label="Date Asked"
+                path={`gcPrime.rfiRegister.${index}.dateAsked`}
+                value={rfi.dateAsked}
+                onChange={(_, value) => updateRfi(index, "dateAsked", value)}
+              />
+              <EditorField
+                label="Date Answered"
+                path={`gcPrime.rfiRegister.${index}.dateAnswered`}
+                value={rfi.dateAnswered}
+                onChange={(_, value) => updateRfi(index, "dateAnswered", value)}
+              />
+              <EditorField
+                label="Source"
+                path={`gcPrime.rfiRegister.${index}.source`}
+                value={rfi.source}
+                onChange={(_, value) => updateRfi(index, "source", value)}
+              />
+              <EditorField
+                label="Question / Clarification Needed"
+                path={`gcPrime.rfiRegister.${index}.question`}
+                value={rfi.question}
+                onChange={(_, value) => updateRfi(index, "question", value)}
+                multiline
+              />
+              <EditorField
+                label="Answer / Proposal Treatment"
+                path={`gcPrime.rfiRegister.${index}.answerTreatment`}
+                value={rfi.answerTreatment}
+                onChange={(_, value) => updateRfi(index, "answerTreatment", value)}
+                multiline
+              />
+              <EditorField
+                label="Price Impact"
+                path={`gcPrime.rfiRegister.${index}.priceImpact`}
+                value={rfi.priceImpact}
+                onChange={(_, value) => updateRfi(index, "priceImpact", value)}
+              />
+              <EditorField
+                label="Scope Impact"
+                path={`gcPrime.rfiRegister.${index}.scopeImpact`}
+                value={rfi.scopeImpact}
+                onChange={(_, value) => updateRfi(index, "scopeImpact", value)}
+              />
+            </div>
+            <label className="editor-check">
+              <input
+                checked={Boolean(rfi.includedInPacket)}
+                type="checkbox"
+                onChange={(event) => updateRfi(index, "includedInPacket", event.target.checked)}
+              />
+              <span>Included in packet</span>
+            </label>
+          </div>
+        ))}
+        <button className="editor-add-button" type="button" onClick={addRfi}>
+          Add RFI / clarification
+        </button>
+      </div>
+
+      <div className="packet-editor-card">
+        <div className="pricing-section-editor-header">
+          <strong>Scope Control Summary</strong>
+          <span>Prints in full GC packet mode when populated.</span>
+        </div>
+        <EditorField
+          label="Included Scope"
+          path="gcPrime.scopeControlSummary.includedScope"
+          value={scopeControlSummary.includedScope}
+          onChange={(_, value) => updateScopeControl("includedScope", value)}
+          multiline
+        />
+        <EditorField
+          label="Exclusions"
+          path="gcPrime.scopeControlSummary.exclusions"
+          value={scopeControlSummary.exclusions}
+          onChange={(_, value) => updateScopeControl("exclusions", value)}
+          multiline
+        />
+        <EditorField
+          label="Clarifications"
+          path="gcPrime.scopeControlSummary.clarifications"
+          value={scopeControlSummary.clarifications}
+          onChange={(_, value) => updateScopeControl("clarifications", value)}
+          multiline
+        />
+        <EditorField
+          label="Accepted Alternates"
+          path="gcPrime.scopeControlSummary.acceptedAlternates"
+          value={scopeControlSummary.acceptedAlternates}
+          onChange={(_, value) => updateScopeControl("acceptedAlternates", value)}
+          multiline
+        />
+        <EditorField
+          label="Allowances"
+          path="gcPrime.scopeControlSummary.allowances"
+          value={scopeControlSummary.allowances}
+          onChange={(_, value) => updateScopeControl("allowances", value)}
+          multiline
+        />
+        <EditorField
+          label="Owner / GC By Others"
+          path="gcPrime.scopeControlSummary.ownerGcByOthers"
+          value={scopeControlSummary.ownerGcByOthers}
+          onChange={(_, value) => updateScopeControl("ownerGcByOthers", value)}
+          multiline
+        />
+        <EditorField
+          label="Hidden / Unshown Conditions Note"
+          path="gcPrime.scopeControlSummary.hiddenUnshownConditionsNote"
+          value={scopeControlSummary.hiddenUnshownConditionsNote}
+          onChange={(_, value) => updateScopeControl("hiddenUnshownConditionsNote", value)}
+          multiline
+        />
+      </div>
     </div>
   );
 }
@@ -8900,10 +9188,84 @@ function normalizePricingSections(pricingSections = []) {
   }));
 }
 
+function createEmptyAddendumRecord() {
+  return {
+    id: createProposalId(),
+    addendumNumber: "",
+    addendumDate: "",
+    titleDescription: "",
+    acknowledged: true,
+    notes: "",
+    includedInPacket: true,
+  };
+}
+
+function normalizeAddendaRegister(addenda = []) {
+  if (!Array.isArray(addenda)) {
+    return [];
+  }
+
+  return addenda.map((addendum) => ({
+    ...createEmptyAddendumRecord(),
+    ...addendum,
+    id: addendum?.id || createProposalId(),
+    acknowledged: addendum?.acknowledged !== false,
+    includedInPacket: addendum?.includedInPacket !== false,
+  }));
+}
+
+function createEmptyRfiRecord() {
+  return {
+    id: createProposalId(),
+    rfiNumber: "",
+    dateAsked: "",
+    dateAnswered: "",
+    source: "",
+    question: "",
+    answerTreatment: "",
+    priceImpact: "",
+    scopeImpact: "",
+    includedInPacket: true,
+  };
+}
+
+function normalizeRfiRegister(rfis = []) {
+  if (!Array.isArray(rfis)) {
+    return [];
+  }
+
+  return rfis.map((rfi) => ({
+    ...createEmptyRfiRecord(),
+    ...rfi,
+    id: rfi?.id || createProposalId(),
+    includedInPacket: rfi?.includedInPacket !== false,
+  }));
+}
+
+function getDefaultScopeControlSummary() {
+  return {
+    includedScope: "",
+    exclusions: "",
+    clarifications: "",
+    acceptedAlternates: "",
+    allowances: "",
+    ownerGcByOthers: "",
+    hiddenUnshownConditionsNote: "",
+  };
+}
+
+function normalizeScopeControlSummary(summary = {}) {
+  return {
+    ...getDefaultScopeControlSummary(),
+    ...(summary || {}),
+  };
+}
+
 function createEditableProposal(seedProposal) {
   const proposal = cloneObject(seedProposal || {});
   const client = proposal.client || {};
   const project = proposal.project || {};
+  const gcPrime = proposal.gcPrime || {};
   const proposedSchedule = project.proposedSchedule || {};
   const proposalType = proposal.proposalType ?? proposal.type ?? "commercial";
   const revisionNumber = normalizeRevisionNumber(proposal.revisionNumber);
@@ -8957,7 +9319,10 @@ function createEditableProposal(seedProposal) {
     },
     gcPrime: {
       ...getDefaultGcPrime(),
-      ...(proposal.gcPrime || {}),
+      ...gcPrime,
+      addendaRegister: normalizeAddendaRegister(gcPrime.addendaRegister),
+      rfiRegister: normalizeRfiRegister(gcPrime.rfiRegister),
+      scopeControlSummary: normalizeScopeControlSummary(gcPrime.scopeControlSummary),
     },
     financials: {
       taxRate: 0,
@@ -8968,10 +9333,7 @@ function createEditableProposal(seedProposal) {
     exclusions: normalizeTextList(proposal.exclusions),
     assumptions: normalizeTextList(proposal.assumptions),
     terms: {
-      payment: "",
-      depositText: "",
-      progressBilling: "",
-      acceptance: "",
+      ...SEED_PROPOSAL.terms,
       ...(proposal.terms || {}),
     },
     lineItems: (proposal.lineItems || []).map((item) => ({
@@ -9084,8 +9446,13 @@ function createSubmittedPacketRecord(proposal = {}, authUser = null, overrides =
       planSheetCount,
       structuredPageCount,
     }),
-    addendaAcknowledged: snapshotSource.gcPrime?.addendaAcknowledged || "",
-    rfiCount: countPacketTextLines(snapshotSource.gcPrime?.rfiClarificationNotes),
+    addendaAcknowledged:
+      snapshotSource.gcPrime?.addendaAcknowledged ||
+      getPrintableAddendaRows(snapshotSource.gcPrime)
+        .map((row) => [row.addendumNumber, row.titleDescription].filter(hasTextValue).join(" - "))
+        .filter(hasTextValue)
+        .join("; "),
+    rfiCount: countPacketTextLines(snapshotSource.gcPrime?.rfiClarificationNotes) + getPrintableRfiRows(snapshotSource.gcPrime).length,
     planSheetCount,
     appendixPageCount,
     packetPageCount,
@@ -9200,6 +9567,53 @@ function getVisiblePricingSections(pricingSections = []) {
 function buildStructuredPacketPages(proposal) {
   const tables = normalizeGcPacketTables(proposal.gcPacketTables);
   const pages = [];
+  const isFullGcPacket = proposal.packetMode === "full_gc_packet";
+
+  if (isFullGcPacket) {
+    const scopeControlSections = buildScopeControlSummarySections(proposal);
+
+    if (scopeControlSections.length > 0) {
+      pages.push({
+        key: "structured-scope-control-summary",
+        kind: "proposalNotes",
+        title: "Scope Control Summary",
+        sections: scopeControlSections,
+      });
+    }
+
+    paginateStructuredRows(
+      pages,
+      "addendaRegister",
+      { enabled: true, rows: getPrintableAddendaRows(proposal.gcPrime) },
+      "Addenda Acknowledgement",
+      [
+        { key: "addendumNumber", label: "Addendum #" },
+        { key: "addendumDate", label: "Date" },
+        { key: "titleDescription", label: "Title / Description" },
+        { key: "acknowledgedLabel", label: "Acknowledged" },
+        { key: "notes", label: "Notes" },
+      ],
+      12,
+    );
+
+    paginateStructuredRows(
+      pages,
+      "rfiRegister",
+      { enabled: true, rows: getPrintableRfiRows(proposal.gcPrime) },
+      "RFI / Clarification Register",
+      [
+        { key: "rfiNumber", label: "RFI / Clarification #" },
+        { key: "dateAsked", label: "Asked" },
+        { key: "dateAnswered", label: "Answered" },
+        { key: "source", label: "Source" },
+        { key: "question", label: "Question / Clarification" },
+        { key: "answerTreatment", label: "Proposal Treatment" },
+        { key: "priceImpact", label: "Price Impact" },
+        { key: "scopeImpact", label: "Scope Impact" },
+      ],
+      8,
+    );
+  }
 
   if (tables.pricingSummary.enabled) {
     pages.push({
@@ -9278,7 +9692,116 @@ function buildStructuredPacketPages(proposal) {
     });
   }
 
+  if (isFullGcPacket) {
+    const legalTermsSections = buildLegalTermsSections(proposal.terms);
+
+    if (legalTermsSections.length > 0) {
+      chunkArray(legalTermsSections, 6).forEach((sections, index, chunks) => {
+        pages.push({
+          key: `structured-legal-terms-${index}`,
+          kind: "proposalNotes",
+          title: chunks.length > 1 ? `Legal / Terms Clarifications (${index + 1})` : "Legal / Terms Clarifications",
+          sections,
+        });
+      });
+    }
+  }
+
   return pages;
+}
+
+function buildScopeControlSummarySections(proposal = {}) {
+  const scopeControl = normalizeScopeControlSummary(proposal.gcPrime?.scopeControlSummary);
+  const includedAlternates = getVisiblePricingSections(proposal.pricingSections).filter(
+    (section) => section.included && section.type !== "unit_price",
+  );
+  const allowances = getVisiblePricingSections(proposal.pricingSections).filter((section) => section.type === "allowance");
+  const generatedIncludedScope = normalizeScopeSections(proposal.scopeSections)
+    .map((section) => `${section.title}: ${(section.items || []).join("; ")}`)
+    .filter(hasTextValue)
+    .join("\n");
+  const generatedExclusions = normalizeTextList(proposal.exclusions).join("\n");
+  const generatedClarifications = getAppendixTextValue(proposal.gcPrime?.rfiClarificationNotes || proposal.gcPrime?.gcPrimeNotes);
+  const generatedAcceptedAlternates = includedAlternates
+    .map((section) => `${section.label}: ${formatPricingSectionAmount(section)}`)
+    .join("\n");
+  const generatedAllowances = allowances
+    .map((section) => `${section.label}: ${formatPricingSectionAmount(section)}${section.included ? " included" : " not included"}`)
+    .join("\n");
+
+  return [
+    { title: "Included Scope", text: limitStructuredNoteText(scopeControl.includedScope || generatedIncludedScope) },
+    { title: "Exclusions", text: limitStructuredNoteText(scopeControl.exclusions || generatedExclusions) },
+    { title: "Clarifications", text: limitStructuredNoteText(scopeControl.clarifications || generatedClarifications) },
+    { title: "Accepted Alternates", text: limitStructuredNoteText(scopeControl.acceptedAlternates || generatedAcceptedAlternates) },
+    { title: "Allowances", text: limitStructuredNoteText(scopeControl.allowances || generatedAllowances) },
+    { title: "Owner / GC By Others", text: limitStructuredNoteText(scopeControl.ownerGcByOthers) },
+    {
+      title: "Hidden / Unshown Conditions",
+      text: limitStructuredNoteText(scopeControl.hiddenUnshownConditionsNote || proposal.terms?.hiddenConditions),
+    },
+  ].filter((section) => hasTextValue(section.text));
+}
+
+function limitStructuredNoteText(value, maxLength = 520) {
+  const text = getAppendixTextValue(value);
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${truncateText(text, maxLength)}\nSee Appendix for detailed backup.`;
+}
+
+function getPrintableAddendaRows(gcPrime = {}) {
+  return normalizeAddendaRegister(gcPrime.addendaRegister)
+    .filter((row) => row.includedInPacket && hasAddendumRowData(row))
+    .map((row) => ({
+      ...row,
+      acknowledgedLabel: row.acknowledged ? "Yes" : "No",
+    }));
+}
+
+function getPrintableRfiRows(gcPrime = {}) {
+  return normalizeRfiRegister(gcPrime.rfiRegister).filter((row) => row.includedInPacket && hasRfiRowData(row));
+}
+
+function hasAddendumRowData(row = {}) {
+  return ["addendumNumber", "addendumDate", "titleDescription", "notes"].some((field) => hasTextValue(row[field]));
+}
+
+function hasRfiRowData(row = {}) {
+  return [
+    "rfiNumber",
+    "dateAsked",
+    "dateAnswered",
+    "source",
+    "question",
+    "answerTreatment",
+    "priceImpact",
+    "scopeImpact",
+  ].some((field) => hasTextValue(row[field]));
+}
+
+function buildLegalTermsSections(terms = {}) {
+  const legalFields = [
+    ["Proposal Expiration", terms.proposalExpiration],
+    ["Payment Terms", terms.payment],
+    ["Deposit / Scheduling", terms.depositText],
+    ["Progress Billing", terms.progressBilling],
+    ["Change Orders", terms.changeOrderLanguage],
+    ["Weather / Site Readiness", terms.weatherSiteReadiness],
+    ["Utility Responsibility", terms.utilityResponsibility],
+    ["Hidden Conditions", terms.hiddenConditions],
+    ["Concrete Cracking", terms.concreteCrackingDisclaimer],
+    ["Color / Finish Variation", terms.colorFinishVariationDisclaimer],
+    ["Warranty Limitation", terms.warrantyLimitation],
+    ["Acceptance", terms.acceptance],
+  ];
+
+  return legalFields
+    .filter(([, text]) => hasTextValue(text))
+    .map(([title, text]) => ({ title, text }));
 }
 
 function paginateStructuredRows(pages, kind, table, title, columns, rowsPerPage) {
@@ -9856,6 +10379,9 @@ function getDefaultGcPrime() {
     paymentApplicationTerms: "",
     changeOrderProcess: "",
     rfiClarificationNotes: "",
+    addendaRegister: [],
+    rfiRegister: [],
+    scopeControlSummary: getDefaultScopeControlSummary(),
   };
 }
 
@@ -9886,6 +10412,11 @@ function parseProjectNotes(notes) {
   setTextValue("projectAddress", "projectAddress", "project address");
   setTextValue("schedule", "schedule", "schedule");
   setTextValue("terms", "terms", "terms");
+  setTextValue("paymentTerms", "paymentTerms", "payment terms");
+  setTextValue("changeOrderLanguage", "changeOrders", "change orders");
+  setTextValue("hiddenConditions", "hiddenConditions", "hidden conditions");
+  setTextValue("warrantyLimitation", "warranty", "warranty");
+  setTextValue("ownerGcByOthers", "ownerGcByOthers", "Owner / GC by others");
   setTextValue("rfiClarificationNotes", "rfiClarifications", "RFIs / Clarifications");
   setTextValue("addendaAcknowledged", "addendaAcknowledged", "addenda acknowledged");
   setTextValue("proposalNotes", "proposalNotes", "proposal notes");
@@ -9924,6 +10455,20 @@ function parseProjectNotes(notes) {
   const pricingParse = parseSmartPastePricingSections(sections.pricingSections || [], warnings);
   const planSheetParse = normalizeSmartPastePlanSheets(sections.planSheets || []);
   const gcPacketTableParse = parseSmartPasteGcPacketTables(sections, warnings);
+  const addendaRegister = parseSmartPasteAddendaRegister(notes);
+  const rfiRegister = parseSmartPasteRfiRegister(notes);
+
+  if (addendaRegister.length > 0) {
+    values.addendaRegister = addendaRegister;
+    fields.push("structured addenda");
+    recordSmartPasteSection(sections, "addendaRegister");
+  }
+
+  if (rfiRegister.length > 0) {
+    values.rfiRegister = rfiRegister;
+    fields.push("structured RFI / clarification register");
+    recordSmartPasteSection(sections, "rfiRegister");
+  }
 
   if (pricingParse.baseBidLineItem) {
     values.baseBidLineItem = pricingParse.baseBidLineItem;
@@ -10045,12 +10590,56 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     };
   }
 
+  if (values.paymentTerms) {
+    nextProposal.terms.payment = values.paymentTerms;
+  }
+
+  if (values.changeOrderLanguage) {
+    nextProposal.terms.changeOrderLanguage = values.changeOrderLanguage;
+    nextProposal.gcPrime.changeOrderProcess = values.changeOrderLanguage;
+  }
+
+  if (values.hiddenConditions) {
+    nextProposal.terms.hiddenConditions = values.hiddenConditions;
+    nextProposal.gcPrime.scopeControlSummary = {
+      ...normalizeScopeControlSummary(nextProposal.gcPrime.scopeControlSummary),
+      hiddenUnshownConditionsNote: values.hiddenConditions,
+    };
+  }
+
+  if (values.warrantyLimitation) {
+    nextProposal.terms.warrantyLimitation = values.warrantyLimitation;
+  }
+
+  if (values.ownerGcByOthers) {
+    nextProposal.gcPrime.scopeControlSummary = {
+      ...normalizeScopeControlSummary(nextProposal.gcPrime.scopeControlSummary),
+      ownerGcByOthers: values.ownerGcByOthers,
+    };
+  }
+
   if (values.rfiClarificationNotes) {
     nextProposal.gcPrime.rfiClarificationNotes = values.rfiClarificationNotes;
   }
 
   if (values.addendaAcknowledged) {
     nextProposal.gcPrime.addendaAcknowledged = values.addendaAcknowledged;
+  }
+
+  if (values.addendaRegister) {
+    nextProposal.gcPrime.addendaRegister = mergeRegisterRows(
+      normalizeAddendaRegister(nextProposal.gcPrime.addendaRegister),
+      values.addendaRegister,
+      "addendumNumber",
+    );
+  }
+
+  if (values.rfiRegister) {
+    nextProposal.gcPrime.rfiRegister = mergeRegisterRows(
+      normalizeRfiRegister(nextProposal.gcPrime.rfiRegister),
+      values.rfiRegister,
+      "rfiNumber",
+    );
   }
 
   if (values.proposalNotes) {
@@ -10098,9 +10687,16 @@ function collectSmartPasteSections(notes) {
     "exclusions",
     "assumptions",
     "terms",
+    "paymentTerms",
+    "changeOrders",
+    "hiddenConditions",
+    "warranty",
+    "ownerGcByOthers",
     "lineItems",
     "rfiClarifications",
+    "rfiRegister",
     "addendaAcknowledged",
+    "addendaRegister",
     "proposalNotes",
     "gcPrimeNotes",
     "concreteSpecs",
@@ -10118,6 +10714,11 @@ function collectSmartPasteSections(notes) {
   const textCaptureKeys = new Set([
     "rfiClarifications",
     "addendaAcknowledged",
+    "paymentTerms",
+    "changeOrders",
+    "hiddenConditions",
+    "warranty",
+    "ownerGcByOthers",
     "proposalNotes",
     "gcPrimeNotes",
     "concreteSpecs",
@@ -10401,11 +11002,14 @@ function getSmartPasteLabelKey(label) {
   const labels = {
     "addenda acknowledged": "addendaAcknowledged",
     "addendum acknowledged": "addendaAcknowledged",
+    "addendum date": "addendaRegister",
     address: "billingAddress",
     "acceptance summary": "acceptanceSummary",
     allowances: "pricingSections",
     alternates: "pricingSections",
     assumptions: "assumptions",
+    "change order": "changeOrders",
+    "change orders": "changeOrders",
     client: "clientCompany",
     "concrete specs": "concreteSpecs",
     contact: "contactName",
@@ -10416,9 +11020,14 @@ function getSmartPasteLabelKey(label) {
     "gc / prime reviewer": "gcPrimeReviewer",
     "gc prime notes": "gcPrimeNotes",
     "gc prime reviewer": "gcPrimeReviewer",
+    "hidden condition": "hiddenConditions",
+    "hidden conditions": "hiddenConditions",
     "line items": "lineItems",
     "line item": "lineItems",
     location: "projectLocation",
+    "owner / gc by others": "ownerGcByOthers",
+    "owner gc by others": "ownerGcByOthers",
+    "payment terms": "paymentTerms",
     phone: "clientPhone",
     "prepared for": "clientCompany",
     "pricing summary": "pricingSummary",
@@ -10431,6 +11040,8 @@ function getSmartPasteLabelKey(label) {
     "proposal basis": "proposalBasis",
     "proposal type": "proposalType",
     "rfi / clarification": "rfiClarifications",
+    rfi: "rfiRegister",
+    clarification: "rfiRegister",
     "rfis / clarifications": "rfiClarifications",
     schedule: "schedule",
     "schedule of values": "scheduleOfValues",
@@ -10440,7 +11051,16 @@ function getSmartPasteLabelKey(label) {
     terms: "terms",
     "total if all accepted": "pricingSections",
     "total if all alternates accepted": "pricingSections",
+    warranty: "warranty",
   };
+
+  if (/^addendum\s+[a-z0-9.-]+$/i.test(normalizedLabel)) {
+    return "addendaRegister";
+  }
+
+  if (/^(rfi|clarification)\s+[a-z0-9.-]+$/i.test(normalizedLabel)) {
+    return "rfiRegister";
+  }
 
   return labels[normalizedLabel] || "";
 }
@@ -10450,16 +11070,24 @@ function isSmartPasteSectionHeading(label, key) {
   const sectionHeadingLabels = new Set([
     "addenda acknowledged",
     "addendum acknowledged",
+    "addendum date",
     "acceptance summary",
     "allowances",
     "alternates",
     "assumptions",
+    "change order",
+    "change orders",
     "concrete specs",
     "exclusions",
     "gc / prime notes",
     "gc prime notes",
+    "hidden condition",
+    "hidden conditions",
     "line item",
     "line items",
+    "owner / gc by others",
+    "owner gc by others",
+    "payment terms",
     "pricing summary",
     "proposal notes / acceptance summary",
     "proposal notes",
@@ -10468,15 +11096,18 @@ function isSmartPasteSectionHeading(label, key) {
     "gc / prime reviewer",
     "gc prime reviewer",
     "rfi / clarification",
+    "rfi",
+    "clarification",
     "rfis / clarifications",
     "schedule of values",
     "scope",
     "shade footing estimate",
     "takeoff quantities",
     "terms",
+    "warranty",
   ]);
 
-  return sectionHeadingLabels.has(normalizedLabel) || key === "lineItems";
+  return sectionHeadingLabels.has(normalizedLabel) || /^addendum\s+[a-z0-9.-]+$/i.test(normalizedLabel) || key === "lineItems";
 }
 
 function recordSmartPasteSection(sections, key) {
@@ -10492,9 +11123,11 @@ function recordSmartPasteSection(sections, key) {
 function getCapturedSmartPasteLabels(sections) {
   const labels = {
     addendaAcknowledged: "Addenda Acknowledged",
+    addendaRegister: "Structured Addenda",
     acceptanceSummary: "Acceptance Summary",
     assumptions: "Assumptions",
     billingAddress: "Billing Address",
+    changeOrders: "Change Orders",
     clientCompany: "Client",
     clientEmail: "Client Email",
     clientPhone: "Client Phone",
@@ -10504,7 +11137,10 @@ function getCapturedSmartPasteLabels(sections) {
     exclusions: "Exclusions",
     gcPrimeNotes: "GC / Prime Notes",
     gcPrimeReviewer: "GC / Prime Reviewer",
+    hiddenConditions: "Hidden Conditions",
     lineItems: "Line Items",
+    ownerGcByOthers: "Owner / GC By Others",
+    paymentTerms: "Payment Terms",
     planSheets: "Plan Sheets / Takeoff Pages",
     pricingSummary: "Pricing Summary",
     pricingSections: "Alternates / Allowances",
@@ -10515,12 +11151,14 @@ function getCapturedSmartPasteLabels(sections) {
     proposalNotes: "Proposal Notes",
     proposalType: "Proposal Type",
     rfiClarifications: "RFIs / Clarifications",
+    rfiRegister: "Structured RFI / Clarification Register",
     schedule: "Schedule",
     scheduleOfValues: "Schedule of Values",
     scope: "Scope",
     shadeFootingEstimate: "Shade Footing Estimate",
     takeoffQuantities: "Takeoff Quantities",
     terms: "Terms",
+    warranty: "Warranty",
   };
 
   return (sections.__capturedKeys || []).map((key) => labels[key] || key);
@@ -10744,6 +11382,184 @@ function mergeGcPacketTables(currentTables = {}, parsedTables = {}) {
   });
 
   return mergedTables;
+}
+
+function mergeRegisterRows(currentRows = [], incomingRows = [], identityField) {
+  const mergedRows = [...currentRows];
+
+  incomingRows.forEach((incomingRow) => {
+    const identityValue = String(incomingRow?.[identityField] || "").trim().toLowerCase();
+    const existingIndex = identityValue
+      ? mergedRows.findIndex((row) => String(row?.[identityField] || "").trim().toLowerCase() === identityValue)
+      : -1;
+
+    if (existingIndex >= 0) {
+      mergedRows[existingIndex] = {
+        ...mergedRows[existingIndex],
+        ...incomingRow,
+        id: mergedRows[existingIndex].id,
+      };
+      return;
+    }
+
+    mergedRows.push(incomingRow);
+  });
+
+  return mergedRows;
+}
+
+function parseSmartPasteAddendaRegister(notes) {
+  const rows = [];
+  let currentRow = null;
+
+  String(notes || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const addendumMatch = line.match(/^addendum\s*([a-z0-9.-]+)?\s*:\s*(.*)$/i);
+
+      if (addendumMatch) {
+        currentRow = {
+          ...createEmptyAddendumRecord(),
+          addendumNumber: addendumMatch[1] ? `Addendum ${addendumMatch[1]}` : "Addendum",
+          titleDescription: addendumMatch[2].trim(),
+          acknowledged: true,
+          includedInPacket: true,
+        };
+        rows.push(currentRow);
+        return;
+      }
+
+      if (isRegisterBoundaryLine(line, "addenda")) {
+        currentRow = null;
+        return;
+      }
+
+      if (!currentRow) {
+        return;
+      }
+
+      const fieldMatch = line.match(/^([^:]+):\s*(.*)$/);
+
+      if (!fieldMatch) {
+        currentRow.notes = [currentRow.notes, line].filter(hasTextValue).join("\n");
+        return;
+      }
+
+      const label = fieldMatch[1].trim().toLowerCase().replace(/\s+/g, " ");
+      const value = fieldMatch[2].trim();
+
+      if (label === "addendum date" || label === "date") {
+        currentRow.addendumDate = value;
+      } else if (label === "title" || label === "description") {
+        currentRow.titleDescription = value;
+      } else if (label === "acknowledged") {
+        currentRow.acknowledged = !/^no|false$/i.test(value);
+      } else if (label === "included in packet") {
+        currentRow.includedInPacket = !/^no|false$/i.test(value);
+      } else if (label === "notes" || label === "note") {
+        currentRow.notes = [currentRow.notes, value].filter(hasTextValue).join("\n");
+      }
+    });
+
+  return normalizeAddendaRegister(rows).filter(hasAddendumRowData);
+}
+
+function parseSmartPasteRfiRegister(notes) {
+  const rows = [];
+  let currentRow = null;
+
+  String(notes || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const rfiMatch = line.match(/^(rfi|clarification)\s*([a-z0-9.-]+)?\s*:\s*(.*)$/i);
+
+      if (rfiMatch) {
+        currentRow = {
+          ...createEmptyRfiRecord(),
+          rfiNumber: rfiMatch[2] ? `${rfiMatch[1].toUpperCase()} ${rfiMatch[2]}` : rfiMatch[1].toUpperCase(),
+          question: rfiMatch[3].trim(),
+          includedInPacket: true,
+        };
+        rows.push(currentRow);
+        return;
+      }
+
+      if (isRegisterBoundaryLine(line, "rfi")) {
+        currentRow = null;
+        return;
+      }
+
+      if (!currentRow) {
+        return;
+      }
+
+      const fieldMatch = line.match(/^([^:]+):\s*(.*)$/);
+
+      if (!fieldMatch) {
+        currentRow.answerTreatment = [currentRow.answerTreatment, line].filter(hasTextValue).join("\n");
+        return;
+      }
+
+      const label = fieldMatch[1].trim().toLowerCase().replace(/\s+/g, " ");
+      const value = fieldMatch[2].trim();
+
+      if (label === "date asked") {
+        currentRow.dateAsked = value;
+      } else if (label === "date answered") {
+        currentRow.dateAnswered = value;
+      } else if (label === "source") {
+        currentRow.source = value;
+      } else if (label === "question" || label === "clarification needed") {
+        currentRow.question = value;
+      } else if (label === "answer" || label === "proposal treatment") {
+        currentRow.answerTreatment = value;
+      } else if (label === "price impact") {
+        currentRow.priceImpact = value;
+      } else if (label === "scope impact") {
+        currentRow.scopeImpact = value;
+      } else if (label === "included in packet") {
+        currentRow.includedInPacket = !/^no|false$/i.test(value);
+      }
+    });
+
+  return normalizeRfiRegister(rows).filter(hasRfiRowData);
+}
+
+function isRegisterBoundaryLine(line, registerType) {
+  const fieldMatch = String(line || "").trim().match(/^([^:]+):\s*(.*)$/);
+
+  if (!fieldMatch) {
+    return false;
+  }
+
+  const label = fieldMatch[1].trim().toLowerCase().replace(/\s+/g, " ");
+  const addendaFields = new Set(["addendum date", "date", "title", "description", "acknowledged", "included in packet", "notes", "note"]);
+  const rfiFields = new Set([
+    "date asked",
+    "date answered",
+    "source",
+    "question",
+    "clarification needed",
+    "answer",
+    "proposal treatment",
+    "price impact",
+    "scope impact",
+    "included in packet",
+  ]);
+
+  if (registerType === "addenda" && addendaFields.has(label)) {
+    return false;
+  }
+
+  if (registerType === "rfi" && rfiFields.has(label)) {
+    return false;
+  }
+
+  return Boolean(getSmartPasteLabelKey(label));
 }
 
 function normalizeSmartPastePlanSheets(planSheets = []) {
