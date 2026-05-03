@@ -219,6 +219,7 @@ export default function App() {
   const [smartPasteResult, setSmartPasteResult] = useState(null);
   const [backupMessage, setBackupMessage] = useState("");
   const [contactDraft, setContactDraft] = useState(() => createEmptyContact());
+  const [contactEditorOpen, setContactEditorOpen] = useState(false);
   const [contactSearchQuery, setContactSearchQuery] = useState("");
   const [contactTypeFilter, setContactTypeFilter] = useState("all");
   const [contactMessage, setContactMessage] = useState("");
@@ -1068,12 +1069,14 @@ export default function App() {
 
   function startNewContact() {
     setContactDraft(createEmptyContact());
+    setContactEditorOpen(true);
     setContactMessage("Ready for a new contact.");
     navigate("/contacts");
   }
 
   function editContact(contact) {
     setContactDraft(normalizeContact(contact));
+    setContactEditorOpen(true);
     setContactMessage(`Editing ${formatContactName(contact)}.`);
   }
 
@@ -1085,6 +1088,11 @@ export default function App() {
   }
 
   async function saveContact() {
+    if (!contactEditorOpen) {
+      setContactMessage("Select a contact to edit, or create a new contact.");
+      return;
+    }
+
     const normalizedContact = normalizeContact({
       ...contactDraft,
       updatedAt: new Date().toISOString(),
@@ -1119,6 +1127,7 @@ export default function App() {
 
     if (contactDraft.id === contactId) {
       setContactDraft(createEmptyContact());
+      setContactEditorOpen(false);
     }
 
     setContactMessage(`Deleted ${formatContactName(contact)} from contacts. Linked proposals were left untouched.`);
@@ -1232,10 +1241,25 @@ export default function App() {
 
   async function saveCurrentProposal() {
     if (saveState.isSaving) {
+      setSaveMessage("Saving...");
       return;
     }
 
     if (!canCompleteProposal("saving")) {
+      setSaveMessage("Fix required fields before saving.");
+      return;
+    }
+
+    const savedProposal = savedProposals.find((proposal) => proposal.id === proposalDraft.id);
+
+    if (route.view !== "new" && savedProposal && !proposalDirty) {
+      setValidationNotice("");
+      setSaveState((currentState) => ({
+        ...currentState,
+        isSaving: false,
+        status: "No changes to save",
+      }));
+      setSaveMessage("No changes to save.");
       return;
     }
 
@@ -1271,9 +1295,11 @@ export default function App() {
         isSaving: false,
         lastCloudSavedAt: synced ? new Date().toISOString() : currentState.lastCloudSavedAt,
         lastSyncError: synced ? "" : currentState.lastSyncError || cloudSync.lastError || "Cloud sync failed.",
-        status: synced ? "Saved locally and to cloud" : "Saved locally, cloud sync failed",
+        status: synced ? "Saved locally and synced to cloud" : "Saved locally. Cloud sync failed",
       }));
-      setSaveMessage(synced ? "Saved locally and to cloud." : "Saved locally, cloud sync failed. Use Retry Sync when ready.");
+      if (synced) {
+        setSaveMessage("Saved locally and synced to cloud.");
+      }
     } else {
       setSaveState((currentState) => ({
         ...currentState,
@@ -2197,6 +2223,7 @@ export default function App() {
 
         setSavedContacts(nextContacts);
         setContactDraft(createEmptyContact());
+        setContactEditorOpen(false);
         setBackupMessage(`${mode === "replace" ? "Replaced" : "Merged"} ${importedContacts.length} imported contacts.`);
         return;
       }
@@ -2223,6 +2250,8 @@ export default function App() {
         );
         setCompanySettings(importedBackup.companySettings);
         setSettingsDraft(importedBackup.companySettings);
+        setContactDraft(createEmptyContact());
+        setContactEditorOpen(false);
         syncDraftAfterProposalRestore(nextProposals);
         markProposalsNeedCloudSync("Imported full backup locally. Use Sync Proposals or Push Local Data to Cloud when ready.");
         setBackupMessage(
@@ -2348,6 +2377,7 @@ export default function App() {
       ) : isContactsView ? (
         <ContactsView
           contactDraft={contactDraft}
+          isEditorOpen={contactEditorOpen}
           contacts={savedContacts}
           message={contactMessage}
           proposals={savedProposals}
@@ -2795,6 +2825,7 @@ function LoginView({ authLoading, authMessage, authUser, onBackToDashboard, onSi
 function ContactsView({
   contactDraft,
   contacts,
+  isEditorOpen,
   message,
   proposals,
   searchQuery,
@@ -2817,7 +2848,11 @@ function ContactsView({
     return matchesSearch && matchesType;
   });
 
-  const linkedProposals = contactDraft.id ? proposals.filter((proposal) => proposal.contactId === contactDraft.id) : [];
+  const linkedProposals = isEditorOpen && contactDraft.id ? proposals.filter((proposal) => proposal.contactId === contactDraft.id) : [];
+  const editingExistingContact = isEditorOpen && contacts.some((contact) => contact.id === contactDraft.id);
+  const contactHeading = hasTextValue(contactDraft.companyName) || hasTextValue(contactDraft.contactName)
+    ? formatContactName(contactDraft)
+    : "New Contact";
 
   return (
     <section className="contacts-panel no-print">
@@ -2834,7 +2869,7 @@ function ContactsView({
           <button type="button" onClick={onNew}>
             New Contact
           </button>
-          <button type="button" onClick={onSave}>
+          <button type="button" onClick={onSave} disabled={!isEditorOpen}>
             Save Contact
           </button>
         </div>
@@ -2842,64 +2877,77 @@ function ContactsView({
 
       <div className="contacts-layout">
         <div className="contact-form-card">
-          <div className="contact-form-heading">
-            <p className="list-kicker">{contactDraft.id ? "Edit contact" : "New contact"}</p>
-            <h3>{formatContactName(contactDraft) || "Contact Details"}</h3>
-          </div>
-          <div className="contact-form-grid">
-            <EditorField label="Company Name" path="contact.companyName" value={contactDraft.companyName} onChange={(_, value) => onUpdateDraft("companyName", value)} />
-            <EditorField label="Contact Name" path="contact.contactName" value={contactDraft.contactName} onChange={(_, value) => onUpdateDraft("contactName", value)} />
-            <EditorField label="Phone" path="contact.phone" value={contactDraft.phone} onChange={(_, value) => onUpdateDraft("phone", value)} />
-            <EditorField label="Email" path="contact.email" type="email" value={contactDraft.email} onChange={(_, value) => onUpdateDraft("email", value)} />
-            <EditorField
-              label="Contact Type"
-              path="contact.contactType"
-              value={contactDraft.contactType}
-              onChange={(_, value) => onUpdateDraft("contactType", value)}
-              options={CONTACT_TYPES}
-            />
-            <EditorField
-              label="Default Project Address"
-              path="contact.defaultProjectAddress"
-              value={contactDraft.defaultProjectAddress}
-              onChange={(_, value) => onUpdateDraft("defaultProjectAddress", value)}
-            />
-            <div className="contact-wide-field">
-              <EditorField
-                label="Billing Address"
-                path="contact.billingAddress"
-                value={contactDraft.billingAddress}
-                onChange={(_, value) => onUpdateDraft("billingAddress", value)}
-                multiline
-              />
-            </div>
-            <div className="contact-wide-field">
-              <EditorField
-                label="Notes"
-                path="contact.notes"
-                value={contactDraft.notes}
-                onChange={(_, value) => onUpdateDraft("notes", value)}
-                multiline
-              />
-            </div>
-          </div>
+          {isEditorOpen ? (
+            <>
+              <div className="contact-form-heading">
+                <p className="list-kicker">{editingExistingContact ? "Edit contact" : "New contact"}</p>
+                <h3>{contactHeading}</h3>
+              </div>
+              <div className="contact-form-grid">
+                <EditorField label="Company Name" path="contact.companyName" value={contactDraft.companyName} onChange={(_, value) => onUpdateDraft("companyName", value)} />
+                <EditorField label="Contact Name" path="contact.contactName" value={contactDraft.contactName} onChange={(_, value) => onUpdateDraft("contactName", value)} />
+                <EditorField label="Phone" path="contact.phone" value={contactDraft.phone} onChange={(_, value) => onUpdateDraft("phone", value)} />
+                <EditorField label="Email" path="contact.email" type="email" value={contactDraft.email} onChange={(_, value) => onUpdateDraft("email", value)} />
+                <EditorField
+                  label="Contact Type"
+                  path="contact.contactType"
+                  value={contactDraft.contactType}
+                  onChange={(_, value) => onUpdateDraft("contactType", value)}
+                  options={CONTACT_TYPES}
+                />
+                <EditorField
+                  label="Default Project Address"
+                  path="contact.defaultProjectAddress"
+                  value={contactDraft.defaultProjectAddress}
+                  onChange={(_, value) => onUpdateDraft("defaultProjectAddress", value)}
+                />
+                <div className="contact-wide-field">
+                  <EditorField
+                    label="Billing Address"
+                    path="contact.billingAddress"
+                    value={contactDraft.billingAddress}
+                    onChange={(_, value) => onUpdateDraft("billingAddress", value)}
+                    multiline
+                  />
+                </div>
+                <div className="contact-wide-field">
+                  <EditorField
+                    label="Notes"
+                    path="contact.notes"
+                    value={contactDraft.notes}
+                    onChange={(_, value) => onUpdateDraft("notes", value)}
+                    multiline
+                  />
+                </div>
+              </div>
 
-          {linkedProposals.length > 0 ? (
-            <div className="contact-linked-proposals">
-              <strong>Linked proposals</strong>
-              {linkedProposals.slice(0, 5).map((proposal) => (
-                <button key={proposal.id} type="button" onClick={() => onOpenProposal(proposal.id)}>
-                  {formatProposalNumberWithRevision(proposal)} - {proposal.project?.name || "Untitled project"}
+              {linkedProposals.length > 0 ? (
+                <div className="contact-linked-proposals">
+                  <strong>Linked proposals</strong>
+                  {linkedProposals.slice(0, 5).map((proposal) => (
+                    <button key={proposal.id} type="button" onClick={() => onOpenProposal(proposal.id)}>
+                      {formatProposalNumberWithRevision(proposal)} - {proposal.project?.name || "Untitled project"}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              <div className="contact-form-actions">
+                <button type="button" onClick={onSave}>
+                  Save Contact
                 </button>
-              ))}
+              </div>
+            </>
+          ) : (
+            <div className="contact-empty-state">
+              <p className="list-kicker">Contact details</p>
+              <h3>Select a contact to edit, or create a new contact.</h3>
+              <p>Saved contacts can fill client and GC information on new proposals without retyping.</p>
+              <button type="button" onClick={onNew}>
+                New Contact
+              </button>
             </div>
-          ) : null}
-
-          <div className="contact-form-actions">
-            <button type="button" onClick={onSave}>
-              Save Contact
-            </button>
-          </div>
+          )}
         </div>
 
         <div className="contacts-list-card">
@@ -4240,6 +4288,12 @@ function TemplatePicker({ currentTemplateId, onApplyTemplate, templates }) {
       <p className="template-picker-help">
         Choose a starter template to prefill common scope, specs, exclusions, terms, pricing rows, and packet defaults.
       </p>
+      <p className="template-picker-help template-picker-guide">
+        Choose a template to start faster, or continue editing the current draft.
+      </p>
+      <p className="starter-data-notice">
+        This draft starts with starter template data. Choose a template or edit fields before sending.
+      </p>
       <div className="template-card-grid">
         {templates.map((template) => (
           <article
@@ -4247,7 +4301,10 @@ function TemplatePicker({ currentTemplateId, onApplyTemplate, templates }) {
             key={template.id}
           >
             <div>
-              <span>{template.category}</span>
+              <div className="template-card-meta">
+                <span>{template.category}</span>
+                {currentTemplateId === template.id ? <strong>Applied</strong> : null}
+              </div>
               <h3>{template.name}</h3>
               <p>{template.description}</p>
               <small>{template.recommendedFor}</small>
