@@ -18,6 +18,7 @@ const storageKey = "last-yard-proposals-v1";
 const companySettingsStorageKey = "last-yard-company-settings-v1";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
+const SENT_METHODS = ["", "Email", "Text", "In Person", "Portal Upload", "Other"];
 
 const trustCards = [
   ["shield", "PROVEN RELIABILITY", "On time. On budget. Built to last."],
@@ -286,7 +287,7 @@ export default function App() {
       }
 
       if (path === "status") {
-        nextProposal.status = value;
+        return applyStatusTracking(nextProposal, value);
       }
 
       return nextProposal;
@@ -437,7 +438,7 @@ export default function App() {
   }
 
   function updateCurrentStatus(status) {
-    const updatedProposal = createEditableProposal({ ...proposalDraft, status, updatedAt: new Date().toISOString() });
+    const updatedProposal = applyStatusTracking({ ...proposalDraft, updatedAt: new Date().toISOString() }, status);
     setProposalDraft(updatedProposal);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
     setSaveMessage(`Marked as ${formatOptionLabel(status)}.`);
@@ -989,7 +990,7 @@ export default function App() {
           onOpenSettings={() => navigate("/settings")}
           onStatusFilterChange={setStatusFilter}
           onStatusChange={(proposal, status) => {
-            const updatedProposal = { ...proposal, status, updatedAt: new Date().toISOString() };
+            const updatedProposal = applyStatusTracking({ ...proposal, updatedAt: new Date().toISOString() }, status);
             setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
           }}
         />
@@ -1120,6 +1121,7 @@ function DashboardView({
 }) {
   const stats = buildDashboardStats(proposals);
   const recentProposals = getRecentProposals(proposals);
+  const followUpProposals = getFollowUpDueProposals(proposals);
 
   return (
     <section className="dashboard-panel no-print">
@@ -1177,6 +1179,28 @@ function DashboardView({
           <strong>{stats.lastUpdated ? stats.lastUpdated.project?.name || stats.lastUpdated.proposalNumber : "None yet"}</strong>
           {stats.lastUpdated ? <small>{formatDashboardDate(stats.lastUpdated.updatedAt || stats.lastUpdated.createdAt || stats.lastUpdated.proposalDate)}</small> : null}
         </div>
+      </div>
+
+      <div className="recent-proposals-card">
+        <div className="recent-heading">
+          <div>
+            <p className="list-kicker">Proposal follow-up</p>
+            <h3>Needs Follow-Up</h3>
+          </div>
+          <button type="button" onClick={onOpenList}>
+            View Pipeline
+          </button>
+        </div>
+
+        {followUpProposals.length > 0 ? (
+          <div className="follow-up-list">
+            {followUpProposals.map((proposal) => (
+              <FollowUpRow key={proposal.id} proposal={proposal} onOpen={onOpen} />
+            ))}
+          </div>
+        ) : (
+          <p className="empty-list-message">No sent proposals are due for follow-up today.</p>
+        )}
       </div>
 
       <div className="recent-proposals-card">
@@ -1265,6 +1289,35 @@ function ProposalSummaryRow({ compact = false, onDuplicate, onExport, onOpen, on
           </button>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function FollowUpRow({ onOpen, proposal }) {
+  const total = calculateProposalTotals(proposal).total;
+
+  return (
+    <div className="follow-up-row">
+      <div>
+        <strong>{formatProposalNumberWithRevision(proposal)}</strong>
+        <span>{proposal.project?.name || "Untitled project"}</span>
+        <small>{proposal.client?.companyName || proposal.client?.contactName || "No client entered"}</small>
+      </div>
+      <div>
+        <span>Follow-up</span>
+        <strong>{formatDisplayDate(proposal.followUpDate)}</strong>
+      </div>
+      <div>
+        <span>Total</span>
+        <strong>{formatCurrency(total)}</strong>
+      </div>
+      <div>
+        <span>Next action</span>
+        <small>{proposal.nextAction || "Follow up on proposal decision."}</small>
+      </div>
+      <button type="button" onClick={() => onOpen(proposal.id)}>
+        Open
+      </button>
     </div>
   );
 }
@@ -1374,7 +1427,11 @@ function ProposalListView({
       .join(" ")
       .toLowerCase();
     const matchesSearch = searchText.includes(searchQuery.trim().toLowerCase());
-    const matchesStatus = statusFilter === "all" || proposal.status === statusFilter;
+    const matchesStatus =
+      statusFilter === "all" ||
+      (statusFilter === "needs_follow_up" && isFollowUpDue(proposal)) ||
+      (statusFilter === "overdue_follow_up" && isFollowUpOverdue(proposal)) ||
+      proposal.status === statusFilter;
 
     return matchesSearch && matchesStatus;
   });
@@ -1408,6 +1465,8 @@ function ProposalListView({
           <span>Status</span>
           <select value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value)}>
             <option value="all">All statuses</option>
+            <option value="needs_follow_up">Needs Follow-Up</option>
+            <option value="overdue_follow_up">Overdue Follow-Up</option>
             {PROPOSAL_STATUSES.map((status) => (
               <option key={status} value={status}>
                 {formatOptionLabel(status)}
@@ -1429,6 +1488,8 @@ function ProposalListView({
               <th>Type</th>
               <th>Packet</th>
               <th>Status</th>
+              <th>Sent</th>
+              <th>Follow-Up</th>
               <th>Total</th>
               <th>Updated</th>
               <th>Actions</th>
@@ -1466,6 +1527,16 @@ function ProposalListView({
                         </option>
                       ))}
                     </select>
+                  </td>
+                  <td>{formatDisplayDate(proposal.sentDate) || "-"}</td>
+                  <td>
+                    {proposal.followUpDate ? (
+                      <Badge className={isFollowUpOverdue(proposal) ? "follow-up-overdue" : "follow-up-due"}>
+                        {formatDisplayDate(proposal.followUpDate)}
+                      </Badge>
+                    ) : (
+                      "-"
+                    )}
                   </td>
                   <td>{formatCurrency(total)}</td>
                   <td>{formatDashboardDate(proposal.updatedAt || proposal.createdAt || proposal.proposalDate)}</td>
@@ -1832,6 +1903,42 @@ function ProposalEditor({
           label="Revision Notes"
           path="revisionNotes"
           value={proposal.revisionNotes}
+          onChange={onChange}
+          multiline
+        />
+      </EditorSection>
+
+      <EditorSection title="Send / Follow-Up Tracking">
+        <EditorField label="Sent Date" path="sentDate" type="date" value={proposal.sentDate} onChange={onChange} />
+        <EditorField label="Sent To Name" path="sentToName" value={proposal.sentToName} onChange={onChange} />
+        <EditorField label="Sent To Email" path="sentToEmail" type="email" value={proposal.sentToEmail} onChange={onChange} />
+        <EditorField label="Sent To Phone" path="sentToPhone" value={proposal.sentToPhone} onChange={onChange} />
+        <EditorField label="Sent Method" path="sentMethod" value={proposal.sentMethod} onChange={onChange} options={SENT_METHODS} />
+        <EditorField label="Follow-Up Date" path="followUpDate" type="date" value={proposal.followUpDate} onChange={onChange} />
+        <EditorField
+          label="Last Follow-Up Date"
+          path="lastFollowUpDate"
+          type="date"
+          value={proposal.lastFollowUpDate}
+          onChange={onChange}
+        />
+        <EditorField label="Viewed Date" path="viewedDate" type="date" value={proposal.viewedDate} onChange={onChange} />
+        <EditorField label="Next Action" path="nextAction" value={proposal.nextAction} onChange={onChange} />
+        <EditorField
+          label="Decision Due Date"
+          path="decisionDueDate"
+          type="date"
+          value={proposal.decisionDueDate}
+          onChange={onChange}
+        />
+        <EditorField label="Follow-Up Notes" path="followUpNotes" value={proposal.followUpNotes} onChange={onChange} multiline />
+        <EditorField label="Outcome Reason" path="outcomeReason" value={proposal.outcomeReason} onChange={onChange} multiline />
+        <EditorField label="Approved Date" path="approvedDate" type="date" value={proposal.approvedDate} onChange={onChange} />
+        <EditorField label="Rejected Date" path="rejectedDate" type="date" value={proposal.rejectedDate} onChange={onChange} />
+        <EditorField
+          label="Internal Tracking Notes"
+          path="internalTrackingNotes"
+          value={proposal.internalTrackingNotes}
           onChange={onChange}
           multiline
         />
@@ -4265,6 +4372,7 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
     parentProposalId: "",
     previousTotal: "",
     revisedTotal: "",
+    ...getDefaultTrackingFields(),
     proposalDate: formatInputDate(today),
     validUntil: formatInputDate(validUntil),
     createdAt: today.toISOString(),
@@ -4313,6 +4421,7 @@ function createProposalRevisionDraft(sourceProposal, existingProposals = []) {
     ...cloneObject(source),
     id: createProposalId(),
     status: "draft",
+    ...getDefaultTrackingFields(),
     revisionNumber,
     revisionLabel,
     revisionDate: formatInputDate(now),
@@ -4401,6 +4510,7 @@ function duplicateProposalDraft(sourceProposal, existingProposals) {
     id: createProposalId(),
     proposalNumber: getNextProposalNumber(existingProposals, now),
     status: "draft",
+    ...getDefaultTrackingFields(),
     revisionNumber: 0,
     revisionLabel: "Rev 0",
     revisionDate: formatInputDate(now),
@@ -4523,6 +4633,90 @@ function isLatestRevision(proposal = {}, proposals = []) {
   return normalizeRevisionNumber(proposal.revisionNumber) >= latestRevisionNumber;
 }
 
+function applyStatusTracking(proposal = {}, status) {
+  const today = formatInputDate(new Date());
+  const nextProposal = {
+    ...proposal,
+    status,
+  };
+
+  if (status === "sent") {
+    if (!hasTextValue(nextProposal.sentDate)) {
+      nextProposal.sentDate = today;
+    }
+
+    nextProposal.sentToName = nextProposal.sentToName || nextProposal.client?.contactName || nextProposal.client?.companyName || "";
+    nextProposal.sentToEmail = nextProposal.sentToEmail || nextProposal.client?.email || "";
+    nextProposal.sentToPhone = nextProposal.sentToPhone || nextProposal.client?.phone || "";
+    nextProposal.sentMethod = nextProposal.sentMethod || "Email";
+  }
+
+  if (status === "approved" && !hasTextValue(nextProposal.approvedDate)) {
+    nextProposal.approvedDate = today;
+  }
+
+  if (status === "rejected" && !hasTextValue(nextProposal.rejectedDate)) {
+    nextProposal.rejectedDate = today;
+  }
+
+  return createEditableProposal(nextProposal);
+}
+
+function getDefaultTrackingFields() {
+  return {
+    sentDate: "",
+    sentToName: "",
+    sentToEmail: "",
+    sentToPhone: "",
+    sentMethod: "",
+    followUpDate: "",
+    followUpNotes: "",
+    lastFollowUpDate: "",
+    nextAction: "",
+    outcomeReason: "",
+    approvedDate: "",
+    rejectedDate: "",
+    viewedDate: "",
+    decisionDueDate: "",
+    internalTrackingNotes: "",
+  };
+}
+
+function resetTrackingFields(proposal = {}) {
+  return {
+    ...proposal,
+    ...getDefaultTrackingFields(),
+  };
+}
+
+function getFollowUpDueProposals(proposals = []) {
+  return proposals
+    .filter((proposal) => isFollowUpDue(proposal))
+    .sort((a, b) => getDateOnlyTimestamp(a.followUpDate) - getDateOnlyTimestamp(b.followUpDate));
+}
+
+function getOverdueFollowUpProposals(proposals = []) {
+  return proposals.filter((proposal) => isFollowUpOverdue(proposal));
+}
+
+function isFollowUpDue(proposal = {}) {
+  return proposal.status === "sent" && hasTextValue(proposal.followUpDate) && getDateOnlyTimestamp(proposal.followUpDate) <= getTodayTimestamp();
+}
+
+function isFollowUpOverdue(proposal = {}) {
+  return proposal.status === "sent" && hasTextValue(proposal.followUpDate) && getDateOnlyTimestamp(proposal.followUpDate) < getTodayTimestamp();
+}
+
+function getTodayTimestamp() {
+  return getDateOnlyTimestamp(formatInputDate(new Date()));
+}
+
+function getDateOnlyTimestamp(value) {
+  const date = new Date(`${value}T00:00:00`);
+
+  return Number.isNaN(date.valueOf()) ? Number.POSITIVE_INFINITY : date.valueOf();
+}
+
 function formatDashboardDate(value) {
   if (!value) {
     return "Not saved";
@@ -4551,6 +4745,10 @@ function buildDashboardStats(proposals = []) {
   );
   const totalValue = proposals.reduce((sum, proposal) => sum + calculateProposalTotals(proposal).total, 0);
   const lastUpdated = getRecentProposals(proposals, 1)[0] || null;
+  const followUpDueCount = getFollowUpDueProposals(proposals).length;
+  const overdueFollowUpCount = getOverdueFollowUpProposals(proposals).length;
+  const decidedCount = (statusCounts.approved || 0) + (statusCounts.rejected || 0);
+  const winRate = decidedCount > 0 ? Math.round(((statusCounts.approved || 0) / decidedCount) * 100) : 0;
 
   return {
     cards: [
@@ -4560,6 +4758,11 @@ function buildDashboardStats(proposals = []) {
       { label: "Approved", value: statusCounts.approved || 0 },
       { label: "Rejected", value: statusCounts.rejected || 0 },
       { label: "Expired", value: statusCounts.expired || 0 },
+      { label: "Proposals Sent", value: statusCounts.sent || 0 },
+      { label: "Proposals Approved", value: statusCounts.approved || 0 },
+      { label: "Needs Follow-Up", value: followUpDueCount },
+      { label: "Overdue Follow-Up", value: overdueFollowUpCount },
+      { label: "Win Rate", value: decidedCount > 0 ? `${winRate}%` : "-" },
     ],
     fullPacketCount: proposals.filter((proposal) => getPacketModeLabel(proposal) === "Full GC Packet").length,
     lastUpdated,
@@ -4921,6 +5124,22 @@ function createEditableProposal(seedProposal) {
     revisionNotes: proposal.revisionNotes || "",
     parentProposalId: proposal.parentProposalId || "",
     previousTotal: proposal.previousTotal ?? "",
+    ...getDefaultTrackingFields(),
+    sentDate: proposal.sentDate || "",
+    sentToName: proposal.sentToName || "",
+    sentToEmail: proposal.sentToEmail || "",
+    sentToPhone: proposal.sentToPhone || "",
+    sentMethod: SENT_METHODS.includes(proposal.sentMethod) ? proposal.sentMethod : "",
+    followUpDate: proposal.followUpDate || "",
+    followUpNotes: proposal.followUpNotes || "",
+    lastFollowUpDate: proposal.lastFollowUpDate || "",
+    nextAction: proposal.nextAction || "",
+    outcomeReason: proposal.outcomeReason || "",
+    approvedDate: proposal.approvedDate || "",
+    rejectedDate: proposal.rejectedDate || "",
+    viewedDate: proposal.viewedDate || "",
+    decisionDueDate: proposal.decisionDueDate || "",
+    internalTrackingNotes: proposal.internalTrackingNotes || "",
     company: {
       ...SEED_PROPOSAL.company,
       ...(proposal.company || {}),
@@ -5539,6 +5758,10 @@ function buildTermsCopy(terms) {
 }
 
 function formatOptionLabel(value) {
+  if (!value) {
+    return "Select";
+  }
+
   const labels = {
     add_alternate: "Add Alternate",
     allowance: "Allowance",
