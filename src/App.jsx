@@ -216,6 +216,7 @@ export default function App() {
   const [contactTypeFilter, setContactTypeFilter] = useState("all");
   const [contactMessage, setContactMessage] = useState("");
   const [assetUploadMessage, setAssetUploadMessage] = useState("");
+  const [storageDiagnostics, setStorageDiagnostics] = useState(() => createStorageDiagnosticsState());
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
   const [authMessage, setAuthMessage] = useState("");
@@ -1349,7 +1350,24 @@ export default function App() {
       return;
     }
 
-    setAssetUploadMessage(canUseCloudSync(authUser) ? `Uploading photo ${index + 1} to Supabase Storage...` : `Saving photo ${index + 1} locally.`);
+    const attemptedAt = new Date().toISOString();
+    const uploadType = `Featured photo ${index + 1}`;
+    const localReason = getAssetLocalStorageReason(authUser);
+    setStorageDiagnostics((currentDiagnostics) => ({
+      ...currentDiagnostics,
+      companyId: cloudSync.companyId || currentDiagnostics.companyId,
+      errorMessage: "",
+      lastAttemptedAt: attemptedAt,
+      lastFileName: file.name || `photo-${index + 1}`,
+      lastFileSize: file.size || 0,
+      lastPublicUrl: "",
+      lastStatus: canUseCloudSync(authUser) ? "uploading" : "local fallback",
+      lastStoragePath: "",
+      lastUploadType: uploadType,
+    }));
+    setAssetUploadMessage(
+      canUseCloudSync(authUser) ? `Uploading image to cloud: featured/photo-${index + 1}-...` : `Saved locally only. Reason: ${localReason}`,
+    );
 
     try {
       const asset = canUseCloudSync(authUser)
@@ -1384,16 +1402,89 @@ export default function App() {
 
       if (canUseCloudSync(authUser)) {
         await syncSingleProposalToCloud(nextProposal, "Photo uploaded to Supabase Storage and proposal synced.");
-        setAssetUploadMessage(`Photo ${index + 1} uploaded to cloud storage.`);
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          companyId: asset.companyId || currentDiagnostics.companyId,
+          errorMessage: "",
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || asset.fileName || `photo-${index + 1}`,
+          lastFileSize: file.size || 0,
+          lastPublicUrl: asset.publicUrl || "",
+          lastStatus: "success",
+          lastStoragePath: asset.storagePath || "",
+          lastUploadType: uploadType,
+        }));
+        setAssetUploadMessage(`Image uploaded to Supabase Storage: ${asset.storagePath}`);
       } else {
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          errorMessage: `Saved locally only. Reason: ${localReason}`,
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || asset.fileName || `photo-${index + 1}`,
+          lastFileSize: file.size || 0,
+          lastPublicUrl: "",
+          lastStatus: "local fallback",
+          lastStoragePath: "",
+          lastUploadType: uploadType,
+        }));
         setAssetUploadMessage(
           isSupabaseConfigured
-            ? `Photo ${index + 1} saved locally. Sign in to upload images to cloud storage.`
-            : `Photo ${index + 1} saved locally.`,
+            ? `Saved locally only. Reason: ${localReason}`
+            : `Saved locally only. Reason: ${localReason}`,
         );
       }
     } catch (error) {
-      setAssetUploadMessage(`Photo upload failed: ${error.message}`);
+      console.error("Cloud image upload failed:", error);
+      const errorMessage = formatStorageUploadError(error);
+      try {
+        const localAsset = await createLocalImageAsset(file);
+        const projectPhotos = normalizeProjectPhotos(proposalDraft.projectPhotos).map((photo, photoIndex) =>
+          photoIndex === index
+            ? normalizeProjectPhoto({
+                ...photo,
+                ...localAsset,
+                caption: photo.caption || photo.label,
+                label: photo.label,
+              }, photoIndex)
+            : photo,
+        );
+        const nextProposal = createEditableProposal({
+          ...proposalDraft,
+          projectPhotos,
+          updatedAt: new Date().toISOString(),
+        });
+
+        setProposalDirty(false);
+        setProposalDraft(nextProposal);
+        setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          errorMessage,
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || localAsset.fileName || `photo-${index + 1}`,
+          lastFileSize: file.size || 0,
+          lastPublicUrl: "",
+          lastStatus: "local fallback",
+          lastStoragePath: "",
+          lastUploadType: uploadType,
+        }));
+        setAssetUploadMessage(`Cloud upload failed: ${errorMessage}. Saved locally only. Reason: cloud upload failed.`);
+      } catch (localError) {
+        console.error("Local image fallback failed:", localError);
+        const localErrorMessage = formatStorageUploadError(localError);
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          errorMessage: `${errorMessage} Local fallback failed: ${localErrorMessage}`,
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || `photo-${index + 1}`,
+          lastFileSize: file.size || 0,
+          lastPublicUrl: "",
+          lastStatus: "failed",
+          lastStoragePath: "",
+          lastUploadType: uploadType,
+        }));
+        setAssetUploadMessage(`Cloud upload failed: ${errorMessage}. Local fallback failed: ${localErrorMessage}`);
+      }
     }
   }
 
@@ -1417,8 +1508,28 @@ export default function App() {
 
     const sheets = normalizePlanSheets(proposalDraft.planSheets);
     const sheet = sheets[index] || {};
+    const attemptedAt = new Date().toISOString();
+    const uploadType = "Plan sheet image";
+    const localReason = getAssetLocalStorageReason(authUser);
+    const planFileStem = sanitizeStoragePathSegment(sheet.id || sheet.matchKey || `plan-${index + 1}`);
 
-    setAssetUploadMessage(canUseCloudSync(authUser) ? "Uploading plan image to Supabase Storage..." : "Saving plan image locally.");
+    setStorageDiagnostics((currentDiagnostics) => ({
+      ...currentDiagnostics,
+      companyId: cloudSync.companyId || currentDiagnostics.companyId,
+      errorMessage: "",
+      lastAttemptedAt: attemptedAt,
+      lastFileName: file.name || planFileStem,
+      lastFileSize: file.size || 0,
+      lastPublicUrl: "",
+      lastStatus: canUseCloudSync(authUser) ? "uploading" : "local fallback",
+      lastStoragePath: "",
+      lastUploadType: uploadType,
+    }));
+    setAssetUploadMessage(
+      canUseCloudSync(authUser)
+        ? `Uploading image to cloud: plans/${planFileStem}-...`
+        : `Saved locally only. Reason: ${localReason}`,
+    );
 
     try {
       const asset = canUseCloudSync(authUser)
@@ -1452,14 +1563,187 @@ export default function App() {
 
       if (canUseCloudSync(authUser)) {
         await syncSingleProposalToCloud(nextProposal, "Plan image uploaded to Supabase Storage and proposal synced.");
-        setAssetUploadMessage("Plan image uploaded to cloud storage.");
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          companyId: asset.companyId || currentDiagnostics.companyId,
+          errorMessage: "",
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || asset.fileName || planFileStem,
+          lastFileSize: file.size || 0,
+          lastPublicUrl: asset.publicUrl || "",
+          lastStatus: "success",
+          lastStoragePath: asset.storagePath || "",
+          lastUploadType: uploadType,
+        }));
+        setAssetUploadMessage(`Image uploaded to Supabase Storage: ${asset.storagePath}`);
       } else {
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          errorMessage: `Saved locally only. Reason: ${localReason}`,
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || asset.fileName || planFileStem,
+          lastFileSize: file.size || 0,
+          lastPublicUrl: "",
+          lastStatus: "local fallback",
+          lastStoragePath: "",
+          lastUploadType: uploadType,
+        }));
         setAssetUploadMessage(
-          isSupabaseConfigured ? "Plan image saved locally. Sign in to upload images to cloud storage." : "Plan image saved locally.",
+          isSupabaseConfigured
+            ? `Saved locally only. Reason: ${localReason}`
+            : `Saved locally only. Reason: ${localReason}`,
         );
       }
     } catch (error) {
-      setAssetUploadMessage(`Plan image upload failed: ${error.message}`);
+      console.error("Cloud image upload failed:", error);
+      const errorMessage = formatStorageUploadError(error);
+      try {
+        const localAsset = await createLocalImageAsset(file);
+        const planSheets = sheets.map((currentSheet, sheetIndex) =>
+          sheetIndex === index
+            ? normalizePlanSheet({
+                ...currentSheet,
+                ...localAsset,
+                imageSrc: localAsset.src,
+              }, sheetIndex)
+            : currentSheet,
+        );
+        const nextProposal = createEditableProposal({
+          ...proposalDraft,
+          planSheets,
+          updatedAt: new Date().toISOString(),
+        });
+
+        setProposalDirty(false);
+        setProposalDraft(nextProposal);
+        setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          errorMessage,
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || localAsset.fileName || planFileStem,
+          lastFileSize: file.size || 0,
+          lastPublicUrl: "",
+          lastStatus: "local fallback",
+          lastStoragePath: "",
+          lastUploadType: uploadType,
+        }));
+        setAssetUploadMessage(`Cloud upload failed: ${errorMessage}. Saved locally only. Reason: cloud upload failed.`);
+      } catch (localError) {
+        console.error("Local image fallback failed:", localError);
+        const localErrorMessage = formatStorageUploadError(localError);
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          errorMessage: `${errorMessage} Local fallback failed: ${localErrorMessage}`,
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || planFileStem,
+          lastFileSize: file.size || 0,
+          lastPublicUrl: "",
+          lastStatus: "failed",
+          lastStoragePath: "",
+          lastUploadType: uploadType,
+        }));
+        setAssetUploadMessage(`Cloud upload failed: ${errorMessage}. Local fallback failed: ${localErrorMessage}`);
+      }
+    }
+  }
+
+  async function testStorageUpload() {
+    const attemptedAt = new Date().toISOString();
+    const timestamp = Date.now();
+    const fileName = `test-upload-${timestamp}.txt`;
+    const testFile = new Blob([`Last Yard storage diagnostic ${new Date(timestamp).toISOString()}`], {
+      type: "text/plain",
+    });
+
+    setStorageDiagnostics((currentDiagnostics) => ({
+      ...currentDiagnostics,
+      companyId: cloudSync.companyId || currentDiagnostics.companyId,
+      errorMessage: "",
+      lastAttemptedAt: attemptedAt,
+      lastFileName: fileName,
+      lastFileSize: testFile.size,
+      lastPublicUrl: "",
+      lastStatus: "uploading",
+      lastStoragePath: "",
+      lastUploadType: "Storage diagnostic",
+    }));
+
+    if (!isSupabaseConfigured || !supabase) {
+      const errorMessage = "Supabase is not configured.";
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        errorMessage,
+        lastStatus: "failed",
+      }));
+      setSettingsMessage(`Test Storage Upload failed: ${errorMessage}`);
+      return;
+    }
+
+    if (!authUser?.id) {
+      const errorMessage = "Sign in required to test Supabase Storage upload.";
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        errorMessage,
+        lastStatus: "failed",
+      }));
+      setSettingsMessage(`Test Storage Upload failed: ${errorMessage}`);
+      return;
+    }
+
+    try {
+      const activeUser = await getActiveSupabaseUser();
+      const companyRecord = await ensureCloudCompany(activeUser, companySettings);
+      const storagePath = `company/${companyRecord.id}/diagnostics/${fileName}`;
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        companyId: companyRecord.id,
+        lastStoragePath: storagePath,
+      }));
+
+      const { data, error } = await supabase.storage.from(proposalAssetsBucket).upload(storagePath, testFile, {
+        cacheControl: "60",
+        contentType: "text/plain",
+        upsert: false,
+      });
+
+      if (error) {
+        console.error("Supabase Storage diagnostic upload failed:", {
+          bucket: proposalAssetsBucket,
+          error,
+          path: storagePath,
+        });
+        throw new Error(formatStorageUploadError(error));
+      }
+
+      const uploadedPath = data?.path || storagePath;
+      const publicUrl = getStoragePublicUrl(uploadedPath);
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        companyId: companyRecord.id,
+        errorMessage: "",
+        lastAttemptedAt: attemptedAt,
+        lastFileName: fileName,
+        lastFileSize: testFile.size,
+        lastPublicUrl: publicUrl,
+        lastStatus: "success",
+        lastStoragePath: uploadedPath,
+        lastUploadType: "Storage diagnostic",
+      }));
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+      }));
+      setSettingsMessage(`Test Storage Upload succeeded: ${uploadedPath}`);
+    } catch (error) {
+      console.error("Supabase Storage diagnostic upload failed:", error);
+      const errorMessage = formatStorageUploadError(error);
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        errorMessage,
+        lastStatus: "failed",
+      }));
+      setSettingsMessage(`Test Storage Upload failed: ${errorMessage}`);
     }
   }
 
@@ -1828,6 +2112,7 @@ export default function App() {
           cloudSync={cloudSync}
           message={settingsMessage}
           settings={settingsDraft}
+          storageDiagnostics={storageDiagnostics}
           onOpenLogin={() => navigate("/login")}
           onPullCloudData={pullCloudData}
           onPullCloudProposals={pullCloudProposals}
@@ -1837,6 +2122,7 @@ export default function App() {
           onSyncContacts={syncContactsToCloud}
           onSyncProposals={syncProposalsNow}
           onSyncSettings={syncSettingsToCloud}
+          onTestStorageUpload={testStorageUpload}
           onBackToList={() => navigate("/proposals")}
           onChange={updateSettingsDraft}
           onReset={resetSettingsDraft}
@@ -2812,6 +3098,7 @@ function CompanySettingsView({
   cloudSync,
   message,
   settings,
+  storageDiagnostics,
   onBackToList,
   onChange,
   onOpenLogin,
@@ -2825,6 +3112,7 @@ function CompanySettingsView({
   onSyncContacts,
   onSyncProposals,
   onSyncSettings,
+  onTestStorageUpload,
 }) {
   function handleLogoUpload(file) {
     if (!file) {
@@ -2864,6 +3152,7 @@ function CompanySettingsView({
         authMessage={authMessage}
         authUser={authUser}
         cloudSync={cloudSync}
+        storageDiagnostics={storageDiagnostics}
         onOpenLogin={onOpenLogin}
         onPullCloudData={onPullCloudData}
         onPullCloudProposals={onPullCloudProposals}
@@ -2873,6 +3162,7 @@ function CompanySettingsView({
         onSyncContacts={onSyncContacts}
         onSyncProposals={onSyncProposals}
         onSyncSettings={() => onSyncSettings(settings)}
+        onTestStorageUpload={onTestStorageUpload}
       />
 
       <div className="settings-grid">
@@ -2947,6 +3237,7 @@ function CloudStatusCard({
   authMessage,
   authUser,
   cloudSync,
+  storageDiagnostics,
   onOpenLogin,
   onPullCloudData,
   onPullCloudProposals,
@@ -2956,6 +3247,7 @@ function CloudStatusCard({
   onSyncContacts,
   onSyncProposals,
   onSyncSettings,
+  onTestStorageUpload,
 }) {
   const cloudActionsDisabled = authLoading || cloudSync.loading || !canUseCloudSync(authUser);
 
@@ -3003,6 +3295,13 @@ function CloudStatusCard({
       {authUser ? <p>Current user: {authUser.email}</p> : null}
       {authMessage ? <p>{authMessage}</p> : null}
       {cloudSync.message ? <p>{cloudSync.message}</p> : null}
+      <StorageDiagnosticsPanel
+        authLoading={authLoading}
+        authUser={authUser}
+        cloudSync={cloudSync}
+        diagnostics={storageDiagnostics}
+        onTestStorageUpload={onTestStorageUpload}
+      />
       {isSupabaseConfigured ? (
         <div className="cloud-status-actions">
           {authUser ? (
@@ -3040,6 +3339,83 @@ function CloudStatusCard({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function StorageDiagnosticsPanel({ authLoading, authUser, cloudSync, diagnostics, onTestStorageUpload }) {
+  const assetStorageMode = canUseCloudSync(authUser) ? "cloud" : "local";
+  const companyId = diagnostics.companyId || cloudSync.companyId || "";
+
+  return (
+    <div className="storage-diagnostics-panel no-print">
+      <div className="storage-diagnostics-heading">
+        <div>
+          <p className="list-kicker">Asset storage</p>
+          <h4>Storage Diagnostics</h4>
+        </div>
+        <button type="button" onClick={onTestStorageUpload} disabled={authLoading}>
+          Test Storage Upload
+        </button>
+      </div>
+      <div className="storage-diagnostics-grid">
+        <div>
+          <span>Supabase configured</span>
+          <strong>{isSupabaseConfigured ? "Yes" : "No"}</strong>
+        </div>
+        <div>
+          <span>Signed in</span>
+          <strong>{isSupabaseConfigured && authUser ? "Yes" : "No"}</strong>
+        </div>
+        <div>
+          <span>User id</span>
+          <strong>{authUser?.id || "-"}</strong>
+        </div>
+        <div>
+          <span>Company id</span>
+          <strong>{companyId || "-"}</strong>
+        </div>
+        <div>
+          <span>Storage bucket name</span>
+          <strong>{proposalAssetsBucket}</strong>
+        </div>
+        <div>
+          <span>Asset storage mode</span>
+          <strong>{assetStorageMode}</strong>
+        </div>
+        <div>
+          <span>Last upload attempted at</span>
+          <strong>{formatCloudSyncTime(diagnostics.lastAttemptedAt)}</strong>
+        </div>
+        <div>
+          <span>Last upload type</span>
+          <strong>{diagnostics.lastUploadType || "-"}</strong>
+        </div>
+        <div>
+          <span>Last upload file name</span>
+          <strong>{diagnostics.lastFileName || "-"}</strong>
+        </div>
+        <div>
+          <span>Last upload file size</span>
+          <strong>{formatAssetFileSize(diagnostics.lastFileSize)}</strong>
+        </div>
+        <div>
+          <span>Last upload status</span>
+          <strong>{diagnostics.lastStatus || "-"}</strong>
+        </div>
+        <div className="storage-diagnostics-wide">
+          <span>Last upload storage path</span>
+          <strong>{diagnostics.lastStoragePath || "-"}</strong>
+        </div>
+        <div className="storage-diagnostics-wide">
+          <span>Last upload public URL</span>
+          <strong>{diagnostics.lastPublicUrl || "-"}</strong>
+        </div>
+        <div className="storage-diagnostics-wide">
+          <span>Last upload error message</span>
+          <strong>{diagnostics.errorMessage || "-"}</strong>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -5529,8 +5905,34 @@ function createCloudSyncState() {
   };
 }
 
+function createStorageDiagnosticsState() {
+  return {
+    companyId: "",
+    errorMessage: "",
+    lastAttemptedAt: "",
+    lastFileName: "",
+    lastFileSize: "",
+    lastPublicUrl: "",
+    lastStatus: "not tested",
+    lastStoragePath: "",
+    lastUploadType: "",
+  };
+}
+
 function canUseCloudSync(authUser) {
   return Boolean(isSupabaseConfigured && supabase && authUser?.id);
+}
+
+function getAssetLocalStorageReason(authUser) {
+  if (!isSupabaseConfigured || !supabase) {
+    return "Supabase is not configured.";
+  }
+
+  if (!authUser?.id) {
+    return "Sign in to upload images to cloud.";
+  }
+
+  return "cloud storage is unavailable.";
 }
 
 function getCloudSignInMessage() {
@@ -5560,6 +5962,24 @@ function formatCloudSyncTime(value) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(date);
+}
+
+function formatAssetFileSize(value) {
+  const bytes = Number(value);
+
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return "-";
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function getImageAssetSource(asset = {}) {
@@ -5801,34 +6221,72 @@ async function uploadProposalAssetToCloud(file, { area, companySettings, company
     throw new Error("Choose an image file.");
   }
 
-  const companyRecord = await ensureCloudCompany(companyUser, companySettings);
+  const activeUser = await getActiveSupabaseUser();
+  const companyRecord = await ensureCloudCompany(activeUser, companySettings);
   const safeArea = area === "plans" ? "plans" : "featured";
   const timestamp = Date.now();
   const extension = getFileExtension(file);
   const safeFileStem = sanitizeStoragePathSegment(fileStem || file.name || "image");
-  const storagePath = `company/${companyRecord.id}/proposals/${sanitizeStoragePathSegment(proposalId || "unsaved")}/${safeArea}/${safeFileStem}-${timestamp}.${extension}`;
-  const { error } = await supabase.storage.from(proposalAssetsBucket).upload(storagePath, file, {
+  const proposalPathSegment = sanitizeStoragePathSegment(proposalId || "unsaved");
+  const fileName = `${safeFileStem}-${timestamp}.${extension}`;
+  const storagePath = `company/${companyRecord.id}/proposals/${proposalPathSegment}/${safeArea}/${fileName}`;
+  const uploadOptions = {
     cacheControl: "3600",
     contentType: file.type || "image/jpeg",
-    upsert: true,
-  });
+    upsert: false,
+  };
+  const { data, error } = await supabase.storage.from(proposalAssetsBucket).upload(storagePath, file, uploadOptions);
 
   if (error) {
-    throw error;
+    console.error("Supabase Storage upload failed:", {
+      bucket: proposalAssetsBucket,
+      error,
+      path: storagePath,
+    });
+    throw new Error(formatStorageUploadError(error));
   }
 
-  const publicUrl = getStoragePublicUrl(storagePath);
+  if (!data?.path) {
+    const missingPathError = new Error("Supabase Storage upload did not return an uploaded file path.");
+    console.error("Supabase Storage upload returned no file path:", {
+      bucket: proposalAssetsBucket,
+      data,
+      path: storagePath,
+    });
+    throw missingPathError;
+  }
+
+  const uploadedPath = data.path || storagePath;
+  const publicUrl = getStoragePublicUrl(uploadedPath);
 
   return {
+    companyId: companyRecord.id,
     dataUrl: "",
     fileName: file.name || `${safeFileStem}.${extension}`,
     fileType: file.type || "image/jpeg",
     publicUrl,
     signedUrl: "",
     src: publicUrl,
-    storagePath,
+    storagePath: uploadedPath,
     uploadedAt: new Date().toISOString(),
   };
+}
+
+async function getActiveSupabaseUser() {
+  const { data, error } = await supabase.auth.getSession();
+
+  if (error) {
+    console.error("Supabase auth session lookup failed before asset upload:", error);
+    throw new Error(formatStorageUploadError(error));
+  }
+
+  const user = data?.session?.user;
+
+  if (!user?.id) {
+    throw new Error("Sign in to upload images to cloud storage.");
+  }
+
+  return user;
 }
 
 async function createLocalImageAsset(file) {
@@ -5881,6 +6339,34 @@ function sanitizeStoragePathSegment(value) {
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80) || "asset";
+}
+
+function formatStorageUploadError(error) {
+  if (!error) {
+    return "Unknown storage upload error.";
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (hasTextValue(error.message)) {
+    return error.message;
+  }
+
+  if (hasTextValue(error.error_description)) {
+    return error.error_description;
+  }
+
+  if (hasTextValue(error.error)) {
+    return error.error;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "Unknown storage upload error.";
+  }
 }
 
 async function loadOrMergeCloudProposals(companyId, localProposals = []) {

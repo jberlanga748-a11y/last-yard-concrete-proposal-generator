@@ -318,58 +318,60 @@ values ('last-yard-proposal-assets', 'last-yard-proposal-assets', true)
 on conflict (id) do update set public = true;
 
 drop policy if exists "Public can read proposal assets" on storage.objects;
+drop policy if exists "Company owners can upload proposal assets" on storage.objects;
+drop policy if exists "Company owners can update proposal assets" on storage.objects;
+drop policy if exists "Company owners can delete proposal assets" on storage.objects;
+drop function if exists public.current_user_owns_company(text);
+
 create policy "Public can read proposal assets"
 on storage.objects for select
 using (bucket_id = 'last-yard-proposal-assets');
 
-drop policy if exists "Company owners can upload proposal assets" on storage.objects;
 create policy "Company owners can upload proposal assets"
 on storage.objects for insert
 with check (
   bucket_id = 'last-yard-proposal-assets'
-  and (storage.foldername(name))[1] = 'company'
+  and split_part(name, '/', 1) = 'company'
   and exists (
     select 1
     from public.companies
-    where companies.id::text = (storage.foldername(name))[2]
+    where companies.id::text = split_part(name, '/', 2)
       and companies.owner_id = auth.uid()
   )
 );
 
-drop policy if exists "Company owners can update proposal assets" on storage.objects;
 create policy "Company owners can update proposal assets"
 on storage.objects for update
 using (
   bucket_id = 'last-yard-proposal-assets'
-  and (storage.foldername(name))[1] = 'company'
+  and split_part(name, '/', 1) = 'company'
   and exists (
     select 1
     from public.companies
-    where companies.id::text = (storage.foldername(name))[2]
+    where companies.id::text = split_part(name, '/', 2)
       and companies.owner_id = auth.uid()
   )
 )
 with check (
   bucket_id = 'last-yard-proposal-assets'
-  and (storage.foldername(name))[1] = 'company'
+  and split_part(name, '/', 1) = 'company'
   and exists (
     select 1
     from public.companies
-    where companies.id::text = (storage.foldername(name))[2]
+    where companies.id::text = split_part(name, '/', 2)
       and companies.owner_id = auth.uid()
   )
 );
 
-drop policy if exists "Company owners can delete proposal assets" on storage.objects;
 create policy "Company owners can delete proposal assets"
 on storage.objects for delete
 using (
   bucket_id = 'last-yard-proposal-assets'
-  and (storage.foldername(name))[1] = 'company'
+  and split_part(name, '/', 1) = 'company'
   and exists (
     select 1
     from public.companies
-    where companies.id::text = (storage.foldername(name))[2]
+    where companies.id::text = split_part(name, '/', 2)
       and companies.owner_id = auth.uid()
   )
 );
