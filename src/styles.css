@@ -477,6 +477,95 @@ h4 {
   resize: vertical;
 }
 
+.send-submission-panel {
+  display: grid;
+  width: 100%;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.send-submission-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.send-submission-heading strong,
+.send-submission-panel > div > strong {
+  display: block;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.send-submission-heading span,
+.send-submission-panel > div > span,
+.send-submission-heading em {
+  color: #556171;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.send-submission-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.send-submission-grid label {
+  display: grid;
+  gap: 5px;
+}
+
+.send-submission-grid input,
+.send-submission-grid select,
+.send-submission-grid textarea {
+  border: 1px solid #c9d1dc;
+  border-radius: 7px;
+  background: white;
+  padding: 8px 9px;
+  color: var(--ink);
+  font: inherit;
+}
+
+.send-submission-grid textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.send-submission-wide {
+  grid-column: 1 / -1;
+}
+
+.send-submission-warning {
+  margin: 0;
+  border: 1px solid rgba(201, 166, 74, 0.55);
+  border-radius: 8px;
+  background: rgba(201, 166, 74, 0.12);
+  padding: 8px 10px;
+  color: #8a5a10;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.send-submission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.send-submission-actions button {
+  border-radius: 9px;
+  background: var(--blue);
+  color: white;
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .list-toolbar button,
 .settings-actions button,
 .proposal-actions button,

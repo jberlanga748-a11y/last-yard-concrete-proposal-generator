@@ -116,6 +116,14 @@ const CONTACT_TYPES = [
   "Other",
 ];
 
+const EMAIL_TEMPLATE_OPTIONS = [
+  ["gc_prime_submission", "GC / Prime proposal submission"],
+  ["revised_submission", "Revised proposal submission"],
+  ["rfi_follow_up", "RFI / clarification follow-up"],
+  ["submitted_follow_up", "Follow-up after submitted proposal"],
+  ["no_bid_decline", "No-bid / decline politely"],
+];
+
 const companyCloudDeps = {
   getDefaultCompanySettings,
   normalizeCompanySettings,
@@ -1982,6 +1990,69 @@ export default function App() {
     );
   }
 
+  async function markSendPackageSent(sendDraft) {
+    const packetRecord = normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).find((record) => record.id === sendDraft.packetRecordId);
+
+    if (!packetRecord) {
+      setSaveMessage("Choose a packet record before marking sent.");
+      return;
+    }
+
+    if (!hasPacketPdfAttachment(packetRecord)) {
+      setSaveMessage("Attach submitted PDF before marking sent.");
+      return;
+    }
+
+    const sendRecord = createSendRecord(proposalDraft, packetRecord, sendDraft, authUser);
+    const updatedProposal = createEditableProposal({
+      ...proposalDraft,
+      status: "sent",
+      sentDate: sendRecord.sentDate,
+      sentToName: sendRecord.sentToName,
+      sentToEmail: sendRecord.sentToEmail,
+      sentMethod: sendRecord.sentMethod,
+      followUpDate: sendRecord.followUpDate,
+      nextAction: sendRecord.nextAction,
+      sendRecords: [sendRecord, ...normalizeSendRecords(proposalDraft.sendRecords)],
+      submittedPacketRecords: normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).map((record) =>
+        record.id === packetRecord.id
+          ? {
+              ...record,
+              status: "sent",
+              sentDate: sendRecord.sentDate,
+              sentToName: sendRecord.sentToName,
+              sentToEmail: sendRecord.sentToEmail,
+              sentMethod: sendRecord.sentMethod,
+            }
+          : record,
+      ),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await persistProposalAfterPacketChange(
+      updatedProposal,
+      "Send package marked as sent locally.",
+      "Send package marked as sent and synced to cloud.",
+    );
+
+    const linkedBidUpdates = savedBids.map((bid) =>
+      bid.proposalId === updatedProposal.id
+        ? normalizeBid({
+            ...bid,
+            bidStatus: "Submitted",
+            followUpDate: bid.followUpDate || sendRecord.followUpDate,
+            nextStep: bid.nextStep || sendRecord.nextAction,
+            submittedPacketRecordId: packetRecord.id,
+            updatedAt: new Date().toISOString(),
+          })
+        : bid,
+    );
+
+    if (JSON.stringify(linkedBidUpdates) !== JSON.stringify(savedBids)) {
+      await commitBids(linkedBidUpdates, `Updated linked bid after sending ${formatProposalNumberWithRevision(updatedProposal)} locally.`);
+    }
+  }
+
   async function persistProposalAfterPacketChange(updatedProposal, localMessage, cloudMessage) {
     const savedAt = new Date().toISOString();
 
@@ -3388,6 +3459,7 @@ export default function App() {
             </>
           ) : (
               <ProposalActionBar
+                contacts={savedContacts}
                 isPrintView={isPrintView}
                 proposal={proposalDraft}
                 revisionHistory={getRevisionHistory(proposalDraft, savedProposals)}
@@ -3399,6 +3471,7 @@ export default function App() {
                 onDuplicate={() => duplicateCurrentProposal(proposalDraft)}
                 onAttachPacketPdf={attachSubmittedPacketPdf}
                 onMarkPacketSent={markSubmittedPacketSent}
+                onMarkSendPackageSent={markSendPackageSent}
                 onOpenPrintView={openPrintView}
                 onRemovePacketPdf={removeSubmittedPacketPdf}
                 onSave={saveCurrentProposal}
@@ -4495,6 +4568,7 @@ function ProposalSummaryRow({ compact = false, contacts = [], onDuplicate, onExp
   const packetMode = getPacketModeLabel(proposal);
   const linkedContact = getLinkedContact(proposal, contacts);
   const latestPacketRecord = getLatestSubmittedPacketRecord(proposal);
+  const latestSendRecord = getLatestSendRecord(proposal);
 
   return (
     <div className={`proposal-summary-row ${compact ? "compact" : ""}`}>
@@ -4516,6 +4590,7 @@ function ProposalSummaryRow({ compact = false, contacts = [], onDuplicate, onExp
           </Badge>
         ) : null}
         <StatusBadge status={proposal.status} />
+        {latestSendRecord ? <Badge className="packet-record-sent">Sent package {formatDisplayDate(latestSendRecord.sentDate)}</Badge> : null}
       </div>
       <div className="proposal-summary-total">
         <strong>{formatCurrency(total)}</strong>
@@ -4791,6 +4866,7 @@ function ProposalListView({
               const packetMode = getPacketModeLabel(proposal);
               const linkedContact = getLinkedContact(proposal, contacts);
               const latestPacketRecord = getLatestSubmittedPacketRecord(proposal);
+              const latestSendRecord = getLatestSendRecord(proposal);
 
               return (
                 <tr key={proposal.id} onClick={() => onOpen(proposal.id)}>
@@ -4821,6 +4897,7 @@ function ProposalListView({
                           {hasPacketPdfAttachment(latestPacketRecord) ? "PDF attached" : "PDF missing"}
                         </Badge>
                         <span>{formatDashboardDate(latestPacketRecord.createdAt)}</span>
+                        {latestSendRecord ? <span>Sent package {formatDisplayDate(latestSendRecord.sentDate)}</span> : null}
                       </>
                     ) : (
                       <Badge className="packet-record-none">No packet record</Badge>
@@ -5041,6 +5118,7 @@ function CompanySettingsView({
 }
 
 function ProposalActionBar({
+  contacts = [],
   isPrintView,
   proposal,
   revisionHistory = [],
@@ -5052,6 +5130,7 @@ function ProposalActionBar({
   onCreateRevision,
   onDuplicate,
   onMarkPacketSent,
+  onMarkSendPackageSent,
   onOpenPrintView,
   onRemovePacketPdf,
   onSave,
@@ -5061,6 +5140,7 @@ function ProposalActionBar({
   const revisedTotal = calculateProposalTotals(proposal).total;
   const previousTotal = toEditableNumber(proposal.previousTotal);
   const packetRecords = normalizeSubmittedPacketRecords(proposal.submittedPacketRecords);
+  const [selectedSendPacketId, setSelectedSendPacketId] = useState(packetRecords[0]?.id || "");
 
   return (
     <section className="proposal-action-bar no-print">
@@ -5121,8 +5201,16 @@ function ProposalActionBar({
         records={packetRecords}
         onAttachPdf={onAttachPacketPdf}
         onMarkSent={onMarkPacketSent}
+        onPrepareSend={setSelectedSendPacketId}
         onRemovePdf={onRemovePacketPdf}
         onUpdateRecord={onUpdatePacketRecord}
+      />
+      <SendSubmissionPanel
+        contacts={contacts}
+        packetRecords={packetRecords}
+        proposal={proposal}
+        selectedPacketId={selectedSendPacketId}
+        onMarkSent={onMarkSendPackageSent}
       />
     </section>
   );
@@ -5153,7 +5241,7 @@ function RevisionHistory({ currentProposalId, revisions = [] }) {
   );
 }
 
-function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onRemovePdf, onUpdateRecord }) {
+function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onPrepareSend, onRemovePdf, onUpdateRecord }) {
   const visibleRecords = normalizeSubmittedPacketRecords(records);
 
   return (
@@ -5209,6 +5297,9 @@ function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onRemov
                       Mark Packet as Sent
                     </button>
                   ) : null}
+                  <button type="button" onClick={() => onPrepareSend(record.id)}>
+                    Prepare Send
+                  </button>
                   <label className="submitted-packet-upload-button">
                     <span>{hasPdf ? "Replace PDF" : "Attach PDF"}</span>
                     <input
@@ -5253,6 +5344,159 @@ function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onRemov
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function SendSubmissionPanel({ contacts = [], packetRecords = [], proposal, selectedPacketId, onMarkSent }) {
+  const firstPacketId = selectedPacketId || packetRecords[0]?.id || "";
+  const [templateId, setTemplateId] = useState("gc_prime_submission");
+  const [packetRecordId, setPacketRecordId] = useState(firstPacketId);
+  const [draft, setDraft] = useState(() => createSendPackageDraft(proposal, packetRecords.find((record) => record.id === firstPacketId), "gc_prime_submission"));
+  const [copyMessage, setCopyMessage] = useState("");
+  const selectedRecord = packetRecords.find((record) => record.id === packetRecordId);
+  const hasPdf = hasPacketPdfAttachment(selectedRecord);
+
+  useEffect(() => {
+    if (!selectedPacketId || selectedPacketId === packetRecordId) {
+      return;
+    }
+
+    const nextRecord = packetRecords.find((record) => record.id === selectedPacketId);
+    setPacketRecordId(selectedPacketId);
+    setDraft(createSendPackageDraft(proposal, nextRecord, templateId));
+    setCopyMessage("");
+  }, [packetRecordId, packetRecords, proposal, selectedPacketId, templateId]);
+
+  useEffect(() => {
+    if (packetRecordId || !packetRecords[0]?.id) {
+      return;
+    }
+
+    setPacketRecordId(packetRecords[0].id);
+    setDraft(createSendPackageDraft(proposal, packetRecords[0], templateId));
+  }, [packetRecordId, packetRecords, proposal, templateId]);
+
+  function updateDraft(field, value) {
+    setDraft((currentDraft) => ({
+      ...currentDraft,
+      [field]: value,
+    }));
+  }
+
+  function selectTemplate(nextTemplateId) {
+    setTemplateId(nextTemplateId);
+    setDraft(createSendPackageDraft(proposal, selectedRecord, nextTemplateId, draft));
+    setCopyMessage("");
+  }
+
+  function selectPacketRecord(nextPacketId) {
+    const nextRecord = packetRecords.find((record) => record.id === nextPacketId);
+    setPacketRecordId(nextPacketId);
+    setDraft(createSendPackageDraft(proposal, nextRecord, templateId, draft));
+    setCopyMessage("");
+  }
+
+  async function copyToClipboard(text, message) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyMessage(message);
+    } catch {
+      setCopyMessage("Copy failed. Select the text manually and copy it.");
+    }
+  }
+
+  if (packetRecords.length === 0) {
+    return (
+      <div className="send-submission-panel">
+        <div>
+          <strong>Send / Submission</strong>
+          <span>Create a packet record before preparing a send package.</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="send-submission-panel">
+      <div className="send-submission-heading">
+        <div>
+          <strong>Send / Submission</strong>
+          <span>Prepare copy-ready email text and track exactly what packet was sent. Emails are not sent by this app.</span>
+        </div>
+        {copyMessage ? <em>{copyMessage}</em> : null}
+      </div>
+      <div className="send-submission-grid">
+        <label>
+          <span>Packet record / PDF</span>
+          <select value={packetRecordId} onChange={(event) => selectPacketRecord(event.target.value)}>
+            {packetRecords.map((record) => (
+              <option key={record.id} value={record.id}>
+                {record.revisionLabel || formatRevisionLabel(record.revisionNumber)} | {record.packetTitle} | {hasPacketPdfAttachment(record) ? "PDF attached" : "PDF missing"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Email template</span>
+          <select value={templateId} onChange={(event) => selectTemplate(event.target.value)}>
+            {EMAIL_TEMPLATE_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Select saved contact</span>
+          <select
+            value=""
+            onChange={(event) => {
+              const contact = contacts.find((item) => item.id === event.target.value);
+              if (contact) {
+                setDraft((currentDraft) => ({
+                  ...currentDraft,
+                  sentToEmail: contact.email || currentDraft.sentToEmail,
+                  sentToName: formatContactName(contact),
+                }));
+              }
+            }}
+          >
+            <option value="">Manual / proposal recipient</option>
+            {contacts.map((contact) => (
+              <option key={contact.id} value={contact.id}>
+                {formatContactName(contact)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <EditorField label="Sent To Name" path="send.sentToName" value={draft.sentToName} onChange={(_, value) => updateDraft("sentToName", value)} />
+        <EditorField label="Sent To Email" path="send.sentToEmail" type="email" value={draft.sentToEmail} onChange={(_, value) => updateDraft("sentToEmail", value)} />
+        <EditorField label="Sent Date" path="send.sentDate" type="date" value={draft.sentDate} onChange={(_, value) => updateDraft("sentDate", value)} />
+        <EditorField label="Sent Method" path="send.sentMethod" value={draft.sentMethod} onChange={(_, value) => updateDraft("sentMethod", value)} options={SENT_METHODS} />
+        <EditorField label="Follow-Up Date" path="send.followUpDate" type="date" value={draft.followUpDate} onChange={(_, value) => updateDraft("followUpDate", value)} />
+        <div className="send-submission-wide">
+          <EditorField label="Email Subject" path="send.subject" value={draft.subject} onChange={(_, value) => updateDraft("subject", value)} />
+        </div>
+        <div className="send-submission-wide">
+          <EditorField label="Email Body" path="send.body" value={draft.body} onChange={(_, value) => updateDraft("body", value)} multiline />
+        </div>
+        <div className="send-submission-wide">
+          <EditorField label="Next Action" path="send.nextAction" value={draft.nextAction} onChange={(_, value) => updateDraft("nextAction", value)} multiline />
+        </div>
+      </div>
+      {!hasPdf ? <p className="send-submission-warning">Attach submitted PDF before marking sent.</p> : null}
+      <div className="send-submission-actions">
+        <button type="button" onClick={() => copyToClipboard(draft.body, "Email body copied.")}>
+          Copy Email Body
+        </button>
+        <button type="button" onClick={() => copyToClipboard(formatSendPackageClipboardText(draft), "Recipient, subject, and body copied.")}>
+          Copy Recipient / Subject / Body
+        </button>
+        <button type="button" onClick={() => onMarkSent({ ...draft, packetRecordId })}>
+          Mark as Sent
+        </button>
+      </div>
     </div>
   );
 }
@@ -9336,6 +9580,7 @@ function createEditableProposal(seedProposal) {
     })),
     pricingSections: normalizePricingSections(proposal.pricingSections),
     submittedPacketRecords: normalizeSubmittedPacketRecords(proposal.submittedPacketRecords),
+    sendRecords: normalizeSendRecords(proposal.sendRecords),
     client: {
       ...client,
       billingAddress: client.billingAddress ?? client.address ?? "",
@@ -9472,6 +9717,211 @@ function updateSubmittedPacketRecordInProposal(proposal = {}, recordId, patch = 
     ),
     updatedAt: new Date().toISOString(),
   });
+}
+
+function normalizeSendRecords(records = []) {
+  return (Array.isArray(records) ? records : [])
+    .filter(Boolean)
+    .map((record) => ({
+      id: record.id || createSendRecordId(),
+      proposalId: record.proposalId || "",
+      proposalNumber: record.proposalNumber || "",
+      revisionNumber: normalizeRevisionNumber(record.revisionNumber),
+      revisionLabel: record.revisionLabel || formatRevisionLabel(record.revisionNumber),
+      packetRecordId: record.packetRecordId || "",
+      packetTitle: record.packetTitle || "",
+      pdfAttachment: normalizePdfAttachment(record.pdfAttachment),
+      templateId: record.templateId || "gc_prime_submission",
+      subject: record.subject || "",
+      body: record.body || "",
+      sentDate: record.sentDate || "",
+      sentMethod: SENT_METHODS.includes(record.sentMethod) ? record.sentMethod : "Email",
+      sentToName: record.sentToName || "",
+      sentToEmail: record.sentToEmail || "",
+      followUpDate: record.followUpDate || "",
+      nextAction: record.nextAction || "",
+      createdAt: record.createdAt || new Date().toISOString(),
+      createdByEmail: record.createdByEmail || "",
+      createdByUserId: record.createdByUserId || "",
+      status: record.status || "sent",
+    }))
+    .sort((a, b) => getSendRecordTimestamp(b) - getSendRecordTimestamp(a));
+}
+
+function createSendRecord(proposal = {}, packetRecord = {}, sendDraft = {}, authUser = null) {
+  return normalizeSendRecords([
+    {
+      id: createSendRecordId(),
+      proposalId: proposal.id || "",
+      proposalNumber: proposal.proposalNumber || "",
+      revisionNumber: proposal.revisionNumber,
+      revisionLabel: proposal.revisionLabel || formatRevisionLabel(proposal.revisionNumber),
+      packetRecordId: packetRecord.id || sendDraft.packetRecordId || "",
+      packetTitle: packetRecord.packetTitle || "",
+      pdfAttachment: normalizePdfAttachment(packetRecord.pdfAttachment || sendDraft.pdfAttachment),
+      templateId: sendDraft.templateId || "gc_prime_submission",
+      subject: sendDraft.subject || "",
+      body: sendDraft.body || "",
+      sentDate: sendDraft.sentDate || formatInputDate(new Date()),
+      sentMethod: SENT_METHODS.includes(sendDraft.sentMethod) ? sendDraft.sentMethod : "Email",
+      sentToName: sendDraft.sentToName || "",
+      sentToEmail: sendDraft.sentToEmail || "",
+      followUpDate: sendDraft.followUpDate || "",
+      nextAction: sendDraft.nextAction || "",
+      createdAt: new Date().toISOString(),
+      createdByEmail: authUser?.email || "",
+      createdByUserId: authUser?.id || "",
+      status: "sent",
+    },
+  ])[0];
+}
+
+function createSendRecordId() {
+  return `send-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getLatestSendRecord(proposal = {}) {
+  return normalizeSendRecords(proposal.sendRecords)[0] || null;
+}
+
+function getSendRecordTimestamp(record = {}) {
+  const date = new Date(record.sentDate || record.createdAt || "");
+  return Number.isNaN(date.valueOf()) ? 0 : date.valueOf();
+}
+
+function createSendPackageDraft(proposal = {}, packetRecord = {}, templateId = "gc_prime_submission", previousDraft = {}) {
+  const template = buildEmailTemplate(templateId, proposal, packetRecord);
+
+  return {
+    body: template.body,
+    followUpDate: previousDraft.followUpDate || proposal.followUpDate || "",
+    nextAction: previousDraft.nextAction || proposal.nextAction || "Confirm receipt and follow up on bid review.",
+    packetRecordId: packetRecord?.id || previousDraft.packetRecordId || "",
+    sentDate: previousDraft.sentDate || formatInputDate(new Date()),
+    sentMethod: previousDraft.sentMethod || proposal.sentMethod || "Email",
+    sentToEmail: previousDraft.sentToEmail || proposal.sentToEmail || proposal.client?.email || "",
+    sentToName: previousDraft.sentToName || proposal.sentToName || proposal.client?.contactName || proposal.client?.companyName || "",
+    subject: template.subject,
+    templateId,
+  };
+}
+
+function buildEmailTemplate(templateId, proposal = {}, packetRecord = {}) {
+  const companyName = proposal.company?.name || "Last Yard Concrete";
+  const projectName = proposal.project?.name || "Project";
+  const revision = proposal.revisionLabel || formatRevisionLabel(proposal.revisionNumber);
+  const totals = calculateProposalTotals(proposal);
+  const pricingSections = getVisiblePricingSections(proposal.pricingSections);
+  const addendaText = packetRecord?.addendaAcknowledged || proposal.gcPrime?.addendaAcknowledged || "";
+  const contactLine = [proposal.company?.phone, proposal.company?.email].filter(hasTextValue).join(" | ");
+  const pricingLine = `Proposal total/base packet amount: ${formatCurrency(totals.total)}.`;
+  const alternateLine =
+    pricingSections.length > 0
+      ? `Alternates/allowances are listed in the packet. Total if all alternates are accepted: ${formatCurrency(totals.totalIfAllAlternatesAccepted || totals.total)}.`
+      : null;
+  const addendaLine = addendaText ? `Addenda acknowledged: ${addendaText}.` : null;
+  const pdfLine = hasPacketPdfAttachment(packetRecord) ? "The submitted PDF packet is attached." : "The submitted PDF still needs to be attached before sending.";
+
+  if (templateId === "revised_submission") {
+    return {
+      subject: `Revised Concrete Proposal — ${projectName} — ${revision}`,
+      body: formatEmailBody([
+        "Hello,",
+        "",
+        `Please see the revised concrete proposal packet for ${projectName}.`,
+        pricingLine,
+        alternateLine,
+        addendaLine,
+        "The revision notes and updated clarifications are included in the packet.",
+        pdfLine,
+        "",
+        "Please confirm receipt when you have a chance.",
+        "",
+        `${companyName}`,
+        contactLine || null,
+      ]),
+    };
+  }
+
+  if (templateId === "rfi_follow_up") {
+    return {
+      subject: `RFI / Clarification Follow-Up — ${projectName}`,
+      body: formatEmailBody([
+        "Hello,",
+        "",
+        `Following up on RFIs / clarifications for ${projectName}.`,
+        "Please confirm any open concrete scope, addenda, exclusion, or plan clarification items before final pricing is relied upon.",
+        "Our proposal packet includes the current clarification assumptions and scope treatment.",
+        "",
+        `${companyName}`,
+        contactLine || null,
+      ]),
+    };
+  }
+
+  if (templateId === "submitted_follow_up") {
+    return {
+      subject: `Follow-Up — Concrete Proposal for ${projectName}`,
+      body: formatEmailBody([
+        "Hello,",
+        "",
+        `Checking in on the concrete proposal packet submitted for ${projectName}.`,
+        "Please let us know if you need any clarification, alternate breakout, or revision.",
+        "We would also appreciate confirmation that the packet was received and is under review.",
+        "",
+        `${companyName}`,
+        contactLine || null,
+      ]),
+    };
+  }
+
+  if (templateId === "no_bid_decline") {
+    return {
+      subject: `No-Bid Notice — ${projectName}`,
+      body: formatEmailBody([
+        "Hello,",
+        "",
+        `Thank you for the opportunity to review ${projectName}.`,
+        "At this time, Last Yard Concrete will respectfully decline to submit pricing for this bid package.",
+        "Please keep us in mind for future concrete scopes.",
+        "",
+        `${companyName}`,
+        contactLine || null,
+      ]),
+    };
+  }
+
+  return {
+    subject: `Concrete Proposal / GC Packet — ${projectName} — ${companyName}`,
+    body: formatEmailBody([
+      "Hello,",
+      "",
+      `Attached is ${companyName}'s concrete proposal / GC packet for ${projectName}.`,
+      pricingLine,
+      alternateLine,
+      addendaLine,
+      "Exclusions, assumptions, clarifications, and scope control notes are included in the packet.",
+      pdfLine,
+      "",
+      "Please confirm receipt and let us know if you need any clarification or revised breakout.",
+      "",
+      `${companyName}`,
+      contactLine || null,
+    ]),
+  };
+}
+
+function formatEmailBody(lines = []) {
+  return lines.filter((line) => line !== null && line !== undefined).join("\n");
+}
+
+function formatSendPackageClipboardText(draft = {}) {
+  return [
+    `To: ${[draft.sentToName, draft.sentToEmail].filter(hasTextValue).join(" <")}${draft.sentToName && draft.sentToEmail ? ">" : ""}`,
+    `Subject: ${draft.subject || ""}`,
+    "",
+    draft.body || "",
+  ].join("\n");
 }
 
 function getProposalValidationWithPacketPdfWarnings(proposal = {}) {
