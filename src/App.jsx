@@ -21,8 +21,10 @@ const contactsStorageKey = "last-yard-contacts-v1";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
 const cloudLocalOnlyLabel = "Local only";
+const cloudNeedsSyncLabel = "Needs sync";
 const cloudSyncedLabel = "Synced";
-const cloudSignInLabel = "Sign in to sync contacts/settings";
+const cloudSignInLabel = "Sign in to sync proposals, contacts, and settings";
+const cloudSyncErrorLabel = "Sync error";
 const SENT_METHODS = ["", "Email", "Text", "In Person", "Portal Upload", "Other"];
 const CONTACT_TYPES = [
   "",
@@ -249,7 +251,8 @@ export default function App() {
         companyId: "",
         contactsStatus: cloudLocalOnlyLabel,
         loading: false,
-        message: "Cloud save is not configured. Contacts and settings are stored locally.",
+        message: "Cloud save is not configured. Proposals, contacts, and settings are stored locally.",
+        proposalStatus: cloudLocalOnlyLabel,
         settingsStatus: cloudLocalOnlyLabel,
       }));
       return undefined;
@@ -293,6 +296,7 @@ export default function App() {
         contactsStatus: cloudLocalOnlyLabel,
         loading: false,
         message: cloudSignInLabel,
+        proposalStatus: cloudLocalOnlyLabel,
         settingsStatus: cloudLocalOnlyLabel,
       }));
       return;
@@ -478,7 +482,7 @@ export default function App() {
     setCloudSync((currentSync) => ({
       ...currentSync,
       loading: true,
-      message: "Loading cloud contacts and settings...",
+      message: "Loading cloud proposals, contacts, and settings...",
     }));
 
     try {
@@ -495,6 +499,12 @@ export default function App() {
       }
 
       const contactsResult = await loadOrSeedCloudContacts(companyRecord.id, savedContacts);
+
+      if (isCancelled()) {
+        return;
+      }
+
+      const proposalsResult = await loadOrMergeCloudProposals(companyRecord.id, savedProposals);
       const syncedAt = new Date().toISOString();
 
       if (isCancelled()) {
@@ -504,22 +514,34 @@ export default function App() {
       setCompanySettings(settingsResult.settings);
       setSettingsDraft(settingsResult.settings);
       setSavedContacts(contactsResult.contacts);
+      setSavedProposals(proposalsResult.proposals);
+
+      if (isProposalRouteView(route.view)) {
+        const syncedDraft = proposalsResult.proposals.find((proposal) => proposal.id === proposalDraft.id);
+
+        if (syncedDraft) {
+          setProposalDraft(syncedDraft);
+        }
+      }
+
       setCloudSync({
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
         lastSyncedAt: syncedAt,
         loading: false,
-        message: `${settingsResult.message} ${contactsResult.message}`,
+        message: `${settingsResult.message} ${contactsResult.message} ${proposalsResult.message}`,
+        proposalStatus: proposalsResult.status,
         settingsStatus: cloudSyncedLabel,
       });
-      setAuthMessage("Signed in. Contacts and company settings are syncing with Supabase.");
+      setAuthMessage("Signed in. Proposals, contacts, and company settings are syncing with Supabase.");
     } catch (error) {
       setCloudSync((currentSync) => ({
         ...currentSync,
-        contactsStatus: "Sync error",
+        contactsStatus: cloudSyncErrorLabel,
         loading: false,
         message: `Cloud sync failed: ${error.message}`,
-        settingsStatus: "Sync error",
+        proposalStatus: cloudSyncErrorLabel,
+        settingsStatus: cloudSyncErrorLabel,
       }));
       setAuthMessage(`Cloud sync failed: ${error.message}`);
     }
@@ -553,7 +575,7 @@ export default function App() {
         companyId: companyRecord.id,
         lastSyncedAt: syncedAt,
         loading: false,
-        message: "Company settings synced to Supabase. Proposals remain local-only.",
+        message: "Company settings synced to Supabase.",
         settingsStatus: cloudSyncedLabel,
       }));
       setSettingsMessage("Company settings saved locally and synced to Supabase.");
@@ -563,7 +585,7 @@ export default function App() {
         ...currentSync,
         loading: false,
         message: `Settings sync failed: ${error.message}`,
-        settingsStatus: "Sync error",
+        settingsStatus: cloudSyncErrorLabel,
       }));
       setSettingsMessage(`Company settings saved locally. Cloud sync failed: ${error.message}`);
       return false;
@@ -597,14 +619,14 @@ export default function App() {
         contactsStatus: cloudSyncedLabel,
         lastSyncedAt: syncedAt,
         loading: false,
-        message: "Contacts synced to Supabase. Proposals remain local-only.",
+        message: "Contacts synced to Supabase.",
       }));
       setContactMessage(`Synced ${contacts.length} contact${contacts.length === 1 ? "" : "s"} to Supabase.`);
       return true;
     } catch (error) {
       setCloudSync((currentSync) => ({
         ...currentSync,
-        contactsStatus: "Sync error",
+        contactsStatus: cloudSyncErrorLabel,
         loading: false,
         message: `Contacts sync failed: ${error.message}`,
       }));
@@ -632,13 +654,13 @@ export default function App() {
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
         lastSyncedAt: new Date().toISOString(),
-        message: "Contact synced to Supabase. Proposals remain local-only.",
+        message: "Contact synced to Supabase.",
       }));
       return true;
     } catch (error) {
       setCloudSync((currentSync) => ({
         ...currentSync,
-        contactsStatus: "Sync error",
+        contactsStatus: cloudSyncErrorLabel,
         message: `Contact sync failed: ${error.message}`,
       }));
       setContactMessage(`Contact saved locally. Cloud sync failed: ${error.message}`);
@@ -660,13 +682,13 @@ export default function App() {
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
         lastSyncedAt: new Date().toISOString(),
-        message: "Contact deleted from Supabase. Proposals remain local-only.",
+        message: "Contact deleted from Supabase.",
       }));
       return true;
     } catch (error) {
       setCloudSync((currentSync) => ({
         ...currentSync,
-        contactsStatus: "Sync error",
+        contactsStatus: cloudSyncErrorLabel,
         message: `Cloud contact delete failed: ${error.message}`,
       }));
       setContactMessage(`Contact deleted locally. Cloud delete failed: ${error.message}`);
@@ -690,6 +712,182 @@ export default function App() {
     setSettingsDraft(normalizedSettings);
     await syncSettingsToCloud(normalizedSettings);
     await syncContactsToCloud(savedContacts);
+    await pushLocalProposalsToCloud(savedProposals);
+  }
+
+  function markProposalsNeedCloudSync(message = "Local proposals changed. Push or sync proposals to update Supabase.") {
+    setCloudSync((currentSync) => ({
+      ...currentSync,
+      message: canUseCloudSync(authUser) ? message : getCloudSignInMessage(),
+      proposalStatus: canUseCloudSync(authUser) ? cloudNeedsSyncLabel : cloudLocalOnlyLabel,
+    }));
+  }
+
+  async function syncSingleProposalToCloud(proposal, successMessage = "Proposal synced to Supabase.") {
+    if (!canUseCloudSync(authUser)) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        message: getCloudSignInMessage(),
+        proposalStatus: cloudLocalOnlyLabel,
+      }));
+      return false;
+    }
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      await saveCloudProposal(companyRecord.id, proposal);
+
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        lastSyncedAt: new Date().toISOString(),
+        message: `${successMessage} Large uploaded images may make cloud sync slower until file storage is added.`,
+        proposalStatus: cloudSyncedLabel,
+      }));
+      return true;
+    } catch (error) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        message: `Proposal sync failed: ${error.message}`,
+        proposalStatus: cloudSyncErrorLabel,
+      }));
+      setSaveMessage(`Saved locally. Cloud sync failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  async function syncMultipleProposalsToCloud(proposals, successMessage = "Proposals synced to Supabase.") {
+    if (!canUseCloudSync(authUser)) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        message: getCloudSignInMessage(),
+        proposalStatus: cloudLocalOnlyLabel,
+      }));
+      return false;
+    }
+
+    setCloudSync((currentSync) => ({
+      ...currentSync,
+      loading: true,
+      message: "Syncing proposals...",
+    }));
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      await saveCloudProposals(companyRecord.id, proposals);
+
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        lastSyncedAt: new Date().toISOString(),
+        loading: false,
+        message: `${successMessage} Large uploaded images may make cloud sync slower until file storage is added.`,
+        proposalStatus: cloudSyncedLabel,
+      }));
+      return true;
+    } catch (error) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        loading: false,
+        message: `Proposal sync failed: ${error.message}`,
+        proposalStatus: cloudSyncErrorLabel,
+      }));
+      return false;
+    }
+  }
+
+  async function pushLocalProposalsToCloud(proposals = savedProposals) {
+    const synced = await syncMultipleProposalsToCloud(proposals, `Pushed ${proposals.length} local proposal${proposals.length === 1 ? "" : "s"} to Supabase.`);
+
+    if (synced) {
+      setSaveMessage(`Pushed ${proposals.length} proposal${proposals.length === 1 ? "" : "s"} to Supabase.`);
+    }
+  }
+
+  async function pullCloudProposals() {
+    if (!canUseCloudSync(authUser)) {
+      setSaveMessage(getCloudSignInMessage());
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        message: getCloudSignInMessage(),
+        proposalStatus: cloudLocalOnlyLabel,
+      }));
+      return;
+    }
+
+    setCloudSync((currentSync) => ({
+      ...currentSync,
+      loading: true,
+      message: "Pulling cloud proposals...",
+    }));
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      const cloudProposals = await fetchCloudProposals(companyRecord.id);
+      const mergeResult = mergeProposalCollections(savedProposals, cloudProposals);
+      const syncedAt = new Date().toISOString();
+
+      setSavedProposals(mergeResult.proposals);
+      syncDraftAfterProposalRestore(mergeResult.proposals);
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        lastSyncedAt: syncedAt,
+        loading: false,
+        message: mergeResult.warning || `Pulled ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"}.`,
+        proposalStatus: mergeResult.needsSync ? cloudNeedsSyncLabel : cloudSyncedLabel,
+      }));
+    } catch (error) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        loading: false,
+        message: `Pull failed: ${error.message}`,
+        proposalStatus: cloudSyncErrorLabel,
+      }));
+    }
+  }
+
+  async function syncProposalsNow() {
+    if (!canUseCloudSync(authUser)) {
+      setSaveMessage(getCloudSignInMessage());
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        message: getCloudSignInMessage(),
+        proposalStatus: cloudLocalOnlyLabel,
+      }));
+      return;
+    }
+
+    setCloudSync((currentSync) => ({
+      ...currentSync,
+      loading: true,
+      message: "Syncing cloud and local proposals...",
+    }));
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      const cloudProposals = await fetchCloudProposals(companyRecord.id);
+      const mergeResult = mergeProposalCollections(savedProposals, cloudProposals);
+
+      await saveCloudProposals(companyRecord.id, mergeResult.proposals);
+      setSavedProposals(mergeResult.proposals);
+      syncDraftAfterProposalRestore(mergeResult.proposals);
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        lastSyncedAt: new Date().toISOString(),
+        loading: false,
+        message: `${mergeResult.warning || "Cloud and local proposals are synced."} Large uploaded images may make cloud sync slower until file storage is added.`,
+        proposalStatus: cloudSyncedLabel,
+      }));
+    } catch (error) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        loading: false,
+        message: `Proposal sync failed: ${error.message}`,
+        proposalStatus: cloudSyncErrorLabel,
+      }));
+    }
   }
 
   function startNewContact() {
@@ -799,7 +997,7 @@ export default function App() {
     }
 
     setAuthUser(data.user || null);
-    setAuthMessage("Signed in. Loading cloud contacts and company settings.");
+    setAuthMessage("Signed in. Loading cloud proposals, contacts, and company settings.");
     setAuthLoading(false);
   }
 
@@ -821,7 +1019,7 @@ export default function App() {
     }
 
     setAuthUser(data.user || null);
-    setAuthMessage("Account created. Contacts and company settings will sync after sign-in is confirmed.");
+    setAuthMessage("Account created. Proposals, contacts, and company settings will sync after sign-in is confirmed.");
     setAuthLoading(false);
   }
 
@@ -849,12 +1047,13 @@ export default function App() {
       contactsStatus: cloudLocalOnlyLabel,
       loading: false,
       message: cloudSignInLabel,
+      proposalStatus: cloudLocalOnlyLabel,
       settingsStatus: cloudLocalOnlyLabel,
     }));
     setAuthLoading(false);
   }
 
-  function saveCurrentProposal() {
+  async function saveCurrentProposal() {
     if (!canCompleteProposal("saving")) {
       return;
     }
@@ -867,7 +1066,8 @@ export default function App() {
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, proposalToSave));
     setProposalDraft(proposalToSave);
     setProposalDirty(false);
-    setSaveMessage("Draft saved locally.");
+    setSaveMessage(getCloudReadyMessage(authUser, "Draft saved locally. Syncing to cloud...", "Draft saved locally."));
+    await syncSingleProposalToCloud(proposalToSave, "Draft saved to Supabase.");
 
     if (route.view === "new") {
       navigate(`/proposals/${proposalToSave.id}`, { proposal: proposalToSave, replace: true });
@@ -894,31 +1094,41 @@ export default function App() {
     navigate(`/proposals/${proposal.id}/print`, { proposal });
   }
 
-  function createRevision() {
+  async function createRevision() {
     if (!canCompleteProposal("creating a revision")) {
       return;
     }
 
     const sourceProposal = createEditableProposal({ ...proposalDraft, updatedAt: new Date().toISOString() });
     const revision = createProposalRevisionDraft(sourceProposal, savedProposals);
-    setSavedProposals((currentProposals) => upsertProposal(upsertProposal(currentProposals, sourceProposal), revision));
+    const nextProposals = upsertProposal(upsertProposal(savedProposals, sourceProposal), revision);
+    setSavedProposals(nextProposals);
     navigate(`/proposals/${revision.id}`, { proposal: revision });
     setProposalDirty(false);
     setSaveMessage(`Created ${revision.revisionLabel}.`);
+    await syncMultipleProposalsToCloud([sourceProposal, revision], `Created ${revision.revisionLabel} and synced it to Supabase.`);
   }
 
-  function duplicateCurrentProposal(proposal = proposalDraft) {
+  async function duplicateCurrentProposal(proposal = proposalDraft) {
     const duplicate = duplicateProposalDraft(proposal, savedProposals);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, duplicate));
     navigate(`/proposals/${duplicate.id}`, { proposal: duplicate });
-    setSaveMessage("Duplicated as a new draft.");
+    setSaveMessage(getCloudReadyMessage(authUser, "Duplicated locally. Syncing to cloud...", "Duplicated as a new draft."));
+    await syncSingleProposalToCloud(duplicate, "Duplicate synced to Supabase.");
   }
 
-  function updateCurrentStatus(status) {
+  async function updateCurrentStatus(status) {
     const updatedProposal = applyStatusTracking({ ...proposalDraft, updatedAt: new Date().toISOString() }, status);
     setProposalDraft(updatedProposal);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
-    setSaveMessage(`Marked as ${formatOptionLabel(status)}.`);
+    setSaveMessage(getCloudReadyMessage(authUser, `Marked as ${formatOptionLabel(status)} locally. Syncing to cloud...`, `Marked as ${formatOptionLabel(status)}.`));
+    await syncSingleProposalToCloud(updatedProposal, `Status updated to ${formatOptionLabel(status)} in Supabase.`);
+  }
+
+  async function updateListProposalStatus(proposal, status) {
+    const updatedProposal = applyStatusTracking({ ...proposal, updatedAt: new Date().toISOString() }, status);
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
+    await syncSingleProposalToCloud(updatedProposal, `Status updated to ${formatOptionLabel(status)} in Supabase.`);
   }
 
   function exportProposalBackup(proposal = proposalDraft) {
@@ -1341,6 +1551,7 @@ export default function App() {
 
         setSavedProposals(nextProposals);
         setProposalDraft(importedProposal);
+        markProposalsNeedCloudSync("Imported proposal locally. Use Sync Proposals or Push Local Data to Cloud when ready.");
         setBackupMessage(`Imported proposal ${importedProposal.proposalNumber || importedProposal.id}.`);
         return;
       }
@@ -1356,6 +1567,7 @@ export default function App() {
 
         setSavedProposals(nextProposals);
         syncDraftAfterProposalRestore(nextProposals);
+        markProposalsNeedCloudSync("Imported proposals locally. Use Sync Proposals or Push Local Data to Cloud when ready.");
         setBackupMessage(`${mode === "replace" ? "Replaced" : "Merged"} ${importedProposals.length} imported proposals.`);
         return;
       }
@@ -1407,6 +1619,7 @@ export default function App() {
         setCompanySettings(importedBackup.companySettings);
         setSettingsDraft(importedBackup.companySettings);
         syncDraftAfterProposalRestore(nextProposals);
+        markProposalsNeedCloudSync("Imported full backup locally. Use Sync Proposals or Push Local Data to Cloud when ready.");
         setBackupMessage(
           `${mode === "replace" ? "Restored" : "Merged"} full backup with ${importedBackup.proposals.length} proposals, ${importedBackup.contacts.length} contacts, and company settings.`,
         );
@@ -1424,7 +1637,7 @@ export default function App() {
       return;
     }
 
-    if (!isListView && !isSettingsView && !isContactsView && !isBackupView && nextProposals.length > 0) {
+    if (isProposalRouteView(route.view) && nextProposals.length > 0) {
       navigate(`/proposals/${nextProposals[0].id}`, { proposal: nextProposals[0], replace: true });
     }
   }
@@ -1464,6 +1677,8 @@ export default function App() {
       <div className={isPrintView ? "" : "app-content"}>
       {isDashboardView ? (
         <DashboardView
+          authUser={authUser}
+          cloudSync={cloudSync}
           contacts={savedContacts}
           proposals={savedProposals}
           onCreateCommercialProposal={createNewCommercialProposal}
@@ -1477,6 +1692,9 @@ export default function App() {
           onOpenList={() => navigate("/proposals")}
           onOpenPrint={openProposalPrintView}
           onOpenSettings={() => navigate("/settings")}
+          onPullCloudProposals={pullCloudProposals}
+          onPushLocalProposals={pushLocalProposalsToCloud}
+          onSyncProposals={syncProposalsNow}
         />
       ) : isBackupView ? (
         <BackupView backupTools={backupTools} onBackToDashboard={() => navigate("/dashboard")} />
@@ -1501,9 +1719,12 @@ export default function App() {
           settings={settingsDraft}
           onOpenLogin={() => navigate("/login")}
           onPullCloudData={pullCloudData}
+          onPullCloudProposals={pullCloudProposals}
           onPushLocalDataToCloud={pushLocalDataToCloud}
+          onPushLocalProposals={pushLocalProposalsToCloud}
           onSignOut={signOut}
           onSyncContacts={syncContactsToCloud}
+          onSyncProposals={syncProposalsNow}
           onSyncSettings={syncSettingsToCloud}
           onBackToList={() => navigate("/proposals")}
           onChange={updateSettingsDraft}
@@ -1530,7 +1751,9 @@ export default function App() {
         />
       ) : isListView ? (
         <ProposalListView
+          authUser={authUser}
           backupTools={backupTools}
+          cloudSync={cloudSync}
           contacts={savedContacts}
           proposals={savedProposals}
           searchQuery={searchQuery}
@@ -1540,13 +1763,13 @@ export default function App() {
           onExportProposal={exportProposalBackup}
           onOpen={openProposal}
           onPrint={openProposalPrintView}
+          onPullCloudProposals={pullCloudProposals}
+          onPushLocalProposals={pushLocalProposalsToCloud}
           onSearchChange={setSearchQuery}
           onOpenSettings={() => navigate("/settings")}
           onStatusFilterChange={setStatusFilter}
-          onStatusChange={(proposal, status) => {
-            const updatedProposal = applyStatusTracking({ ...proposal, updatedAt: new Date().toISOString() }, status);
-            setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
-          }}
+          onStatusChange={updateListProposalStatus}
+          onSyncProposals={syncProposalsNow}
         />
       ) : (
         <>
@@ -1693,6 +1916,8 @@ function AppChrome({
 }
 
 function DashboardView({
+  authUser,
+  cloudSync,
   contacts = [],
   proposals,
   onCreateCommercialProposal,
@@ -1706,6 +1931,9 @@ function DashboardView({
   onOpenList,
   onOpenPrint,
   onOpenSettings,
+  onPullCloudProposals,
+  onPushLocalProposals,
+  onSyncProposals,
 }) {
   const stats = buildDashboardStats(proposals, contacts);
   const recentProposals = getRecentProposals(proposals);
@@ -1749,6 +1977,14 @@ function DashboardView({
           </button>
         </div>
       </div>
+
+      <ProposalSyncPanel
+        authUser={authUser}
+        cloudSync={cloudSync}
+        onPullCloudProposals={onPullCloudProposals}
+        onPushLocalProposals={onPushLocalProposals}
+        onSyncProposals={onSyncProposals}
+      />
 
       <div className="dashboard-stat-grid">
         {stats.cards.map((card) => (
@@ -1887,7 +2123,7 @@ function LoginView({ authLoading, authMessage, authUser, onBackToDashboard, onSi
         ) : (
           <>
             <h3>Sign In or Create Account</h3>
-            <p>Authentication is available, but proposal cloud sync is coming in a later phase.</p>
+            <p>Authentication is available. Proposals, contacts, and company settings sync when you are signed in.</p>
             <label>
               <span>Email</span>
               <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
@@ -2235,8 +2471,42 @@ function BackupRestorePanel({ canExportCurrent = false, message = "", onExport, 
   );
 }
 
+function ProposalSyncPanel({ authUser, cloudSync, onPullCloudProposals, onPushLocalProposals, onSyncProposals }) {
+  const actionsDisabled = cloudSync.loading || !canUseCloudSync(authUser);
+
+  return (
+    <div className="proposal-sync-panel no-print">
+      <div>
+        <span>Proposal sync</span>
+        <strong>{cloudSync.proposalStatus}</strong>
+        <small>Last sync: {formatCloudSyncTime(cloudSync.lastSyncedAt)}</small>
+      </div>
+      <p>
+        {canUseCloudSync(authUser)
+          ? "Proposals save to localStorage and Supabase. Large uploaded images may sync slower until file storage is added."
+          : getCloudSignInMessage()}
+      </p>
+      {isSupabaseConfigured ? (
+        <div className="proposal-sync-actions">
+          <button type="button" onClick={onPullCloudProposals} disabled={actionsDisabled}>
+            Pull Cloud Proposals
+          </button>
+          <button type="button" onClick={() => onPushLocalProposals()} disabled={actionsDisabled}>
+            Push Local Proposals
+          </button>
+          <button type="button" onClick={onSyncProposals} disabled={actionsDisabled}>
+            Sync Proposals Now
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ProposalListView({
+  authUser,
   backupTools,
+  cloudSync,
   contacts = [],
   proposals,
   searchQuery,
@@ -2247,9 +2517,12 @@ function ProposalListView({
   onOpen,
   onOpenSettings,
   onPrint,
+  onPullCloudProposals,
+  onPushLocalProposals,
   onSearchChange,
   onStatusChange,
   onStatusFilterChange,
+  onSyncProposals,
 }) {
   const filteredProposals = proposals.filter((proposal) => {
     const linkedContact = getLinkedContact(proposal, contacts);
@@ -2316,6 +2589,14 @@ function ProposalListView({
       </div>
 
       {backupTools}
+
+      <ProposalSyncPanel
+        authUser={authUser}
+        cloudSync={cloudSync}
+        onPullCloudProposals={onPullCloudProposals}
+        onPushLocalProposals={onPushLocalProposals}
+        onSyncProposals={onSyncProposals}
+      />
 
       <div className="proposal-table-wrap">
         <table className="proposal-list-table">
@@ -2421,11 +2702,14 @@ function CompanySettingsView({
   onChange,
   onOpenLogin,
   onPullCloudData,
+  onPullCloudProposals,
   onPushLocalDataToCloud,
+  onPushLocalProposals,
   onReset,
   onSave,
   onSignOut,
   onSyncContacts,
+  onSyncProposals,
   onSyncSettings,
 }) {
   function handleLogoUpload(file) {
@@ -2468,9 +2752,12 @@ function CompanySettingsView({
         cloudSync={cloudSync}
         onOpenLogin={onOpenLogin}
         onPullCloudData={onPullCloudData}
+        onPullCloudProposals={onPullCloudProposals}
         onPushLocalDataToCloud={onPushLocalDataToCloud}
+        onPushLocalProposals={onPushLocalProposals}
         onSignOut={onSignOut}
         onSyncContacts={onSyncContacts}
+        onSyncProposals={onSyncProposals}
         onSyncSettings={() => onSyncSettings(settings)}
       />
 
@@ -2548,9 +2835,12 @@ function CloudStatusCard({
   cloudSync,
   onOpenLogin,
   onPullCloudData,
+  onPullCloudProposals,
   onPushLocalDataToCloud,
+  onPushLocalProposals,
   onSignOut,
   onSyncContacts,
+  onSyncProposals,
   onSyncSettings,
 }) {
   const cloudActionsDisabled = authLoading || cloudSync.loading || !canUseCloudSync(authUser);
@@ -2579,6 +2869,10 @@ function CloudStatusCard({
           <strong>{cloudSync.settingsStatus}</strong>
         </div>
         <div>
+          <span>Proposal sync</span>
+          <strong>{cloudSync.proposalStatus}</strong>
+        </div>
+        <div>
           <span>Contacts sync</span>
           <strong>{cloudSync.contactsStatus}</strong>
         </div>
@@ -2587,7 +2881,7 @@ function CloudStatusCard({
           <strong>{formatCloudSyncTime(cloudSync.lastSyncedAt)}</strong>
         </div>
       </div>
-      <p>Cloud sync is enabled for company settings and contacts only. Proposals, photos, and plan images remain local-only for now.</p>
+      <p>Cloud sync is enabled for proposals, company settings, and contacts. Large uploaded images may make proposal sync slower until file storage is added.</p>
       {authUser ? <p>Current user: {authUser.email}</p> : null}
       {authMessage ? <p>{authMessage}</p> : null}
       {cloudSync.message ? <p>{cloudSync.message}</p> : null}
@@ -2600,6 +2894,15 @@ function CloudStatusCard({
               </button>
               <button type="button" onClick={() => onSyncContacts()} disabled={cloudActionsDisabled}>
                 Sync Contacts Now
+              </button>
+              <button type="button" onClick={onSyncProposals} disabled={cloudActionsDisabled}>
+                Sync Proposals Now
+              </button>
+              <button type="button" onClick={onPullCloudProposals} disabled={cloudActionsDisabled}>
+                Pull Cloud Proposals
+              </button>
+              <button type="button" onClick={() => onPushLocalProposals()} disabled={cloudActionsDisabled}>
+                Push Local Proposals
               </button>
               <button type="button" onClick={onPullCloudData} disabled={cloudActionsDisabled}>
                 Pull Cloud Data
@@ -5076,7 +5379,7 @@ function isProposalRouteView(view) {
 }
 
 function createCloudSyncState() {
-  const localMessage = isSupabaseConfigured ? cloudSignInLabel : "Cloud save is not configured. Contacts and settings are stored locally.";
+  const localMessage = isSupabaseConfigured ? cloudSignInLabel : "Cloud save is not configured. Proposals, contacts, and settings are stored locally.";
 
   return {
     companyId: "",
@@ -5084,6 +5387,7 @@ function createCloudSyncState() {
     lastSyncedAt: "",
     loading: false,
     message: localMessage,
+    proposalStatus: cloudLocalOnlyLabel,
     settingsStatus: cloudLocalOnlyLabel,
   };
 }
@@ -5094,7 +5398,7 @@ function canUseCloudSync(authUser) {
 
 function getCloudSignInMessage() {
   if (!isSupabaseConfigured) {
-    return "Supabase is not configured. Contacts and settings are stored locally.";
+    return "Supabase is not configured. Proposals, contacts, and settings are stored locally.";
   }
 
   return cloudSignInLabel;
@@ -5225,7 +5529,7 @@ function saveStoredContacts(contacts) {
 
 async function ensureCloudCompany(user, settings = getDefaultCompanySettings()) {
   if (!canUseCloudSync(user)) {
-    throw new Error("Sign in to sync contacts/settings.");
+    throw new Error("Sign in to sync proposals, contacts, and settings.");
   }
 
   const normalizedSettings = normalizeCompanySettings(settings);
@@ -5273,6 +5577,220 @@ async function ensureCloudCompany(user, settings = getDefaultCompanySettings()) 
   }
 
   return createdCompany;
+}
+
+async function loadOrMergeCloudProposals(companyId, localProposals = []) {
+  const cloudProposals = await fetchCloudProposals(companyId);
+  const normalizedLocalProposals = localProposals.filter(isPlainObject).map((proposal) => createEditableProposal(proposal));
+
+  if (cloudProposals.length === 0 && normalizedLocalProposals.length > 0) {
+    return {
+      message: `Cloud has no proposals yet. Use Push Local Proposals to upload ${normalizedLocalProposals.length} local proposal${normalizedLocalProposals.length === 1 ? "" : "s"}.`,
+      proposals: normalizedLocalProposals,
+      status: cloudNeedsSyncLabel,
+    };
+  }
+
+  if (cloudProposals.length > 0 && normalizedLocalProposals.length === 0) {
+    return {
+      message: `Loaded ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"}.`,
+      proposals: cloudProposals,
+      status: cloudSyncedLabel,
+    };
+  }
+
+  if (cloudProposals.length > 0 && normalizedLocalProposals.length > 0) {
+    const mergeResult = mergeProposalCollections(normalizedLocalProposals, cloudProposals);
+
+    return {
+      message: mergeResult.warning || `Merged ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"} with local proposals.`,
+      proposals: mergeResult.proposals,
+      status: mergeResult.needsSync ? cloudNeedsSyncLabel : cloudSyncedLabel,
+    };
+  }
+
+  return {
+    message: "No cloud proposals found yet.",
+    proposals: [],
+    status: cloudSyncedLabel,
+  };
+}
+
+async function fetchCloudProposals(companyId) {
+  const { data, error } = await supabase
+    .from("proposals")
+    .select("id,proposal_data,created_at,updated_at")
+    .eq("company_id", companyId)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []).map((row) => normalizeCloudProposalRow(row));
+}
+
+async function saveCloudProposals(companyId, proposals = []) {
+  for (const proposal of proposals.filter(isPlainObject)) {
+    await saveCloudProposal(companyId, proposal);
+  }
+}
+
+async function saveCloudProposal(companyId, proposal) {
+  const normalizedProposal = createEditableProposal({
+    ...proposal,
+    updatedAt: proposal.updatedAt || new Date().toISOString(),
+  });
+  const row = createCloudProposalRow(companyId, normalizedProposal);
+
+  if (row.id) {
+    const { error } = await supabase.from("proposals").upsert(row, { onConflict: "id" });
+
+    if (error) {
+      throw error;
+    }
+
+    return;
+  }
+
+  const existingRowId = await findCloudProposalRowId(companyId, normalizedProposal.id);
+
+  if (existingRowId) {
+    const { error } = await supabase.from("proposals").update(row).eq("id", existingRowId);
+
+    if (error) {
+      throw error;
+    }
+
+    return;
+  }
+
+  const { error } = await supabase.from("proposals").insert(row);
+
+  if (error) {
+    throw error;
+  }
+}
+
+async function findCloudProposalRowId(companyId, proposalId) {
+  const { data, error } = await supabase
+    .from("proposals")
+    .select("id,proposal_data")
+    .eq("company_id", companyId);
+
+  if (error) {
+    throw error;
+  }
+
+  const match = (data || []).find((row) => row.proposal_data?.id === proposalId);
+  return match?.id || "";
+}
+
+function createCloudProposalRow(companyId, proposal) {
+  const normalizedProposal = createEditableProposal(proposal);
+  const row = {
+    company_id: companyId,
+    contact_id: isUuid(normalizedProposal.contactId) ? normalizedProposal.contactId : null,
+    packet_mode: normalizedProposal.packetMode || "summary",
+    proposal_data: normalizedProposal,
+    proposal_number: normalizedProposal.proposalNumber || "",
+    proposal_type: normalizedProposal.proposalType || normalizedProposal.type || "",
+    status: normalizedProposal.status || "draft",
+  };
+
+  if (isUuid(normalizedProposal.id)) {
+    row.id = normalizedProposal.id;
+  }
+
+  return row;
+}
+
+function normalizeCloudProposalRow(row = {}) {
+  const proposalData = isPlainObject(row.proposal_data) ? row.proposal_data : {};
+
+  return createEditableProposal({
+    ...proposalData,
+    id: proposalData.id || row.id,
+    createdAt: proposalData.createdAt || row.created_at,
+    updatedAt: proposalData.updatedAt || row.updated_at,
+  });
+}
+
+function mergeProposalCollections(localProposals = [], cloudProposals = []) {
+  const mergedById = new Map();
+  const cloudIds = new Set(cloudProposals.filter(isPlainObject).map((proposal) => createEditableProposal(proposal).id));
+  const warnings = [];
+  let needsSync = false;
+
+  localProposals.filter(isPlainObject).forEach((proposal) => {
+    const normalizedProposal = createEditableProposal(proposal);
+    mergedById.set(normalizedProposal.id, normalizedProposal);
+  });
+
+  cloudProposals.filter(isPlainObject).forEach((proposal) => {
+    const cloudProposal = createEditableProposal(proposal);
+    const localProposal = mergedById.get(cloudProposal.id);
+
+    if (!localProposal) {
+      mergedById.set(cloudProposal.id, cloudProposal);
+      return;
+    }
+
+    const comparison = compareProposalUpdatedAt(localProposal, cloudProposal);
+
+    if (comparison > 0) {
+      needsSync = true;
+      return;
+    }
+
+    if (comparison < 0 || proposalsAreEquivalent(localProposal, cloudProposal)) {
+      mergedById.set(cloudProposal.id, cloudProposal);
+      return;
+    }
+
+    const copiedCloudProposal = createEditableProposal({
+      ...cloudProposal,
+      id: createProposalId(),
+      proposalNumber: cloudProposal.proposalNumber || localProposal.proposalNumber,
+      updatedAt: cloudProposal.updatedAt || new Date().toISOString(),
+    });
+    mergedById.set(copiedCloudProposal.id, copiedCloudProposal);
+    needsSync = true;
+    warnings.push(`Kept both local and cloud copies for ${cloudProposal.proposalNumber || cloudProposal.id} because the latest update was unclear.`);
+  });
+
+  if (localProposals.filter(isPlainObject).some((proposal) => !cloudIds.has(createEditableProposal(proposal).id))) {
+    needsSync = true;
+  }
+
+  return {
+    needsSync,
+    proposals: [...mergedById.values()].sort((a, b) => getProposalTimestamp(b) - getProposalTimestamp(a)),
+    warning: warnings.join(" "),
+  };
+}
+
+function compareProposalUpdatedAt(localProposal = {}, cloudProposal = {}) {
+  const localTimestamp = getProposalTimestamp(localProposal);
+  const cloudTimestamp = getProposalTimestamp(cloudProposal);
+
+  if (!localTimestamp && !cloudTimestamp) {
+    return 0;
+  }
+
+  if (localTimestamp > cloudTimestamp) {
+    return 1;
+  }
+
+  if (cloudTimestamp > localTimestamp) {
+    return -1;
+  }
+
+  return 0;
+}
+
+function proposalsAreEquivalent(firstProposal = {}, secondProposal = {}) {
+  return JSON.stringify(createEditableProposal(firstProposal)) === JSON.stringify(createEditableProposal(secondProposal));
 }
 
 async function loadOrSeedCloudCompanySettings(companyId, localSettings = getDefaultCompanySettings()) {
