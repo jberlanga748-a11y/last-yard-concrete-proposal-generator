@@ -1,4 +1,12 @@
 import { useEffect, useState } from "react";
+import { LoginView } from "./components/auth/LoginView.jsx";
+import { BackupRestorePanel } from "./components/backup/BackupRestorePanel.jsx";
+import { BackupView } from "./components/backup/BackupView.jsx";
+import { Badge, StatusBadge } from "./components/common/Badges.jsx";
+import { CloudStatusCard } from "./components/settings/CloudStatusCard.jsx";
+import { TeamAccessPanel } from "./components/settings/TeamAccessPanel.jsx";
+import { AppChrome } from "./components/shell/AppChrome.jsx";
+import { LocalModeBanner } from "./components/shell/LocalModeBanner.jsx";
 import {
   LINE_ITEM_UNITS,
   PRICING_SECTION_TYPES,
@@ -13,6 +21,8 @@ import {
   validateProposalCompleteness,
 } from "./proposalData.js";
 import { isSupabaseConfigured, supabase } from "./supabaseClient.js";
+import { TEAM_INVITE_ROLES, canManageTeamAccess, formatTeamRole, normalizeTeamMember, normalizeTeamRole } from "./utils/cloud/teamAccess.js";
+import { formatCloudSyncTime, formatDashboardDate, formatDisplayDate, formatOptionLabel } from "./utils/formatting/display.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
 const storageKey = "last-yard-proposals-v1";
@@ -35,8 +45,6 @@ const cloudSignInLabel = "Sign in to sync proposals, contacts, and settings";
 const cloudSyncErrorLabel = "Sync error";
 const SENT_METHODS = ["", "Email", "Text", "In Person", "Portal Upload", "Other"];
 const SUBMITTED_PACKET_STATUSES = ["generated", "sent", "superseded", "approved", "rejected"];
-const TEAM_ROLES = ["owner", "admin", "estimator", "viewer"];
-const TEAM_INVITE_ROLES = ["admin", "estimator", "viewer"];
 const CONTACT_TYPES = [
   "",
   "GC / Prime",
@@ -2506,9 +2514,11 @@ export default function App() {
       {!isPrintView ? (
         <AppChrome
           authLoading={authLoading}
+          authStatusLabel={getAuthStatusLabel(authUser, authLoading)}
           authUser={authUser}
           companyName={company.name}
           currentView={route.view}
+          isCloudConfigured={isSupabaseConfigured}
           onNavigate={navigate}
           onOpenLogin={() => navigate("/login")}
           onSignOut={signOut}
@@ -2552,6 +2562,7 @@ export default function App() {
           authLoading={authLoading}
           authMessage={authMessage}
           authUser={authUser}
+          isCloudConfigured={isSupabaseConfigured}
           onBackToDashboard={() => navigate("/dashboard")}
           onSignIn={signInWithEmail}
           onSignOut={signOut}
@@ -2716,83 +2727,6 @@ export default function App() {
       )}
       </div>
     </main>
-  );
-}
-
-function AppChrome({
-  authLoading,
-  authUser,
-  companyName,
-  currentView,
-  onNavigate,
-  onNewContact,
-  onNewGcPacket,
-  onNewProposal,
-  onOpenLogin,
-  onSignOut,
-}) {
-  const activeView = ["new", "edit", "print"].includes(currentView) ? "list" : currentView;
-  const navItems = [
-    ["dashboard", "Dashboard", () => onNavigate("/dashboard")],
-    ["list", "Proposals", () => onNavigate("/proposals")],
-    ["contacts", "Contacts", () => onNavigate("/contacts")],
-    ["settings", "Company Settings", () => onNavigate("/settings")],
-    ["backup", "Backup / Restore", () => onNavigate("/backup")],
-  ];
-
-  return (
-    <header className="app-chrome no-print">
-      <div className="app-brand">
-        <div className="app-brand-mark">LY</div>
-        <div>
-          <p>{companyName}</p>
-          <h1>Proposal Generator</h1>
-        </div>
-      </div>
-      <nav className="app-nav" aria-label="Primary navigation">
-        {navItems.map(([view, label, action]) => (
-          <button className={activeView === view ? "active" : ""} key={view} type="button" onClick={action}>
-            {label}
-          </button>
-        ))}
-      </nav>
-      <div className="app-quick-actions">
-        <div className="app-auth-pill">
-          <span>{getAuthStatusLabel(authUser, authLoading)}</span>
-          {isSupabaseConfigured ? (
-            authUser ? (
-              <button type="button" onClick={onSignOut}>
-                Sign Out
-              </button>
-            ) : (
-              <button type="button" onClick={onOpenLogin}>
-                Sign In
-              </button>
-            )
-          ) : null}
-        </div>
-        <button type="button" onClick={onNewProposal}>
-          New Proposal
-        </button>
-        <button type="button" onClick={onNewContact}>
-          New Contact
-        </button>
-        <button className="gold-action" type="button" onClick={onNewGcPacket}>
-          New GC Packet
-        </button>
-      </div>
-    </header>
-  );
-}
-
-function LocalModeBanner({ onOpenLogin }) {
-  return (
-    <div className="local-mode-banner no-print">
-      <span>You are in local mode. Sign in to sync across devices.</span>
-      <button type="button" onClick={onOpenLogin}>
-        Sign In
-      </button>
-    </div>
   );
 }
 
@@ -2964,90 +2898,6 @@ function DashboardView({
         ) : (
           <p className="empty-list-message">No proposals yet. Start with a standard proposal or a full GC packet.</p>
         )}
-      </div>
-    </section>
-  );
-}
-
-function BackupView({ backupTools, onBackToDashboard }) {
-  return (
-    <section className="backup-page-panel no-print">
-      <div className="list-toolbar">
-        <div>
-          <p className="list-kicker">Local backup center</p>
-          <h2>Backup / Restore</h2>
-        </div>
-        <button type="button" onClick={onBackToDashboard}>
-          Back to Dashboard
-        </button>
-      </div>
-      {backupTools}
-    </section>
-  );
-}
-
-function LoginView({ authLoading, authMessage, authUser, onBackToDashboard, onSignIn, onSignOut, onSignUp }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
-  function handleSubmit(action) {
-    if (!hasTextValue(email) || !hasTextValue(password)) {
-      return;
-    }
-
-    action(email.trim(), password);
-  }
-
-  return (
-    <section className="login-panel no-print">
-      <div className="list-toolbar">
-        <div>
-          <p className="list-kicker">Supabase Auth</p>
-          <h2>Login</h2>
-        </div>
-        <button type="button" onClick={onBackToDashboard}>
-          Back to Dashboard
-        </button>
-      </div>
-
-      <div className="login-card">
-        {!isSupabaseConfigured ? (
-          <>
-            <h3>Local Mode</h3>
-            <p>Supabase is not configured. The app will keep using local browser storage.</p>
-          </>
-        ) : authUser ? (
-          <>
-            <h3>Signed In</h3>
-            <p>{authUser.email}</p>
-            <button type="button" onClick={onSignOut} disabled={authLoading}>
-              Sign Out
-            </button>
-          </>
-        ) : (
-          <>
-            <h3>Sign In or Create Account</h3>
-            <p>Authentication is available. Proposals, contacts, and company settings sync when you are signed in.</p>
-            <label>
-              <span>Email</span>
-              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
-            </label>
-            <label>
-              <span>Password</span>
-              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-            </label>
-            <div className="login-actions">
-              <button type="button" onClick={() => handleSubmit(onSignIn)} disabled={authLoading}>
-                Sign In
-              </button>
-              <button type="button" onClick={() => handleSubmit(onSignUp)} disabled={authLoading}>
-                Sign Up
-              </button>
-            </div>
-          </>
-        )}
-
-        {authMessage ? <span className="login-message">{authMessage}</span> : null}
       </div>
     </section>
   );
@@ -3311,91 +3161,6 @@ function FollowUpRow({ onOpen, proposal }) {
         Open
       </button>
     </div>
-  );
-}
-
-function Badge({ children, className = "" }) {
-  return <span className={`app-badge ${className}`}>{children}</span>;
-}
-
-function StatusBadge({ status }) {
-  return <Badge className={`status-${status || "draft"}`}>{formatOptionLabel(status || "draft")}</Badge>;
-}
-
-function BackupRestorePanel({ canExportCurrent = false, message = "", onExport, onImport }) {
-  const [importType, setImportType] = useState("proposal");
-  const [importMode, setImportMode] = useState("merge");
-  const [importFile, setImportFile] = useState(null);
-  const showMergeMode = importType === "all" || importType === "contacts" || importType === "full";
-
-  return (
-    <section className="backup-panel no-print">
-      <div>
-        <p className="list-kicker">Backup / Restore</p>
-        <h3>LocalStorage Backup Tools</h3>
-        <p className="backup-help">
-          Export JSON backups or restore proposals, company settings, and full app data. Backup JSON files are plain files and are not encrypted.
-        </p>
-        {message ? <span className="backup-message">{message}</span> : null}
-      </div>
-
-      <div className="backup-grid">
-        <div className="backup-card">
-          <h4>Export</h4>
-          <div className="backup-button-grid">
-            {canExportCurrent ? (
-              <button type="button" onClick={() => onExport("current")}>
-                Export Current Proposal
-              </button>
-            ) : null}
-            <button type="button" onClick={() => onExport("all")}>
-              Export All Proposals
-            </button>
-            <button type="button" onClick={() => onExport("settings")}>
-              Export Company Settings
-            </button>
-            <button type="button" onClick={() => onExport("contacts")}>
-              Export Contacts
-            </button>
-            <button type="button" onClick={() => onExport("full")}>
-              Export Full App Backup
-            </button>
-          </div>
-        </div>
-
-        <div className="backup-card">
-          <h4>Import</h4>
-          <div className="backup-import-grid">
-            <label>
-              <span>Import Type</span>
-              <select value={importType} onChange={(event) => setImportType(event.target.value)}>
-                <option value="proposal">One Proposal JSON</option>
-                <option value="all">All Proposals JSON</option>
-                <option value="settings">Company Settings JSON</option>
-                <option value="contacts">Contacts JSON</option>
-                <option value="full">Full App Backup JSON</option>
-              </select>
-            </label>
-            {showMergeMode ? (
-              <label>
-                <span>Import Mode</span>
-                <select value={importMode} onChange={(event) => setImportMode(event.target.value)}>
-                  <option value="merge">Merge with Existing</option>
-                  <option value="replace">Replace Existing</option>
-                </select>
-              </label>
-            ) : null}
-            <label className="backup-file-field">
-              <span>JSON File</span>
-              <input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] || null)} />
-            </label>
-            <button type="button" onClick={() => onImport(importType, showMergeMode ? importMode : "merge", importFile)}>
-              Import Selected Backup
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -3768,6 +3533,7 @@ function CompanySettingsView({
         authLoading={authLoading}
         authMessage={authMessage}
         authUser={authUser}
+        bucketName={proposalAssetsBucket}
         cloudSync={cloudSync}
         saveState={saveState}
         storageDiagnostics={storageDiagnostics}
@@ -3860,338 +3626,6 @@ function CompanySettingsView({
         </div>
       </div>
     </section>
-  );
-}
-
-function TeamAccessPanel({
-  authUser,
-  cloudSync,
-  members = [],
-  message,
-  settings,
-  onDeactivateMember,
-  onInviteMember,
-  onOpenLogin,
-  onRefreshMembers,
-}) {
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("estimator");
-  const canUseCloud = canUseCloudSync(authUser);
-  const canManage = canUseCloud && canManageTeamAccess(cloudSync.currentRole);
-  const currentRole = authUser ? formatTeamRole(cloudSync.currentRole || "owner") : "Local user";
-
-  async function handleInvite(event) {
-    event.preventDefault();
-    await onInviteMember(inviteEmail, inviteRole);
-    setInviteEmail("");
-  }
-
-  return (
-    <section className="team-access-card no-print">
-      <div className="team-access-heading">
-        <div>
-          <p className="list-kicker">Team / Access</p>
-          <h3>Team Access</h3>
-        </div>
-        <div className="cloud-status-actions">
-          {canUseCloud ? (
-            <button type="button" onClick={onRefreshMembers}>
-              Refresh Team
-            </button>
-          ) : (
-            <button type="button" onClick={onOpenLogin} disabled={!isSupabaseConfigured}>
-              Sign In to Sync
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="team-access-grid">
-        <div>
-          <span>Company</span>
-          <strong>{settings.companyName || "Last Yard Concrete LLC"}</strong>
-        </div>
-        <div>
-          <span>Signed-in email</span>
-          <strong>{authUser?.email || "Local mode"}</strong>
-        </div>
-        <div>
-          <span>Current role</span>
-          <strong>{currentRole}</strong>
-        </div>
-        <div>
-          <span>Company id</span>
-          <strong>{cloudSync.companyId || "-"}</strong>
-        </div>
-      </div>
-
-      <p className="team-access-help">
-        Owner/admin users can invite partners to the same company account. Signed-out users can continue using local browser storage.
-      </p>
-      {message ? <p className="team-access-message">{message}</p> : null}
-
-      <form className="team-invite-row" onSubmit={handleInvite}>
-        <label>
-          <span>Invite Email</span>
-          <input
-            type="email"
-            value={inviteEmail}
-            onChange={(event) => setInviteEmail(event.target.value)}
-            placeholder="partner@example.com"
-            disabled={!canManage}
-          />
-        </label>
-        <label>
-          <span>Role</span>
-          <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)} disabled={!canManage}>
-            {TEAM_INVITE_ROLES.map((role) => (
-              <option key={role} value={role}>
-                {formatTeamRole(role)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="submit" disabled={!canManage}>
-          Invite / Add Member
-        </button>
-      </form>
-
-      <div className="team-member-list">
-        {members.length > 0 ? (
-          members.map((member) => {
-            const memberEmail = member.inviteEmail || member.userId || "Pending user";
-            const isCurrentUser = member.userId && member.userId === authUser?.id;
-            const disableDeactivate = !canManage || member.role === "owner" || isCurrentUser || member.status === "inactive";
-
-            return (
-              <div className="team-member-row" key={member.id}>
-                <div>
-                  <strong>{memberEmail}</strong>
-                  <span>{member.userId ? "Linked account" : "Invite pending"}</span>
-                </div>
-                <Badge>{formatTeamRole(member.role)}</Badge>
-                <Badge className={member.status === "active" ? "status-approved" : member.status === "inactive" ? "status-rejected" : "status-sent"}>
-                  {formatOptionLabel(member.status || "invited")}
-                </Badge>
-                <button type="button" onClick={() => onDeactivateMember(member.id)} disabled={disableDeactivate}>
-                  Deactivate
-                </button>
-              </div>
-            );
-          })
-        ) : (
-          <p className="empty-list-message">No cloud team members found yet. The owner row will appear after running the Phase 33 SQL and refreshing.</p>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function CloudStatusCard({
-  authLoading,
-  authMessage,
-  authUser,
-  cloudSync,
-  saveState,
-  storageDiagnostics,
-  onClearCloudSyncMessage,
-  onOpenLogin,
-  onPullCloudData,
-  onPullCloudProposals,
-  onPushLocalDataToCloud,
-  onPushLocalProposals,
-  onSignOut,
-  onSyncContacts,
-  onSyncProposals,
-  onSyncSettings,
-  onTestStorageUpload,
-}) {
-  const cloudActionsDisabled = authLoading || cloudSync.loading || !canUseCloudSync(authUser);
-  const lastSyncError = cloudSync.lastError || (isCloudSyncErrorState(cloudSync) ? cloudSync.message : "");
-
-  return (
-    <section className="cloud-status-card no-print">
-      <div>
-        <p className="list-kicker">Cloud sync</p>
-        <h3>Cloud Status</h3>
-      </div>
-      <div className="cloud-status-grid">
-        <div>
-          <span>Cloud save</span>
-          <strong>{isSupabaseConfigured ? "Supabase configured" : "Supabase not configured"}</strong>
-        </div>
-        <div>
-          <span>Signed in</span>
-          <strong>{isSupabaseConfigured && authUser ? "Yes" : "No"}</strong>
-        </div>
-        <div>
-          <span>Current storage mode</span>
-          <strong>Local browser storage</strong>
-        </div>
-        <div>
-          <span>Settings sync</span>
-          <strong>{cloudSync.loading ? "Syncing" : cloudSync.settingsStatus}</strong>
-        </div>
-        <div>
-          <span>Proposal sync</span>
-          <strong>{cloudSync.loading ? "Syncing" : cloudSync.proposalStatus}</strong>
-        </div>
-        <div>
-          <span>Asset storage</span>
-          <strong>{canUseCloudSync(authUser) ? "Cloud storage enabled" : "Local only"}</strong>
-        </div>
-        <div>
-          <span>Contacts sync</span>
-          <strong>{cloudSync.loading ? "Syncing" : cloudSync.contactsStatus}</strong>
-        </div>
-        <div>
-          <span>Last cloud sync</span>
-          <strong>{formatCloudSyncTime(cloudSync.lastSyncedAt)}</strong>
-        </div>
-        <div>
-          <span>Last saved locally</span>
-          <strong>{formatCloudSyncTime(saveState.lastLocalSavedAt)}</strong>
-        </div>
-        <div>
-          <span>Last sync error</span>
-          <strong>{lastSyncError || "-"}</strong>
-        </div>
-        <div>
-          <span>Current role</span>
-          <strong>{authUser ? formatTeamRole(cloudSync.currentRole || "owner") : "Local user"}</strong>
-        </div>
-      </div>
-      <p>Cloud sync is enabled for proposals, company settings, contacts, and uploaded proposal assets. Legacy data URL images still render and can remain in backups.</p>
-      {authUser ? <p>Current user: {authUser.email}</p> : null}
-      {authMessage ? <p>{authMessage}</p> : null}
-      {cloudSync.message ? <p>{cloudSync.message}</p> : null}
-      <StorageDiagnosticsPanel
-        authLoading={authLoading}
-        authUser={authUser}
-        cloudSync={cloudSync}
-        diagnostics={storageDiagnostics}
-        onTestStorageUpload={onTestStorageUpload}
-      />
-      {isSupabaseConfigured ? (
-        <div className="cloud-status-actions">
-          {authUser ? (
-            <>
-              <button type="button" onClick={() => onSyncSettings()} disabled={cloudActionsDisabled}>
-                Sync Settings Now
-              </button>
-              <button type="button" onClick={() => onSyncContacts()} disabled={cloudActionsDisabled}>
-                Sync Contacts Now
-              </button>
-              <button type="button" onClick={onSyncProposals} disabled={cloudActionsDisabled}>
-                Sync Proposals Now
-              </button>
-              <button type="button" onClick={onSyncProposals} disabled={cloudActionsDisabled}>
-                Retry Sync
-              </button>
-              <button type="button" onClick={onPullCloudProposals} disabled={cloudActionsDisabled}>
-                Pull Cloud Proposals
-              </button>
-              <button type="button" onClick={() => onPushLocalProposals()} disabled={cloudActionsDisabled}>
-                Push Local Proposals
-              </button>
-              <button type="button" onClick={onPullCloudData} disabled={cloudActionsDisabled}>
-                Pull Cloud Data
-              </button>
-              <button type="button" onClick={onPushLocalDataToCloud} disabled={cloudActionsDisabled}>
-                Push Local Data to Cloud
-              </button>
-              <button type="button" onClick={onSignOut} disabled={authLoading || cloudSync.loading}>
-                Sign Out
-              </button>
-              <button type="button" onClick={onClearCloudSyncMessage}>
-                Clear Sync Message
-              </button>
-            </>
-          ) : (
-            <button type="button" onClick={onOpenLogin} disabled={authLoading}>
-              Sign In / Sign Up
-            </button>
-          )}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function StorageDiagnosticsPanel({ authLoading, authUser, cloudSync, diagnostics, onTestStorageUpload }) {
-  const assetStorageMode = canUseCloudSync(authUser) ? "cloud" : "local";
-  const companyId = diagnostics.companyId || cloudSync.companyId || "";
-
-  return (
-    <div className="storage-diagnostics-panel no-print">
-      <div className="storage-diagnostics-heading">
-        <div>
-          <p className="list-kicker">Asset storage</p>
-          <h4>Storage Diagnostics</h4>
-        </div>
-        <button type="button" onClick={onTestStorageUpload} disabled={authLoading}>
-          Test Storage Upload
-        </button>
-      </div>
-      <div className="storage-diagnostics-grid">
-        <div>
-          <span>Supabase configured</span>
-          <strong>{isSupabaseConfigured ? "Yes" : "No"}</strong>
-        </div>
-        <div>
-          <span>Signed in</span>
-          <strong>{isSupabaseConfigured && authUser ? "Yes" : "No"}</strong>
-        </div>
-        <div>
-          <span>User id</span>
-          <strong>{authUser?.id || "-"}</strong>
-        </div>
-        <div>
-          <span>Company id</span>
-          <strong>{companyId || "-"}</strong>
-        </div>
-        <div>
-          <span>Storage bucket name</span>
-          <strong>{proposalAssetsBucket}</strong>
-        </div>
-        <div>
-          <span>Asset storage mode</span>
-          <strong>{assetStorageMode}</strong>
-        </div>
-        <div>
-          <span>Last upload attempted at</span>
-          <strong>{formatCloudSyncTime(diagnostics.lastAttemptedAt)}</strong>
-        </div>
-        <div>
-          <span>Last upload type</span>
-          <strong>{diagnostics.lastUploadType || "-"}</strong>
-        </div>
-        <div>
-          <span>Last upload file name</span>
-          <strong>{diagnostics.lastFileName || "-"}</strong>
-        </div>
-        <div>
-          <span>Last upload file size</span>
-          <strong>{formatAssetFileSize(diagnostics.lastFileSize)}</strong>
-        </div>
-        <div>
-          <span>Last upload status</span>
-          <strong>{diagnostics.lastStatus || "-"}</strong>
-        </div>
-        <div className="storage-diagnostics-wide">
-          <span>Last upload storage path</span>
-          <strong>{diagnostics.lastStoragePath || "-"}</strong>
-        </div>
-        <div className="storage-diagnostics-wide">
-          <span>Last upload public URL</span>
-          <strong>{diagnostics.lastPublicUrl || "-"}</strong>
-        </div>
-        <div className="storage-diagnostics-wide">
-          <span>Last upload error message</span>
-          <strong>{diagnostics.errorMessage || "-"}</strong>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -7097,10 +6531,6 @@ function getAssetLocalStorageReason(authUser) {
   return "cloud storage is unavailable.";
 }
 
-function isCloudSyncErrorState(cloudSync = {}) {
-  return [cloudSync.contactsStatus, cloudSync.proposalStatus, cloudSync.settingsStatus].includes(cloudSyncErrorLabel);
-}
-
 function getCloudSignInMessage() {
   if (!isSupabaseConfigured) {
     return "Supabase is not configured. Proposals, contacts, and settings are stored locally.";
@@ -7111,41 +6541,6 @@ function getCloudSignInMessage() {
 
 function getCloudReadyMessage(authUser, cloudMessage, localMessage) {
   return canUseCloudSync(authUser) ? cloudMessage : localMessage;
-}
-
-function formatCloudSyncTime(value) {
-  if (!value) {
-    return "-";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.valueOf())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function formatAssetFileSize(value) {
-  const bytes = Number(value);
-
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "-";
-  }
-
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function getImageAssetSource(asset = {}) {
@@ -7404,47 +6799,6 @@ async function ensureCloudCompany(user, settings = getDefaultCompanySettings()) 
 function isMissingTeamTableError(error) {
   const message = String(error?.message || error?.details || error?.hint || "").toLowerCase();
   return error?.code === "42P01" || message.includes("company_members") || message.includes("does not exist");
-}
-
-function normalizeTeamRole(role) {
-  const normalizedRole = String(role || "").trim().toLowerCase();
-  return TEAM_ROLES.includes(normalizedRole) ? normalizedRole : "viewer";
-}
-
-function formatTeamRole(role) {
-  if (String(role || "").trim().toLowerCase() === "local") {
-    return "Local user";
-  }
-
-  const normalizedRole = normalizeTeamRole(role);
-  if (normalizedRole === "owner") {
-    return "Owner";
-  }
-  if (normalizedRole === "admin") {
-    return "Admin";
-  }
-  if (normalizedRole === "estimator") {
-    return "Estimator";
-  }
-  return "Viewer";
-}
-
-function canManageTeamAccess(role) {
-  const normalizedRole = normalizeTeamRole(role);
-  return normalizedRole === "owner" || normalizedRole === "admin";
-}
-
-function normalizeTeamMember(row = {}) {
-  return {
-    companyId: row.company_id || row.companyId || "",
-    createdAt: row.created_at || row.createdAt || "",
-    id: row.id || createId("team"),
-    inviteEmail: String(row.invite_email || row.inviteEmail || "").trim().toLowerCase(),
-    role: normalizeTeamRole(row.role),
-    status: String(row.status || "invited").trim().toLowerCase(),
-    updatedAt: row.updated_at || row.updatedAt || "",
-    userId: row.user_id || row.userId || "",
-  };
 }
 
 async function fetchCloudCompanyById(companyId) {
@@ -9178,24 +8532,6 @@ function formatInputDate(date) {
   return `${year}-${month}-${day}`;
 }
 
-function formatDisplayDate(value) {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(`${value}T00:00:00`);
-
-  if (Number.isNaN(date.valueOf())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
-}
-
 function formatRevisionLabel(revisionNumber = 0) {
   return `Rev ${normalizeRevisionNumber(revisionNumber)}`;
 }
@@ -9325,24 +8661,6 @@ function getDateOnlyTimestamp(value) {
   const date = new Date(`${value}T00:00:00`);
 
   return Number.isNaN(date.valueOf()) ? Number.POSITIVE_INFINITY : date.valueOf();
-}
-
-function formatDashboardDate(value) {
-  if (!value) {
-    return "Not saved";
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.valueOf())) {
-    return formatDisplayDate(value) || value;
-  }
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(date);
 }
 
 function buildDashboardStats(proposals = [], contacts = []) {
@@ -10830,39 +10148,6 @@ function buildTermsCopy(terms) {
   ].filter(hasTextValue);
 
   return copyParts.length > 0 ? `Payment terms: ${copyParts.join(" ")}` : "";
-}
-
-function formatOptionLabel(value) {
-  if (!value) {
-    return "Select";
-  }
-
-  const labels = {
-    add_alternate: "Add Alternate",
-    allowance: "Allowance",
-    base_bid: "Base Bid",
-    deduct_alternate: "Deduct Alternate",
-    detail_notes: "Detail Notes",
-    general_backup: "General Backup",
-    gc_prime: "GC / Prime Contractor",
-    plan_takeoff_sheet: "Plan Takeoff Sheet",
-    public_municipal: "Public / Municipal",
-    pricing_summary: "Pricing Summary",
-    proposal_notes: "Proposal Notes",
-    schedule_of_values: "Schedule of Values",
-    shade_footing_estimate: "Shade Footing Estimate",
-    takeoff_quantities: "Takeoff Quantities",
-    unit_price: "Unit Price",
-  };
-
-  if (labels[value]) {
-    return labels[value];
-  }
-
-  return value
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
 }
 
 function buildConcreteSpecRows(concreteSpecs = {}) {
