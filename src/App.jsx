@@ -16,9 +16,19 @@ import {
 const logoSrc = "/assets/last-yard-logo.jpg";
 const storageKey = "last-yard-proposals-v1";
 const companySettingsStorageKey = "last-yard-company-settings-v1";
+const contactsStorageKey = "last-yard-contacts-v1";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
 const SENT_METHODS = ["", "Email", "Text", "In Person", "Portal Upload", "Other"];
+const CONTACT_TYPES = [
+  "",
+  "GC / Prime",
+  "Commercial Client",
+  "Residential Client",
+  "Property Manager",
+  "Builder",
+  "Other",
+];
 
 const trustCards = [
   ["shield", "PROVEN RELIABILITY", "On time. On budget. Built to last."],
@@ -182,6 +192,7 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState(() => loadCompanySettings());
   const [settingsMessage, setSettingsMessage] = useState("");
   const [savedProposals, setSavedProposals] = useState(() => loadSavedProposals(loadCompanySettings()));
+  const [savedContacts, setSavedContacts] = useState(() => loadSavedContacts());
   const [route, setRoute] = useState(() => parseRoute(window.location.pathname));
   const [proposalDraft, setProposalDraft] = useState(() =>
     getInitialProposalForRoute(parseRoute(window.location.pathname), loadSavedProposals(loadCompanySettings()), loadCompanySettings()),
@@ -193,6 +204,10 @@ export default function App() {
   const [smartPasteNotes, setSmartPasteNotes] = useState("");
   const [smartPasteResult, setSmartPasteResult] = useState(null);
   const [backupMessage, setBackupMessage] = useState("");
+  const [contactDraft, setContactDraft] = useState(() => createEmptyContact());
+  const [contactSearchQuery, setContactSearchQuery] = useState("");
+  const [contactTypeFilter, setContactTypeFilter] = useState("all");
+  const [contactMessage, setContactMessage] = useState("");
   const [proposalDirty, setProposalDirty] = useState(false);
   const company = proposalDraft.company;
   const isDashboardView = route.view === "dashboard";
@@ -200,12 +215,17 @@ export default function App() {
   const isPrintView = route.view === "print";
   const isSettingsView = route.view === "settings";
   const isBackupView = route.view === "backup";
+  const isContactsView = route.view === "contacts";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
   const proposalValidation = validateProposalCompleteness(proposalDraft);
 
   useEffect(() => {
     saveStoredProposals(savedProposals);
   }, [savedProposals]);
+
+  useEffect(() => {
+    saveStoredContacts(savedContacts);
+  }, [savedContacts]);
 
   useEffect(() => {
     saveCompanySettings(companySettings);
@@ -243,7 +263,7 @@ export default function App() {
     function handlePrintShortcut(event) {
       const isPrintShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p";
 
-      if (!isPrintShortcut || isDashboardView || isListView || isSettingsView || isBackupView) {
+      if (!isPrintShortcut || isDashboardView || isListView || isSettingsView || isBackupView || isContactsView) {
         return;
       }
 
@@ -257,7 +277,7 @@ export default function App() {
 
     window.addEventListener("keydown", handlePrintShortcut);
     return () => window.removeEventListener("keydown", handlePrintShortcut);
-  }, [isBackupView, isDashboardView, isListView, isSettingsView, proposalDraft]);
+  }, [isBackupView, isContactsView, isDashboardView, isListView, isSettingsView, proposalDraft]);
 
   useEffect(() => {
     if (validationNotice && proposalValidation.errors.length === 0) {
@@ -375,6 +395,93 @@ export default function App() {
     const defaults = getDefaultCompanySettings();
     setSettingsDraft(defaults);
     setSettingsMessage("Company settings reset to Last Yard defaults. Save to keep these defaults.");
+  }
+
+  function startNewContact() {
+    setContactDraft(createEmptyContact());
+    setContactMessage("Ready for a new contact.");
+    navigate("/contacts");
+  }
+
+  function editContact(contact) {
+    setContactDraft(normalizeContact(contact));
+    setContactMessage(`Editing ${formatContactName(contact)}.`);
+  }
+
+  function updateContactDraft(field, value) {
+    setContactDraft((currentContact) => ({
+      ...currentContact,
+      [field]: value,
+    }));
+  }
+
+  function saveContact() {
+    const normalizedContact = normalizeContact({
+      ...contactDraft,
+      updatedAt: new Date().toISOString(),
+    });
+
+    if (!hasTextValue(normalizedContact.companyName) && !hasTextValue(normalizedContact.contactName)) {
+      setContactMessage("Enter a company name or contact name before saving.");
+      return;
+    }
+
+    setSavedContacts((currentContacts) => upsertContact(currentContacts, normalizedContact));
+    setContactDraft(normalizedContact);
+    setContactMessage(`Saved ${formatContactName(normalizedContact)}.`);
+  }
+
+  function deleteContact(contactId) {
+    const contact = savedContacts.find((item) => item.id === contactId);
+
+    if (!contact) {
+      return;
+    }
+
+    const linkedCount = getProposalCountForContact(contactId, savedProposals);
+    const suffix = linkedCount > 0 ? ` This will not delete ${linkedCount} linked proposal${linkedCount === 1 ? "" : "s"}.` : "";
+
+    if (!window.confirm(`Delete ${formatContactName(contact)} from saved contacts?${suffix}`)) {
+      return;
+    }
+
+    setSavedContacts((currentContacts) => currentContacts.filter((item) => item.id !== contactId));
+
+    if (contactDraft.id === contactId) {
+      setContactDraft(createEmptyContact());
+    }
+
+    setContactMessage(`Deleted ${formatContactName(contact)} from contacts. Linked proposals were left untouched.`);
+  }
+
+  function applyContactToCurrentProposal(contactId) {
+    if (!contactId) {
+      setProposalDirty(true);
+      setProposalDraft((currentProposal) => createEditableProposal({ ...currentProposal, contactId: "" }));
+      return;
+    }
+
+    const contact = savedContacts.find((item) => item.id === contactId);
+
+    if (!contact) {
+      return;
+    }
+
+    const currentProposal = proposalDraft;
+
+    if (proposalHasContactConflicts(currentProposal, contact)) {
+      const shouldOverwrite = window.confirm(
+        `Use ${formatContactName(contact)} for this proposal? This will replace existing client/contact fields that already have values.`,
+      );
+
+      if (!shouldOverwrite) {
+        return;
+      }
+    }
+
+    setProposalDirty(true);
+    setProposalDraft((currentProposalValue) => createEditableProposal(applyContactToProposal(currentProposalValue, contact)));
+    setSaveMessage(`Linked ${formatContactName(contact)} to this proposal.`);
   }
 
   function saveCurrentProposal() {
@@ -799,7 +906,9 @@ export default function App() {
     }
 
     setProposalDirty(true);
-    setProposalDraft((currentProposal) => createEditableProposal(applyParsedNotesToProposal(currentProposal, parsedNotes)));
+    setProposalDraft((currentProposal) =>
+      createEditableProposal(linkProposalToMatchingContact(applyParsedNotesToProposal(currentProposal, parsedNotes), savedContacts)),
+    );
     setSmartPasteResult({
       fields: parsedNotes.fields,
       lineItemCount: parsedLineItemCount,
@@ -830,9 +939,17 @@ export default function App() {
         return;
       }
 
+      if (type === "contacts") {
+        downloadJsonFile(createContactsExport(savedContacts), getContactsBackupFileName());
+        setBackupMessage(`Exported ${savedContacts.length} contacts.`);
+        return;
+      }
+
       if (type === "full") {
-        downloadJsonFile(createFullAppBackup(savedProposals, companySettings), getFullBackupFileName());
-        setBackupMessage(`Exported full app backup with ${savedProposals.length} proposals and company settings.`);
+        downloadJsonFile(createFullAppBackup(savedProposals, companySettings, savedContacts), getFullBackupFileName());
+        setBackupMessage(
+          `Exported full app backup with ${savedProposals.length} proposals, ${savedContacts.length} contacts, and company settings.`,
+        );
       }
     } catch (error) {
       setBackupMessage(`Export failed: ${error.message}`);
@@ -882,6 +999,21 @@ export default function App() {
         return;
       }
 
+      if (type === "contacts") {
+        const importedContacts = parseContactCollectionImport(importedJson);
+        const nextContacts = mergeOrReplaceImportedContacts(importedContacts, savedContacts, mode, "contacts");
+
+        if (!nextContacts) {
+          setBackupMessage("Import cancelled.");
+          return;
+        }
+
+        setSavedContacts(nextContacts);
+        setContactDraft(createEmptyContact());
+        setBackupMessage(`${mode === "replace" ? "Replaced" : "Merged"} ${importedContacts.length} imported contacts.`);
+        return;
+      }
+
       if (type === "full") {
         const importedBackup = parseFullAppBackupImport(importedJson);
         const nextProposals = mergeOrReplaceImportedProposals(
@@ -897,11 +1029,16 @@ export default function App() {
         }
 
         setSavedProposals(nextProposals);
+        setSavedContacts(
+          mode === "replace"
+            ? importedBackup.contacts.map((contact) => normalizeContact(contact))
+            : mergeImportedContacts(importedBackup.contacts, savedContacts),
+        );
         setCompanySettings(importedBackup.companySettings);
         setSettingsDraft(importedBackup.companySettings);
         syncDraftAfterProposalRestore(nextProposals);
         setBackupMessage(
-          `${mode === "replace" ? "Restored" : "Merged"} full backup with ${importedBackup.proposals.length} proposals and company settings.`,
+          `${mode === "replace" ? "Restored" : "Merged"} full backup with ${importedBackup.proposals.length} proposals, ${importedBackup.contacts.length} contacts, and company settings.`,
         );
       }
     } catch (error) {
@@ -917,7 +1054,7 @@ export default function App() {
       return;
     }
 
-    if (!isListView && !isSettingsView && nextProposals.length > 0) {
+    if (!isListView && !isSettingsView && !isContactsView && !isBackupView && nextProposals.length > 0) {
       navigate(`/proposals/${nextProposals[0].id}`, { proposal: nextProposals[0], replace: true });
     }
   }
@@ -944,6 +1081,7 @@ export default function App() {
           companyName={company.name}
           currentView={route.view}
           onNavigate={navigate}
+          onNewContact={startNewContact}
           onNewGcPacket={createNewGcPacket}
           onNewProposal={createNewProposal}
         />
@@ -952,13 +1090,16 @@ export default function App() {
       <div className={isPrintView ? "" : "app-content"}>
       {isDashboardView ? (
         <DashboardView
+          contacts={savedContacts}
           proposals={savedProposals}
           onCreateCommercialProposal={createNewCommercialProposal}
+          onCreateContact={startNewContact}
           onCreateGcPacket={createNewGcPacket}
           onCreateProposal={createNewProposal}
           onCreateResidentialProposal={createNewResidentialProposal}
           onExportBackup={() => navigate("/backup")}
           onOpen={openProposal}
+          onOpenContacts={() => navigate("/contacts")}
           onOpenList={() => navigate("/proposals")}
           onOpenPrint={openProposalPrintView}
           onOpenSettings={() => navigate("/settings")}
@@ -975,9 +1116,28 @@ export default function App() {
           onReset={resetSettingsDraft}
           onSave={saveSettings}
         />
+      ) : isContactsView ? (
+        <ContactsView
+          contactDraft={contactDraft}
+          contacts={savedContacts}
+          message={contactMessage}
+          proposals={savedProposals}
+          searchQuery={contactSearchQuery}
+          typeFilter={contactTypeFilter}
+          onBackToDashboard={() => navigate("/dashboard")}
+          onDelete={deleteContact}
+          onEdit={editContact}
+          onNew={startNewContact}
+          onOpenProposal={openProposal}
+          onSave={saveContact}
+          onSearchChange={setContactSearchQuery}
+          onTypeFilterChange={setContactTypeFilter}
+          onUpdateDraft={updateContactDraft}
+        />
       ) : isListView ? (
         <ProposalListView
           backupTools={backupTools}
+          contacts={savedContacts}
           proposals={savedProposals}
           searchQuery={searchQuery}
           statusFilter={statusFilter}
@@ -1025,6 +1185,7 @@ export default function App() {
             {isPrintView ? null : (
               <ProposalEditor
                 proposal={proposalDraft}
+                contacts={savedContacts}
                 showTemplatePicker={route.view === "new"}
                 onAddLineItem={addLineItem}
                 onAddPricingSection={addPricingSection}
@@ -1053,6 +1214,7 @@ export default function App() {
                 onRemoveGcPacketTableRow={removeGcPacketTableRow}
                 onSmartPasteFill={fillProposalFromNotes}
                 onSmartPasteNotesChange={setSmartPasteNotes}
+                onSelectContact={applyContactToCurrentProposal}
                 smartPasteNotes={smartPasteNotes}
                 smartPasteResult={smartPasteResult}
                 validation={proposalValidation}
@@ -1070,11 +1232,12 @@ export default function App() {
   );
 }
 
-function AppChrome({ companyName, currentView, onNavigate, onNewGcPacket, onNewProposal }) {
+function AppChrome({ companyName, currentView, onNavigate, onNewContact, onNewGcPacket, onNewProposal }) {
   const activeView = ["new", "edit", "print"].includes(currentView) ? "list" : currentView;
   const navItems = [
     ["dashboard", "Dashboard", () => onNavigate("/dashboard")],
     ["list", "Proposals", () => onNavigate("/proposals")],
+    ["contacts", "Contacts", () => onNavigate("/contacts")],
     ["settings", "Company Settings", () => onNavigate("/settings")],
     ["backup", "Backup / Restore", () => onNavigate("/backup")],
   ];
@@ -1099,6 +1262,9 @@ function AppChrome({ companyName, currentView, onNavigate, onNewGcPacket, onNewP
         <button type="button" onClick={onNewProposal}>
           New Proposal
         </button>
+        <button type="button" onClick={onNewContact}>
+          New Contact
+        </button>
         <button className="gold-action" type="button" onClick={onNewGcPacket}>
           New GC Packet
         </button>
@@ -1108,18 +1274,21 @@ function AppChrome({ companyName, currentView, onNavigate, onNewGcPacket, onNewP
 }
 
 function DashboardView({
+  contacts = [],
   proposals,
   onCreateCommercialProposal,
+  onCreateContact,
   onCreateGcPacket,
   onCreateProposal,
   onCreateResidentialProposal,
   onExportBackup,
   onOpen,
+  onOpenContacts,
   onOpenList,
   onOpenPrint,
   onOpenSettings,
 }) {
-  const stats = buildDashboardStats(proposals);
+  const stats = buildDashboardStats(proposals, contacts);
   const recentProposals = getRecentProposals(proposals);
   const followUpProposals = getFollowUpDueProposals(proposals);
 
@@ -1144,8 +1313,14 @@ function DashboardView({
           <button type="button" onClick={onCreateResidentialProposal}>
             New Residential Proposal
           </button>
+          <button type="button" onClick={onCreateContact}>
+            New Contact
+          </button>
           <button type="button" onClick={onOpenList}>
             Open Proposals
+          </button>
+          <button type="button" onClick={onOpenContacts}>
+            Contacts
           </button>
           <button type="button" onClick={onOpenSettings}>
             Company Settings
@@ -1219,6 +1394,7 @@ function DashboardView({
             {recentProposals.map((proposal) => (
               <ProposalSummaryRow
                 key={proposal.id}
+                contacts={contacts}
                 proposal={proposal}
                 onOpen={onOpen}
                 onPrint={onOpenPrint}
@@ -1251,9 +1427,176 @@ function BackupView({ backupTools, onBackToDashboard }) {
   );
 }
 
-function ProposalSummaryRow({ compact = false, onDuplicate, onExport, onOpen, onPrint, proposal }) {
+function ContactsView({
+  contactDraft,
+  contacts,
+  message,
+  proposals,
+  searchQuery,
+  typeFilter,
+  onBackToDashboard,
+  onDelete,
+  onEdit,
+  onNew,
+  onOpenProposal,
+  onSave,
+  onSearchChange,
+  onTypeFilterChange,
+  onUpdateDraft,
+}) {
+  const filteredContacts = contacts.filter((contact) => {
+    const searchText = [contact.companyName, contact.contactName, contact.phone, contact.email].filter(Boolean).join(" ").toLowerCase();
+    const matchesSearch = searchText.includes(searchQuery.trim().toLowerCase());
+    const matchesType = typeFilter === "all" || contact.contactType === typeFilter;
+
+    return matchesSearch && matchesType;
+  });
+
+  const linkedProposals = contactDraft.id ? proposals.filter((proposal) => proposal.contactId === contactDraft.id) : [];
+
+  return (
+    <section className="contacts-panel no-print">
+      <div className="list-toolbar">
+        <div>
+          <p className="list-kicker">Local client database</p>
+          <h2>Customer / GC Contacts</h2>
+          {message ? <span className="settings-message">{message}</span> : null}
+        </div>
+        <div className="settings-actions">
+          <button type="button" onClick={onBackToDashboard}>
+            Back to Dashboard
+          </button>
+          <button type="button" onClick={onNew}>
+            New Contact
+          </button>
+          <button type="button" onClick={onSave}>
+            Save Contact
+          </button>
+        </div>
+      </div>
+
+      <div className="contacts-layout">
+        <div className="contact-form-card">
+          <div className="contact-form-heading">
+            <p className="list-kicker">{contactDraft.id ? "Edit contact" : "New contact"}</p>
+            <h3>{formatContactName(contactDraft) || "Contact Details"}</h3>
+          </div>
+          <div className="contact-form-grid">
+            <EditorField label="Company Name" path="contact.companyName" value={contactDraft.companyName} onChange={(_, value) => onUpdateDraft("companyName", value)} />
+            <EditorField label="Contact Name" path="contact.contactName" value={contactDraft.contactName} onChange={(_, value) => onUpdateDraft("contactName", value)} />
+            <EditorField label="Phone" path="contact.phone" value={contactDraft.phone} onChange={(_, value) => onUpdateDraft("phone", value)} />
+            <EditorField label="Email" path="contact.email" type="email" value={contactDraft.email} onChange={(_, value) => onUpdateDraft("email", value)} />
+            <EditorField
+              label="Contact Type"
+              path="contact.contactType"
+              value={contactDraft.contactType}
+              onChange={(_, value) => onUpdateDraft("contactType", value)}
+              options={CONTACT_TYPES}
+            />
+            <EditorField
+              label="Default Project Address"
+              path="contact.defaultProjectAddress"
+              value={contactDraft.defaultProjectAddress}
+              onChange={(_, value) => onUpdateDraft("defaultProjectAddress", value)}
+            />
+            <div className="contact-wide-field">
+              <EditorField
+                label="Billing Address"
+                path="contact.billingAddress"
+                value={contactDraft.billingAddress}
+                onChange={(_, value) => onUpdateDraft("billingAddress", value)}
+                multiline
+              />
+            </div>
+            <div className="contact-wide-field">
+              <EditorField
+                label="Notes"
+                path="contact.notes"
+                value={contactDraft.notes}
+                onChange={(_, value) => onUpdateDraft("notes", value)}
+                multiline
+              />
+            </div>
+          </div>
+
+          {linkedProposals.length > 0 ? (
+            <div className="contact-linked-proposals">
+              <strong>Linked proposals</strong>
+              {linkedProposals.slice(0, 5).map((proposal) => (
+                <button key={proposal.id} type="button" onClick={() => onOpenProposal(proposal.id)}>
+                  {formatProposalNumberWithRevision(proposal)} - {proposal.project?.name || "Untitled project"}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="contact-form-actions">
+            <button type="button" onClick={onSave}>
+              Save Contact
+            </button>
+          </div>
+        </div>
+
+        <div className="contacts-list-card">
+          <div className="list-filters contact-filters">
+            <label>
+              <span>Search Contacts</span>
+              <input
+                type="search"
+                value={searchQuery}
+                placeholder="Company, contact, phone, or email"
+                onChange={(event) => onSearchChange(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Contact Type</span>
+              <select value={typeFilter} onChange={(event) => onTypeFilterChange(event.target.value)}>
+                <option value="all">All contact types</option>
+                {CONTACT_TYPES.filter(Boolean).map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="contacts-list">
+            {filteredContacts.map((contact) => {
+              const proposalCount = getProposalCountForContact(contact.id, proposals);
+
+              return (
+                <article className="contact-row" key={contact.id}>
+                  <div>
+                    <strong>{formatContactName(contact)}</strong>
+                    <span>{contact.contactType || "Other"}</span>
+                    <small>{[contact.phone, contact.email].filter(Boolean).join(" | ") || "No phone/email entered"}</small>
+                    <small>{proposalCount} linked proposal{proposalCount === 1 ? "" : "s"}</small>
+                  </div>
+                  <div className="contact-row-actions">
+                    <button type="button" onClick={() => onEdit(contact)}>
+                      Edit
+                    </button>
+                    <button type="button" onClick={() => onDelete(contact.id)}>
+                      Delete
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          {filteredContacts.length === 0 ? <p className="empty-list-message">No contacts match those filters.</p> : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ProposalSummaryRow({ compact = false, contacts = [], onDuplicate, onExport, onOpen, onPrint, proposal }) {
   const total = calculateProposalTotals(proposal).total;
   const packetMode = getPacketModeLabel(proposal);
+  const linkedContact = getLinkedContact(proposal, contacts);
 
   return (
     <div className={`proposal-summary-row ${compact ? "compact" : ""}`}>
@@ -1261,6 +1604,7 @@ function ProposalSummaryRow({ compact = false, onDuplicate, onExport, onOpen, on
         <strong>{formatProposalNumberWithRevision(proposal) || "No proposal #"}</strong>
         <span>{proposal.project?.name || "Untitled project"}</span>
         <small>{proposal.client?.companyName || proposal.client?.contactName || "No client entered"}</small>
+        {linkedContact ? <small>Linked: {formatContactName(linkedContact)}</small> : null}
       </div>
       <div className="proposal-summary-meta">
         <Badge>{formatOptionLabel(proposal.proposalType ?? proposal.type)}</Badge>
@@ -1334,7 +1678,7 @@ function BackupRestorePanel({ canExportCurrent = false, message = "", onExport, 
   const [importType, setImportType] = useState("proposal");
   const [importMode, setImportMode] = useState("merge");
   const [importFile, setImportFile] = useState(null);
-  const showMergeMode = importType === "all" || importType === "full";
+  const showMergeMode = importType === "all" || importType === "contacts" || importType === "full";
 
   return (
     <section className="backup-panel no-print">
@@ -1360,6 +1704,9 @@ function BackupRestorePanel({ canExportCurrent = false, message = "", onExport, 
             <button type="button" onClick={() => onExport("settings")}>
               Export Company Settings
             </button>
+            <button type="button" onClick={() => onExport("contacts")}>
+              Export Contacts
+            </button>
             <button type="button" onClick={() => onExport("full")}>
               Export Full App Backup
             </button>
@@ -1375,6 +1722,7 @@ function BackupRestorePanel({ canExportCurrent = false, message = "", onExport, 
                 <option value="proposal">One Proposal JSON</option>
                 <option value="all">All Proposals JSON</option>
                 <option value="settings">Company Settings JSON</option>
+                <option value="contacts">Contacts JSON</option>
                 <option value="full">Full App Backup JSON</option>
               </select>
             </label>
@@ -1403,6 +1751,7 @@ function BackupRestorePanel({ canExportCurrent = false, message = "", onExport, 
 
 function ProposalListView({
   backupTools,
+  contacts = [],
   proposals,
   searchQuery,
   statusFilter,
@@ -1417,11 +1766,15 @@ function ProposalListView({
   onStatusFilterChange,
 }) {
   const filteredProposals = proposals.filter((proposal) => {
+    const linkedContact = getLinkedContact(proposal, contacts);
     const searchText = [
       proposal.client?.companyName,
       proposal.client?.contactName,
       proposal.project?.name,
       proposal.gcPrime?.contractorName,
+      linkedContact?.companyName,
+      linkedContact?.contactName,
+      linkedContact?.email,
     ]
       .filter(Boolean)
       .join(" ")
@@ -1499,6 +1852,7 @@ function ProposalListView({
             {filteredProposals.map((proposal) => {
               const total = calculateProposalTotals(proposal).total;
               const packetMode = getPacketModeLabel(proposal);
+              const linkedContact = getLinkedContact(proposal, contacts);
 
               return (
                 <tr key={proposal.id} onClick={() => onOpen(proposal.id)}>
@@ -1510,6 +1864,7 @@ function ProposalListView({
                   <td>
                     <strong>{proposal.client?.companyName}</strong>
                     <span>{proposal.client?.contactName}</span>
+                    {linkedContact ? <span>Linked: {formatContactName(linkedContact)}</span> : null}
                   </td>
                   <td>{proposal.project?.name}</td>
                   <td>{formatOptionLabel(proposal.proposalType ?? proposal.type)}</td>
@@ -1763,9 +2118,9 @@ function RevisionHistory({ currentProposalId, revisions = [] }) {
         {visibleRevisions.map((revision) => (
           <span className={revision.id === currentProposalId ? "active" : ""} key={revision.id}>
             {revision.revisionLabel || formatRevisionLabel(revision.revisionNumber)}
-            {" · "}
+            {" | "}
             {formatDisplayDate(revision.revisionDate || revision.proposalDate)}
-            {" · "}
+            {" | "}
             {formatCurrency(calculateProposalTotals(revision).total)}
           </span>
         ))}
@@ -1812,6 +2167,7 @@ function ValidationPanel({ className = "", notice = "", validation }) {
 }
 
 function ProposalEditor({
+  contacts = [],
   proposal,
   showTemplatePicker = false,
   onAddLineItem,
@@ -1841,6 +2197,7 @@ function ProposalEditor({
   onRemoveGcPacketTableRow,
   onSmartPasteFill,
   onSmartPasteNotesChange,
+  onSelectContact,
   validation,
   validationNotice,
   smartPasteNotes,
@@ -1863,6 +2220,8 @@ function ProposalEditor({
         onFill={onSmartPasteFill}
         onNotesChange={onSmartPasteNotesChange}
       />
+
+      <ContactSelector contacts={contacts} proposal={proposal} onSelectContact={onSelectContact} />
 
       <EditorSection title="Proposal Info">
         <EditorField
@@ -3006,6 +3365,36 @@ function GcPrimeEditor({ gcPrime, onChange }) {
   );
 }
 
+function ContactSelector({ contacts = [], proposal, onSelectContact }) {
+  const linkedContact = getLinkedContact(proposal, contacts);
+
+  return (
+    <EditorSection title="Select Saved Contact">
+      {contacts.length > 0 ? (
+        <label className="editor-field contact-select-field" htmlFor="field-contact-id">
+          <span>Saved Contact</span>
+          <select id="field-contact-id" value={proposal.contactId || ""} onChange={(event) => onSelectContact(event.target.value)}>
+            <option value="">No saved contact selected</option>
+            {contacts.map((contact) => (
+              <option key={contact.id} value={contact.id}>
+                {formatContactOption(contact)}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <p className="contact-selector-empty">No saved contacts yet. Add contacts from the Contacts page.</p>
+      )}
+      {linkedContact ? (
+        <p className="contact-selector-note">
+          Linked to {formatContactName(linkedContact)}
+          {linkedContact.email ? ` | ${linkedContact.email}` : ""}
+        </p>
+      ) : null}
+    </EditorSection>
+  );
+}
+
 function EditorSection({ title, children }) {
   return (
     <section className="editor-section">
@@ -4057,6 +4446,10 @@ function parseRoute(pathname) {
     return { view: "settings", path: "/settings" };
   }
 
+  if (segments[0] === "contacts") {
+    return { view: "contacts", path: "/contacts" };
+  }
+
   if (segments[0] !== "proposals") {
     return { view: "list", path: "/proposals" };
   }
@@ -4144,6 +4537,32 @@ function saveCompanySettings(settings) {
   }
 }
 
+function loadSavedContacts() {
+  try {
+    const storedValue = window.localStorage.getItem(contactsStorageKey);
+
+    if (storedValue) {
+      const parsedValue = JSON.parse(storedValue);
+
+      if (Array.isArray(parsedValue)) {
+        return parsedValue.filter(isPlainObject).map((contact) => normalizeContact(contact));
+      }
+    }
+  } catch {
+    // Fall through to an empty contact list if local storage is unavailable or malformed.
+  }
+
+  return [];
+}
+
+function saveStoredContacts(contacts) {
+  try {
+    window.localStorage.setItem(contactsStorageKey, JSON.stringify(contacts));
+  } catch {
+    // Local contact saving is best-effort for this phase.
+  }
+}
+
 function createProposalExport(proposal) {
   return {
     backupVersion,
@@ -4176,7 +4595,18 @@ function createCompanySettingsExport(settings) {
   };
 }
 
-function createFullAppBackup(proposals, settings) {
+function createContactsExport(contacts) {
+  return {
+    backupVersion,
+    exportedAt: new Date().toISOString(),
+    source: backupSource,
+    type: "contacts",
+    storageKey: contactsStorageKey,
+    contacts: cloneObject(contacts),
+  };
+}
+
+function createFullAppBackup(proposals, settings, contacts = []) {
   return {
     backupVersion,
     exportedAt: new Date().toISOString(),
@@ -4185,9 +4615,11 @@ function createFullAppBackup(proposals, settings) {
     storageKeys: {
       proposals: storageKey,
       companySettings: companySettingsStorageKey,
+      contacts: contactsStorageKey,
     },
     proposals: cloneObject(proposals),
     companySettings: cloneObject(settings),
+    contacts: cloneObject(contacts),
   };
 }
 
@@ -4256,6 +4688,16 @@ function parseCompanySettingsImport(importedJson) {
   return normalizeCompanySettings(settings);
 }
 
+function parseContactCollectionImport(importedJson) {
+  const contacts = Array.isArray(importedJson) ? importedJson : importedJson?.contacts;
+
+  if (!Array.isArray(contacts)) {
+    throw new Error("This file does not include a contacts array.");
+  }
+
+  return contacts.filter(isPlainObject).map((contact) => normalizeContact(contact));
+}
+
 function parseFullAppBackupImport(importedJson) {
   if (!isPlainObject(importedJson) || (!Array.isArray(importedJson.proposals) && !isPlainObject(importedJson.companySettings))) {
     throw new Error("This file does not look like a full app backup.");
@@ -4264,6 +4706,7 @@ function parseFullAppBackupImport(importedJson) {
   return {
     proposals: parseProposalCollectionImport(importedJson),
     companySettings: parseCompanySettingsImport(importedJson.companySettings || importedJson),
+    contacts: Array.isArray(importedJson.contacts) ? parseContactCollectionImport(importedJson) : [],
   };
 }
 
@@ -4282,6 +4725,26 @@ function mergeOrReplaceImportedProposals(importedProposals, existingProposals, m
     const resolvedProposal = resolveImportedProposalIdentity(createEditableProposal(proposal), proposals);
     return upsertProposal(proposals, resolvedProposal);
   }, existingProposals);
+}
+
+function mergeOrReplaceImportedContacts(importedContacts, existingContacts, mode, label) {
+  if (mode === "replace") {
+    const confirmed = window.confirm(`Replace existing contacts with ${label}? This cannot be undone unless you have a backup.`);
+
+    if (!confirmed) {
+      return null;
+    }
+
+    return importedContacts.map((contact) => normalizeContact(contact));
+  }
+
+  return mergeImportedContacts(importedContacts, existingContacts);
+}
+
+function mergeImportedContacts(importedContacts = [], existingContacts = []) {
+  return importedContacts.reduce((contacts, contact) => upsertContact(contacts, resolveImportedContactIdentity(contact, contacts)), [
+    ...existingContacts,
+  ]);
 }
 
 function resolveImportedProposalIdentity(proposal, existingProposals = []) {
@@ -4303,6 +4766,18 @@ function resolveImportedProposalIdentity(proposal, existingProposals = []) {
   }
 
   return importedProposal;
+}
+
+function resolveImportedContactIdentity(contact, existingContacts = []) {
+  const normalizedContact = normalizeContact(contact);
+  const existingIds = new Set(existingContacts.map((item) => item.id));
+
+  if (!normalizedContact.id || existingIds.has(normalizedContact.id)) {
+    normalizedContact.id = createProposalId();
+  }
+
+  normalizedContact.updatedAt = new Date().toISOString();
+  return normalizedContact;
 }
 
 function isProposalLike(value) {
@@ -4334,6 +4809,10 @@ function getAllProposalsBackupFileName() {
 
 function getCompanySettingsBackupFileName() {
   return `Last_Yard_Company_Settings_${getBackupDateStamp()}.json`;
+}
+
+function getContactsBackupFileName() {
+  return `Last_Yard_Contacts_Backup_${getBackupDateStamp()}.json`;
 }
 
 function getFullBackupFileName() {
@@ -4536,6 +5015,131 @@ function upsertProposal(proposals, proposal) {
   return [normalizedProposal, ...otherProposals];
 }
 
+function createEmptyContact() {
+  const now = new Date().toISOString();
+
+  return {
+    id: createProposalId(),
+    companyName: "",
+    contactName: "",
+    phone: "",
+    email: "",
+    billingAddress: "",
+    defaultProjectAddress: "",
+    contactType: "",
+    notes: "",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function normalizeContact(contact = {}) {
+  const now = new Date().toISOString();
+  const contactType = CONTACT_TYPES.includes(contact.contactType) ? contact.contactType : "";
+
+  return {
+    id: contact.id || createProposalId(),
+    companyName: contact.companyName || "",
+    contactName: contact.contactName || "",
+    phone: contact.phone || "",
+    email: contact.email || "",
+    billingAddress: contact.billingAddress || contact.address || "",
+    defaultProjectAddress: contact.defaultProjectAddress || contact.projectAddress || "",
+    contactType,
+    notes: contact.notes || "",
+    createdAt: contact.createdAt || now,
+    updatedAt: contact.updatedAt || now,
+  };
+}
+
+function upsertContact(contacts, contact) {
+  const normalizedContact = normalizeContact(contact);
+  const otherContacts = contacts.filter((item) => item.id !== normalizedContact.id);
+
+  return [normalizedContact, ...otherContacts].sort((a, b) => formatContactName(a).localeCompare(formatContactName(b)));
+}
+
+function getProposalCountForContact(contactId, proposals = []) {
+  return proposals.filter((proposal) => proposal.contactId === contactId).length;
+}
+
+function getLinkedContact(proposal = {}, contacts = []) {
+  return contacts.find((contact) => contact.id === proposal.contactId) || null;
+}
+
+function formatContactName(contact = {}) {
+  return contact.companyName || contact.contactName || "Unnamed contact";
+}
+
+function formatContactOption(contact = {}) {
+  const contactName = contact.contactName && contact.contactName !== contact.companyName ? ` - ${contact.contactName}` : "";
+  const type = contact.contactType ? ` (${contact.contactType})` : "";
+
+  return `${formatContactName(contact)}${contactName}${type}`;
+}
+
+function proposalHasContactConflicts(proposal = {}, contact = {}) {
+  const comparisons = [
+    [proposal.client?.companyName, contact.companyName],
+    [proposal.client?.contactName, contact.contactName],
+    [proposal.client?.phone, contact.phone],
+    [proposal.client?.email, contact.email],
+    [proposal.client?.billingAddress || proposal.client?.address, contact.billingAddress],
+    [proposal.client?.projectAddress || proposal.project?.address, contact.defaultProjectAddress],
+  ];
+
+  return comparisons.some(([currentValue, nextValue]) => {
+    if (!hasTextValue(currentValue) || !hasTextValue(nextValue)) {
+      return false;
+    }
+
+    return String(currentValue).trim() !== String(nextValue).trim();
+  });
+}
+
+function applyContactToProposal(proposal = {}, contact = {}) {
+  const nextProposal = cloneObject(proposal);
+  const normalizedContact = normalizeContact(contact);
+
+  nextProposal.contactId = normalizedContact.id;
+  nextProposal.client = {
+    ...(nextProposal.client || {}),
+    companyName: normalizedContact.companyName || nextProposal.client?.companyName || "",
+    contactName: normalizedContact.contactName || nextProposal.client?.contactName || "",
+    phone: normalizedContact.phone || nextProposal.client?.phone || "",
+    email: normalizedContact.email || nextProposal.client?.email || "",
+    billingAddress: normalizedContact.billingAddress || nextProposal.client?.billingAddress || nextProposal.client?.address || "",
+    address: normalizedContact.billingAddress || nextProposal.client?.address || nextProposal.client?.billingAddress || "",
+    projectAddress: normalizedContact.defaultProjectAddress || nextProposal.client?.projectAddress || "",
+  };
+
+  if (hasTextValue(normalizedContact.defaultProjectAddress)) {
+    nextProposal.project = {
+      ...(nextProposal.project || {}),
+      address: normalizedContact.defaultProjectAddress,
+    };
+  }
+
+  return nextProposal;
+}
+
+function linkProposalToMatchingContact(proposal = {}, contacts = []) {
+  if (proposal.contactId || contacts.length === 0) {
+    return proposal;
+  }
+
+  const clientEmail = String(proposal.client?.email || "").trim().toLowerCase();
+  const clientCompany = String(proposal.client?.companyName || "").trim().toLowerCase();
+  const matches = contacts.filter((contact) => {
+    const contactEmail = String(contact.email || "").trim().toLowerCase();
+    const contactCompany = String(contact.companyName || "").trim().toLowerCase();
+
+    return (clientEmail && contactEmail === clientEmail) || (clientCompany && contactCompany === clientCompany);
+  });
+
+  return matches.length === 1 ? { ...proposal, contactId: matches[0].id } : proposal;
+}
+
 function getNextProposalNumber(proposals, date = new Date()) {
   const year = date.getFullYear();
   const nextSequence =
@@ -4735,7 +5339,7 @@ function formatDashboardDate(value) {
   }).format(date);
 }
 
-function buildDashboardStats(proposals = []) {
+function buildDashboardStats(proposals = [], contacts = []) {
   const statusCounts = PROPOSAL_STATUSES.reduce(
     (counts, status) => ({
       ...counts,
@@ -4762,6 +5366,7 @@ function buildDashboardStats(proposals = []) {
       { label: "Proposals Approved", value: statusCounts.approved || 0 },
       { label: "Needs Follow-Up", value: followUpDueCount },
       { label: "Overdue Follow-Up", value: overdueFollowUpCount },
+      { label: "Contacts", value: contacts.length },
       { label: "Win Rate", value: decidedCount > 0 ? `${winRate}%` : "-" },
     ],
     fullPacketCount: proposals.filter((proposal) => getPacketModeLabel(proposal) === "Full GC Packet").length,
@@ -5114,6 +5719,7 @@ function createEditableProposal(seedProposal) {
   const editableProposal = {
     ...proposal,
     id: proposal.id || createProposalId(),
+    contactId: proposal.contactId || "",
     status: proposal.status || "draft",
     proposalType,
     type: proposalType,

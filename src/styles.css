@@ -215,7 +215,8 @@ h4 {
 .company-settings-panel,
 .proposal-action-bar,
 .dashboard-panel,
-.backup-page-panel {
+.backup-page-panel,
+.contacts-panel {
   max-width: 1500px;
   margin: 0 auto 24px;
   border: 1px solid rgba(6, 43, 69, 0.12);
@@ -227,7 +228,8 @@ h4 {
 .proposal-list-panel,
 .company-settings-panel,
 .dashboard-panel,
-.backup-page-panel {
+.backup-page-panel,
+.contacts-panel {
   padding: 22px;
 }
 
@@ -333,6 +335,7 @@ h4 {
 
 .proposal-actions label,
 .settings-grid label,
+.contact-form-grid label,
 .list-filters label {
   display: grid;
   gap: 5px;
@@ -345,6 +348,9 @@ h4 {
 .settings-grid input,
 .settings-grid select,
 .settings-grid textarea,
+.contact-form-grid input,
+.contact-form-grid select,
+.contact-form-grid textarea,
 .list-filters input,
 .list-filters select,
 .proposal-list-table select {
@@ -473,6 +479,137 @@ h4 {
 
 .settings-wide-field {
   grid-column: 1 / -1;
+}
+
+.contacts-layout {
+  display: grid;
+  grid-template-columns: minmax(420px, 0.8fr) minmax(0, 1.2fr);
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.contact-form-card,
+.contacts-list-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 16px;
+}
+
+.contact-form-heading h3 {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.contact-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.contact-wide-field,
+.contact-select-field,
+.contact-selector-empty,
+.contact-selector-note {
+  grid-column: 1 / -1;
+}
+
+.contact-selector-empty,
+.contact-selector-note {
+  color: #556171;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.contact-linked-proposals {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.contact-linked-proposals strong {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.contact-linked-proposals button,
+.contact-row-actions button,
+.contact-form-actions button {
+  border-radius: 8px;
+  background: var(--blue);
+  color: white;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 850;
+  text-align: left;
+}
+
+.contact-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.contact-filters {
+  grid-template-columns: minmax(240px, 1fr) 220px;
+  margin-top: 0;
+}
+
+.contacts-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.contact-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  padding: 12px;
+}
+
+.contact-row strong,
+.contact-row span,
+.contact-row small {
+  display: block;
+}
+
+.contact-row strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.contact-row span {
+  margin-top: 3px;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.contact-row small {
+  margin-top: 3px;
+  color: #556171;
+  font-size: 12px;
+}
+
+.contact-row-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .list-filters {

@@ -428,6 +428,7 @@ export const PROPOSAL_TEMPLATES = [
 
 export const SEED_PROPOSAL = {
   id: "seed-marketplace-retail-center",
+  contactId: "",
   proposalNumber: "LYC-2026-0001",
   revisionNumber: 0,
   revisionLabel: "Rev 0",
