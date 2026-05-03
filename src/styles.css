@@ -1560,6 +1560,31 @@ h4 {
   padding: 12px;
 }
 
+.asset-upload-message {
+  border: 1px solid rgba(6, 43, 69, 0.12);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #556171;
+  padding: 9px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.asset-source-badge {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid rgba(6, 43, 69, 0.16);
+  border-radius: 999px;
+  background: white;
+  color: var(--blue);
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .project-photo-preview {
   display: grid;
   min-height: 96px;

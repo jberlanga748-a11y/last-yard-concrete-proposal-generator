@@ -1,5 +1,5 @@
 -- Last Yard Proposal Generator - Supabase foundation schema
--- Phase 27A: cloud-save foundation only. File storage buckets come later.
+-- Last Yard Proposal Generator cloud schema, including proposal asset storage.
 
 create extension if not exists "pgcrypto";
 
@@ -297,6 +297,79 @@ using (
     select 1
     from public.companies
     where companies.id = proposals.company_id
+      and companies.owner_id = auth.uid()
+  )
+);
+
+-- Phase 27E: proposal asset storage
+--
+-- Create a public bucket for uploaded proposal photos and plan/takeoff images.
+-- Public reads keep print/PDF rendering reliable in the browser. Upload/update/delete
+-- access is restricted to authenticated users who own the company folder in the path.
+--
+-- Expected object paths:
+-- company/{companyId}/proposals/{proposalId}/featured/photo-1-{timestamp}.{ext}
+-- company/{companyId}/proposals/{proposalId}/featured/photo-2-{timestamp}.{ext}
+-- company/{companyId}/proposals/{proposalId}/featured/photo-3-{timestamp}.{ext}
+-- company/{companyId}/proposals/{proposalId}/plans/{sheetId}-{timestamp}.{ext}
+
+insert into storage.buckets (id, name, public)
+values ('last-yard-proposal-assets', 'last-yard-proposal-assets', true)
+on conflict (id) do update set public = true;
+
+drop policy if exists "Public can read proposal assets" on storage.objects;
+create policy "Public can read proposal assets"
+on storage.objects for select
+using (bucket_id = 'last-yard-proposal-assets');
+
+drop policy if exists "Company owners can upload proposal assets" on storage.objects;
+create policy "Company owners can upload proposal assets"
+on storage.objects for insert
+with check (
+  bucket_id = 'last-yard-proposal-assets'
+  and (storage.foldername(name))[1] = 'company'
+  and exists (
+    select 1
+    from public.companies
+    where companies.id::text = (storage.foldername(name))[2]
+      and companies.owner_id = auth.uid()
+  )
+);
+
+drop policy if exists "Company owners can update proposal assets" on storage.objects;
+create policy "Company owners can update proposal assets"
+on storage.objects for update
+using (
+  bucket_id = 'last-yard-proposal-assets'
+  and (storage.foldername(name))[1] = 'company'
+  and exists (
+    select 1
+    from public.companies
+    where companies.id::text = (storage.foldername(name))[2]
+      and companies.owner_id = auth.uid()
+  )
+)
+with check (
+  bucket_id = 'last-yard-proposal-assets'
+  and (storage.foldername(name))[1] = 'company'
+  and exists (
+    select 1
+    from public.companies
+    where companies.id::text = (storage.foldername(name))[2]
+      and companies.owner_id = auth.uid()
+  )
+);
+
+drop policy if exists "Company owners can delete proposal assets" on storage.objects;
+create policy "Company owners can delete proposal assets"
+on storage.objects for delete
+using (
+  bucket_id = 'last-yard-proposal-assets'
+  and (storage.foldername(name))[1] = 'company'
+  and exists (
+    select 1
+    from public.companies
+    where companies.id::text = (storage.foldername(name))[2]
       and companies.owner_id = auth.uid()
   )
 );

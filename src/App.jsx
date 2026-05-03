@@ -18,6 +18,7 @@ const logoSrc = "/assets/last-yard-logo.jpg";
 const storageKey = "last-yard-proposals-v1";
 const companySettingsStorageKey = "last-yard-company-settings-v1";
 const contactsStorageKey = "last-yard-contacts-v1";
+const proposalAssetsBucket = "last-yard-proposal-assets";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
 const cloudLocalOnlyLabel = "Local only";
@@ -214,6 +215,7 @@ export default function App() {
   const [contactSearchQuery, setContactSearchQuery] = useState("");
   const [contactTypeFilter, setContactTypeFilter] = useState("all");
   const [contactMessage, setContactMessage] = useState("");
+  const [assetUploadMessage, setAssetUploadMessage] = useState("");
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
   const [authMessage, setAuthMessage] = useState("");
@@ -337,6 +339,7 @@ export default function App() {
     setValidationNotice("");
     setSmartPasteResult(null);
     setBackupMessage("");
+    setAssetUploadMessage("");
   }, [route.path]);
 
   useEffect(() => {
@@ -741,7 +744,7 @@ export default function App() {
         ...currentSync,
         companyId: companyRecord.id,
         lastSyncedAt: new Date().toISOString(),
-        message: `${successMessage} Large uploaded images may make cloud sync slower until file storage is added.`,
+        message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
       return true;
@@ -781,7 +784,7 @@ export default function App() {
         companyId: companyRecord.id,
         lastSyncedAt: new Date().toISOString(),
         loading: false,
-        message: `${successMessage} Large uploaded images may make cloud sync slower until file storage is added.`,
+        message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
       return true;
@@ -877,7 +880,7 @@ export default function App() {
         companyId: companyRecord.id,
         lastSyncedAt: new Date().toISOString(),
         loading: false,
-        message: `${mergeResult.warning || "Cloud and local proposals are synced."} Large uploaded images may make cloud sync slower until file storage is added.`,
+        message: `${mergeResult.warning || "Cloud and local proposals are synced."} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
     } catch (error) {
@@ -1334,22 +1337,130 @@ export default function App() {
     setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const projectPhotos = normalizeProjectPhotos(currentProposal.projectPhotos).map((photo, photoIndex) =>
-        photoIndex === index ? { ...photo, ...updates } : photo,
+        photoIndex === index ? normalizeProjectPhoto({ ...photo, ...updates }, photoIndex) : photo,
       );
 
       return { ...currentProposal, projectPhotos };
     });
   }
 
+  async function uploadProjectPhoto(index, file) {
+    if (!file) {
+      return;
+    }
+
+    setAssetUploadMessage(canUseCloudSync(authUser) ? `Uploading photo ${index + 1} to Supabase Storage...` : `Saving photo ${index + 1} locally.`);
+
+    try {
+      const asset = canUseCloudSync(authUser)
+        ? await uploadProposalAssetToCloud(file, {
+            area: "featured",
+            companySettings,
+            companyUser: authUser,
+            fileStem: `photo-${index + 1}`,
+            proposalId: proposalDraft.id,
+          })
+        : await createLocalImageAsset(file);
+
+      const projectPhotos = normalizeProjectPhotos(proposalDraft.projectPhotos).map((photo, photoIndex) =>
+        photoIndex === index
+          ? normalizeProjectPhoto({
+              ...photo,
+              ...asset,
+              caption: photo.caption || photo.label,
+              label: photo.label,
+            }, photoIndex)
+          : photo,
+      );
+      const nextProposal = createEditableProposal({
+        ...proposalDraft,
+        projectPhotos,
+        updatedAt: new Date().toISOString(),
+      });
+
+      setProposalDirty(false);
+      setProposalDraft(nextProposal);
+      setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
+
+      if (canUseCloudSync(authUser)) {
+        await syncSingleProposalToCloud(nextProposal, "Photo uploaded to Supabase Storage and proposal synced.");
+        setAssetUploadMessage(`Photo ${index + 1} uploaded to cloud storage.`);
+      } else {
+        setAssetUploadMessage(
+          isSupabaseConfigured
+            ? `Photo ${index + 1} saved locally. Sign in to upload images to cloud storage.`
+            : `Photo ${index + 1} saved locally.`,
+        );
+      }
+    } catch (error) {
+      setAssetUploadMessage(`Photo upload failed: ${error.message}`);
+    }
+  }
+
   function updatePlanSheet(index, field, value) {
     setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const planSheets = normalizePlanSheets(currentProposal.planSheets).map((sheet, sheetIndex) =>
-        sheetIndex === index ? { ...sheet, [field]: value } : sheet,
+        sheetIndex === index
+          ? normalizePlanSheet(field === "__clearImage" ? clearImageAssetFields(sheet) : { ...sheet, [field]: value }, sheetIndex)
+          : sheet,
       );
 
       return { ...currentProposal, planSheets };
     });
+  }
+
+  async function uploadPlanSheetImage(index, file) {
+    if (!file) {
+      return;
+    }
+
+    const sheets = normalizePlanSheets(proposalDraft.planSheets);
+    const sheet = sheets[index] || {};
+
+    setAssetUploadMessage(canUseCloudSync(authUser) ? "Uploading plan image to Supabase Storage..." : "Saving plan image locally.");
+
+    try {
+      const asset = canUseCloudSync(authUser)
+        ? await uploadProposalAssetToCloud(file, {
+            area: "plans",
+            companySettings,
+            companyUser: authUser,
+            fileStem: sheet.id || sheet.matchKey || `plan-${index + 1}`,
+            proposalId: proposalDraft.id,
+          })
+        : await createLocalImageAsset(file);
+
+      const planSheets = sheets.map((currentSheet, sheetIndex) =>
+        sheetIndex === index
+          ? normalizePlanSheet({
+              ...currentSheet,
+              ...asset,
+              imageSrc: asset.src,
+            }, sheetIndex)
+          : currentSheet,
+      );
+      const nextProposal = createEditableProposal({
+        ...proposalDraft,
+        planSheets,
+        updatedAt: new Date().toISOString(),
+      });
+
+      setProposalDirty(false);
+      setProposalDraft(nextProposal);
+      setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
+
+      if (canUseCloudSync(authUser)) {
+        await syncSingleProposalToCloud(nextProposal, "Plan image uploaded to Supabase Storage and proposal synced.");
+        setAssetUploadMessage("Plan image uploaded to cloud storage.");
+      } else {
+        setAssetUploadMessage(
+          isSupabaseConfigured ? "Plan image saved locally. Sign in to upload images to cloud storage." : "Plan image saved locally.",
+        );
+      }
+    } catch (error) {
+      setAssetUploadMessage(`Plan image upload failed: ${error.message}`);
+    }
   }
 
   function addPlanSheet() {
@@ -1803,6 +1914,7 @@ export default function App() {
               <ProposalEditor
                 proposal={proposalDraft}
                 contacts={savedContacts}
+                assetUploadMessage={assetUploadMessage}
                 showTemplatePicker={route.view === "new"}
                 onAddLineItem={addLineItem}
                 onAddPricingSection={addPricingSection}
@@ -1822,8 +1934,10 @@ export default function App() {
                 onConcreteSpecChange={updateConcreteSpec}
                 onGcPrimeChange={updateGcPrimeField}
                 onProjectPhotoChange={updateProjectPhoto}
+                onProjectPhotoUpload={uploadProjectPhoto}
                 onAddPlanSheet={addPlanSheet}
                 onPlanSheetChange={updatePlanSheet}
+                onPlanSheetImageUpload={uploadPlanSheetImage}
                 onRemovePlanSheet={removePlanSheet}
                 onAddGcPacketTableRow={addGcPacketTableRow}
                 onGcPacketTableChange={updateGcPacketTable}
@@ -2483,7 +2597,7 @@ function ProposalSyncPanel({ authUser, cloudSync, onPullCloudProposals, onPushLo
       </div>
       <p>
         {canUseCloudSync(authUser)
-          ? "Proposals save to localStorage and Supabase. Large uploaded images may sync slower until file storage is added."
+          ? "Proposals save to localStorage and Supabase. New uploaded images use Supabase Storage when signed in."
           : getCloudSignInMessage()}
       </p>
       {isSupabaseConfigured ? (
@@ -2873,6 +2987,10 @@ function CloudStatusCard({
           <strong>{cloudSync.proposalStatus}</strong>
         </div>
         <div>
+          <span>Asset storage</span>
+          <strong>{canUseCloudSync(authUser) ? "Cloud storage enabled" : "Local only"}</strong>
+        </div>
+        <div>
           <span>Contacts sync</span>
           <strong>{cloudSync.contactsStatus}</strong>
         </div>
@@ -2881,7 +2999,7 @@ function CloudStatusCard({
           <strong>{formatCloudSyncTime(cloudSync.lastSyncedAt)}</strong>
         </div>
       </div>
-      <p>Cloud sync is enabled for proposals, company settings, and contacts. Large uploaded images may make proposal sync slower until file storage is added.</p>
+      <p>Cloud sync is enabled for proposals, company settings, contacts, and uploaded proposal assets. Legacy data URL images still render and can remain in backups.</p>
       {authUser ? <p>Current user: {authUser.email}</p> : null}
       {authMessage ? <p>{authMessage}</p> : null}
       {cloudSync.message ? <p>{cloudSync.message}</p> : null}
@@ -3068,6 +3186,7 @@ function ValidationPanel({ className = "", notice = "", validation }) {
 }
 
 function ProposalEditor({
+  assetUploadMessage = "",
   contacts = [],
   proposal,
   showTemplatePicker = false,
@@ -3089,8 +3208,10 @@ function ProposalEditor({
   onConcreteSpecChange,
   onGcPrimeChange,
   onProjectPhotoChange,
+  onProjectPhotoUpload,
   onAddPlanSheet,
   onPlanSheetChange,
+  onPlanSheetImageUpload,
   onRemovePlanSheet,
   onAddGcPacketTableRow,
   onGcPacketTableChange,
@@ -3295,13 +3416,20 @@ function ProposalEditor({
       </EditorSection>
 
       <EditorSection title="Project Photos">
-        <ProjectPhotoEditor photos={proposal.projectPhotos} onPhotoChange={onProjectPhotoChange} />
+        <ProjectPhotoEditor
+          message={assetUploadMessage}
+          photos={proposal.projectPhotos}
+          onPhotoChange={onProjectPhotoChange}
+          onPhotoUpload={onProjectPhotoUpload}
+        />
       </EditorSection>
 
       <EditorSection title="Plan Sheets / Takeoff Pages">
         <PlanSheetEditor
+          message={assetUploadMessage}
           planSheets={proposal.planSheets}
           onAddPlanSheet={onAddPlanSheet}
+          onPlanSheetImageUpload={onPlanSheetImageUpload}
           onPlanSheetChange={onPlanSheetChange}
           onRemovePlanSheet={onRemovePlanSheet}
         />
@@ -3663,7 +3791,7 @@ function PricingSummary({ totals }) {
   );
 }
 
-function ProjectPhotoEditor({ photos, onPhotoChange }) {
+function ProjectPhotoEditor({ message = "", photos, onPhotoChange, onPhotoUpload }) {
   const photoSlots = normalizeProjectPhotos(photos);
 
   function handleUpload(index, file) {
@@ -3671,18 +3799,22 @@ function ProjectPhotoEditor({ photos, onPhotoChange }) {
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => onPhotoChange(index, { src: String(reader.result || "") });
-    reader.readAsDataURL(file);
+    onPhotoUpload(index, file);
   }
 
   return (
     <div className="project-photo-editor">
+      {message ? <p className="asset-upload-message">{message}</p> : null}
       {photoSlots.map((photo, index) => (
         <div className="project-photo-card" key={`project-photo-${index}`}>
           <div className="project-photo-preview">
-            {photo.src ? <img src={photo.src} alt={photo.label || `Project photo ${index + 1}`} /> : <span>Photo {index + 1}</span>}
+            {getImageAssetSource(photo) ? (
+              <img src={getImageAssetSource(photo)} alt={photo.label || `Project photo ${index + 1}`} />
+            ) : (
+              <span>Photo {index + 1}</span>
+            )}
           </div>
+          <span className="asset-source-badge">{getImageAssetLabel(photo)}</span>
           <EditorField
             label={`Photo ${index + 1} Caption`}
             path={`projectPhotos.${index}.label`}
@@ -3693,8 +3825,8 @@ function ProjectPhotoEditor({ photos, onPhotoChange }) {
             <span>Photo {index + 1} Upload</span>
             <input type="file" accept="image/*" onChange={(event) => handleUpload(index, event.target.files?.[0])} />
           </label>
-          {photo.src ? (
-            <button className="editor-secondary-button" type="button" onClick={() => onPhotoChange(index, { src: "" })}>
+          {getImageAssetSource(photo) ? (
+            <button className="editor-secondary-button" type="button" onClick={() => onPhotoChange(index, clearImageAssetFields({}))}>
               Remove photo
             </button>
           ) : null}
@@ -3704,7 +3836,7 @@ function ProjectPhotoEditor({ photos, onPhotoChange }) {
   );
 }
 
-function PlanSheetEditor({ planSheets, onAddPlanSheet, onPlanSheetChange, onRemovePlanSheet }) {
+function PlanSheetEditor({ message = "", planSheets, onAddPlanSheet, onPlanSheetChange, onPlanSheetImageUpload, onRemovePlanSheet }) {
   const sheets = normalizePlanSheets(planSheets);
 
   function handleUpload(index, file) {
@@ -3712,9 +3844,7 @@ function PlanSheetEditor({ planSheets, onAddPlanSheet, onPlanSheetChange, onRemo
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => onPlanSheetChange(index, "imageSrc", String(reader.result || ""));
-    reader.readAsDataURL(file);
+    onPlanSheetImageUpload(index, file);
   }
 
   return (
@@ -3722,6 +3852,7 @@ function PlanSheetEditor({ planSheets, onAddPlanSheet, onPlanSheetChange, onRemo
       <p className="smart-paste-help">
         Enable only the plan and takeoff backup pages that should print with the full GC packet.
       </p>
+      {message ? <p className="asset-upload-message">{message}</p> : null}
       {sheets.map((sheet, index) => (
         <div className="plan-sheet-editor-card" key={sheet.id || sheet.matchKey || `${sheet.title}-${index}`}>
           <div className="line-item-card-header">
@@ -3794,15 +3925,20 @@ function PlanSheetEditor({ planSheets, onAddPlanSheet, onPlanSheetChange, onRemo
 
           <div className="plan-sheet-upload-row">
             <div className="plan-sheet-image-preview">
-              {sheet.imageSrc ? <img src={sheet.imageSrc} alt={sheet.title || "Plan sheet preview"} /> : <span>Upload plan image</span>}
+              {getImageAssetSource(sheet) ? (
+                <img src={getImageAssetSource(sheet)} alt={sheet.title || "Plan sheet preview"} />
+              ) : (
+                <span>Upload plan image</span>
+              )}
             </div>
             <div className="plan-sheet-upload-controls">
+              <span className="asset-source-badge">{getImageAssetLabel(sheet)}</span>
               <label className="editor-field">
                 <span>Plan Image Upload</span>
                 <input type="file" accept="image/*" onChange={(event) => handleUpload(index, event.target.files?.[0])} />
               </label>
-              {sheet.imageSrc ? (
-                <button className="editor-secondary-button" type="button" onClick={() => onPlanSheetChange(index, "imageSrc", "")}>
+              {getImageAssetSource(sheet) ? (
+                <button className="editor-secondary-button" type="button" onClick={() => onPlanSheetChange(index, "__clearImage", true)}>
                   Remove plan image
                 </button>
               ) : null}
@@ -4961,10 +5097,11 @@ function PhotoBand({ photos = defaultProjectPhotos }) {
 
 function ConcretePhoto({ photo, variant }) {
   const title = photo?.label || defaultProjectPhotos[0].label;
+  const imageSource = getImageAssetSource(photo);
 
   return (
     <div className={`concrete-photo ${variant}`}>
-      {photo?.src ? <img src={photo.src} alt={title} /> : <div className="photo-texture" />}
+      {imageSource ? <img src={imageSource} alt={title} /> : <div className="photo-texture" />}
       <div className="photo-caption">{title}</div>
     </div>
   );
@@ -5425,6 +5562,82 @@ function formatCloudSyncTime(value) {
   }).format(date);
 }
 
+function getImageAssetSource(asset = {}) {
+  if (hasTextValue(asset.dataUrl)) {
+    return asset.dataUrl;
+  }
+
+  if (hasTextValue(asset.src) && isDataUrl(asset.src)) {
+    return asset.src;
+  }
+
+  if (hasTextValue(asset.imageSrc) && isDataUrl(asset.imageSrc)) {
+    return asset.imageSrc;
+  }
+
+  if (hasTextValue(asset.publicUrl)) {
+    return asset.publicUrl;
+  }
+
+  if (hasTextValue(asset.signedUrl)) {
+    return asset.signedUrl;
+  }
+
+  if (hasTextValue(asset.src)) {
+    return asset.src;
+  }
+
+  if (hasTextValue(asset.imageSrc)) {
+    return asset.imageSrc;
+  }
+
+  if (hasTextValue(asset.storagePath) && isSupabaseConfigured && supabase) {
+    return getStoragePublicUrl(asset.storagePath);
+  }
+
+  return "";
+}
+
+function getImageAssetLabel(asset = {}) {
+  if (hasTextValue(asset.storagePath)) {
+    return "Cloud image";
+  }
+
+  if (hasTextValue(asset.dataUrl) || isDataUrl(asset.src) || isDataUrl(asset.imageSrc)) {
+    return "Local image";
+  }
+
+  return "No image";
+}
+
+function getStoragePublicUrl(storagePath) {
+  if (!hasTextValue(storagePath) || !isSupabaseConfigured || !supabase) {
+    return "";
+  }
+
+  const { data } = supabase.storage.from(proposalAssetsBucket).getPublicUrl(storagePath);
+  return data?.publicUrl || "";
+}
+
+function clearImageAssetFields(asset = {}) {
+  return {
+    ...asset,
+    dataUrl: "",
+    fileName: "",
+    fileType: "",
+    imageSrc: "",
+    publicUrl: "",
+    signedUrl: "",
+    src: "",
+    storagePath: "",
+    uploadedAt: "",
+  };
+}
+
+function isDataUrl(value) {
+  return String(value || "").startsWith("data:");
+}
+
 function getAuthStatusLabel(authUser, authLoading = false) {
   if (!isSupabaseConfigured) {
     return "Local mode";
@@ -5577,6 +5790,97 @@ async function ensureCloudCompany(user, settings = getDefaultCompanySettings()) 
   }
 
   return createdCompany;
+}
+
+async function uploadProposalAssetToCloud(file, { area, companySettings, companyUser, fileStem, proposalId }) {
+  if (!canUseCloudSync(companyUser)) {
+    throw new Error("Sign in to upload images to cloud storage.");
+  }
+
+  if (!file?.type?.startsWith("image/")) {
+    throw new Error("Choose an image file.");
+  }
+
+  const companyRecord = await ensureCloudCompany(companyUser, companySettings);
+  const safeArea = area === "plans" ? "plans" : "featured";
+  const timestamp = Date.now();
+  const extension = getFileExtension(file);
+  const safeFileStem = sanitizeStoragePathSegment(fileStem || file.name || "image");
+  const storagePath = `company/${companyRecord.id}/proposals/${sanitizeStoragePathSegment(proposalId || "unsaved")}/${safeArea}/${safeFileStem}-${timestamp}.${extension}`;
+  const { error } = await supabase.storage.from(proposalAssetsBucket).upload(storagePath, file, {
+    cacheControl: "3600",
+    contentType: file.type || "image/jpeg",
+    upsert: true,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  const publicUrl = getStoragePublicUrl(storagePath);
+
+  return {
+    dataUrl: "",
+    fileName: file.name || `${safeFileStem}.${extension}`,
+    fileType: file.type || "image/jpeg",
+    publicUrl,
+    signedUrl: "",
+    src: publicUrl,
+    storagePath,
+    uploadedAt: new Date().toISOString(),
+  };
+}
+
+async function createLocalImageAsset(file) {
+  if (!file?.type?.startsWith("image/")) {
+    throw new Error("Choose an image file.");
+  }
+
+  const dataUrl = await readFileAsDataUrl(file);
+
+  return {
+    dataUrl,
+    fileName: file.name || "local-image",
+    fileType: file.type || "image/jpeg",
+    publicUrl: "",
+    signedUrl: "",
+    src: dataUrl,
+    storagePath: "",
+    uploadedAt: new Date().toISOString(),
+  };
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read the selected image file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function getFileExtension(file) {
+  const nameExtension = String(file?.name || "").split(".").pop()?.toLowerCase();
+
+  if (nameExtension && /^[a-z0-9]{2,5}$/.test(nameExtension)) {
+    return nameExtension === "jpeg" ? "jpg" : nameExtension;
+  }
+
+  const mimeExtension = String(file?.type || "").split("/").pop()?.toLowerCase();
+
+  if (mimeExtension && /^[a-z0-9]{2,5}$/.test(mimeExtension)) {
+    return mimeExtension === "jpeg" ? "jpg" : mimeExtension;
+  }
+
+  return "jpg";
+}
+
+function sanitizeStoragePathSegment(value) {
+  return String(value || "asset")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "asset";
 }
 
 async function loadOrMergeCloudProposals(companyId, localProposals = []) {
@@ -6919,12 +7223,31 @@ function parseMultilineList(value) {
 function normalizeProjectPhotos(photos = []) {
   return defaultProjectPhotos.map((defaultPhoto, index) => {
     const photo = Array.isArray(photos) ? photos[index] || {} : {};
-
-    return {
-      label: hasTextValue(photo.label) ? photo.label : defaultPhoto.label,
-      src: hasTextValue(photo.src) ? photo.src : "",
-    };
+    return normalizeProjectPhoto(photo, index, defaultPhoto);
   });
+}
+
+function normalizeProjectPhoto(photo = {}, index = 0, defaultPhoto = defaultProjectPhotos[index] || defaultProjectPhotos[0]) {
+  const rawSource = photo.src || photo.dataUrl || photo.publicUrl || photo.signedUrl || "";
+  const dataUrl = hasTextValue(photo.dataUrl) ? photo.dataUrl : isDataUrl(rawSource) ? rawSource : "";
+  const publicUrl = hasTextValue(photo.publicUrl) ? photo.publicUrl : !isDataUrl(rawSource) && hasTextValue(rawSource) ? rawSource : "";
+  const label = hasTextValue(photo.label) ? photo.label : hasTextValue(photo.caption) ? photo.caption : defaultPhoto.label;
+  const normalizedPhoto = {
+    caption: label,
+    dataUrl,
+    fileName: photo.fileName || "",
+    fileType: photo.fileType || "",
+    label,
+    publicUrl,
+    signedUrl: photo.signedUrl || "",
+    storagePath: photo.storagePath || "",
+    uploadedAt: photo.uploadedAt || "",
+  };
+
+  return {
+    ...normalizedPhoto,
+    src: getImageAssetSource(normalizedPhoto),
+  };
 }
 
 function normalizePlanSheets(planSheets = []) {
@@ -6955,10 +7278,55 @@ function normalizePlanSheet(sheet = {}, index = 0) {
     pageType,
     title: sheet.title ?? fallback.title ?? `Plan Sheet ${index + 1}`,
     subtitle: sheet.subtitle ?? fallback.subtitle ?? "",
-    imageSrc: sheet.imageSrc ?? sheet.image ?? "",
+    dataUrl: getPlanSheetDataUrl(sheet),
+    fileName: sheet.fileName || "",
+    fileType: sheet.fileType || "",
+    imageSrc: getPlanSheetImageSource(sheet),
+    publicUrl: getPlanSheetPublicUrl(sheet),
+    signedUrl: sheet.signedUrl || "",
+    storagePath: sheet.storagePath || "",
+    uploadedAt: sheet.uploadedAt || "",
     calculationTitle: sheet.calculationTitle ?? fallback.calculationTitle ?? "Calculation Notes",
     calculationNotes: normalizePlanSheetNotes(sheet.calculationNotes ?? sheet.notes ?? fallback.calculationNotes),
     clarificationNotes: normalizePlanSheetNotes(sheet.clarificationNotes ?? fallback.clarificationNotes),
+  };
+}
+
+function getPlanSheetDataUrl(sheet = {}) {
+  const rawSource = sheet.imageSrc ?? sheet.image ?? sheet.dataUrl ?? "";
+  return hasTextValue(sheet.dataUrl) ? sheet.dataUrl : isDataUrl(rawSource) ? rawSource : "";
+}
+
+function getPlanSheetPublicUrl(sheet = {}) {
+  const rawSource = sheet.imageSrc ?? sheet.image ?? "";
+  return hasTextValue(sheet.publicUrl) ? sheet.publicUrl : !isDataUrl(rawSource) && hasTextValue(rawSource) ? rawSource : "";
+}
+
+function getPlanSheetImageSource(sheet = {}) {
+  return getImageAssetSource({
+    dataUrl: getPlanSheetDataUrl(sheet),
+    imageSrc: sheet.imageSrc ?? sheet.image ?? "",
+    publicUrl: getPlanSheetPublicUrl(sheet),
+    signedUrl: sheet.signedUrl || "",
+    storagePath: sheet.storagePath || "",
+  });
+}
+
+function preserveExistingImageAsset(existingAsset = {}, incomingAsset = {}) {
+  if (getImageAssetSource(incomingAsset)) {
+    return incomingAsset;
+  }
+
+  return {
+    dataUrl: existingAsset.dataUrl || "",
+    fileName: existingAsset.fileName || "",
+    fileType: existingAsset.fileType || "",
+    imageSrc: existingAsset.imageSrc || existingAsset.src || "",
+    publicUrl: existingAsset.publicUrl || "",
+    signedUrl: existingAsset.signedUrl || "",
+    src: existingAsset.src || existingAsset.imageSrc || "",
+    storagePath: existingAsset.storagePath || "",
+    uploadedAt: existingAsset.uploadedAt || "",
   };
 }
 
@@ -8844,7 +9212,7 @@ function mergePlanSheets(currentPlanSheets = [], parsedPlanSheets = []) {
       mergedSheets[existingIndex] = {
         ...mergedSheets[existingIndex],
         ...normalizedSheet,
-        imageSrc: mergedSheets[existingIndex].imageSrc || normalizedSheet.imageSrc,
+        ...preserveExistingImageAsset(mergedSheets[existingIndex], normalizedSheet),
         enabled: true,
       };
       return;
