@@ -18,11 +18,17 @@ const concreteKeywords = ["sidewalk", "ada", "curb", "flatwork", "slab", "footin
 const labelMap = new Map([
   ["project", "projectName"],
   ["project name", "projectName"],
+  ["bid / solicitation", "bidSource"],
+  ["solicitation", "bidSource"],
   ["owner", "ownerOrClient"],
+  ["owner / public agency", "ownerOrClient"],
+  ["public agency", "ownerOrClient"],
   ["client", "ownerOrClient"],
   ["gc", "gcCompany"],
   ["prime", "gcCompany"],
   ["contact", "contactName"],
+  ["primary contact", "primaryContact"],
+  ["architect / plans contact", "architectPlansContact"],
   ["email", "contactEmail"],
   ["phone", "contactPhone"],
   ["location", "projectLocation"],
@@ -32,22 +38,33 @@ const labelMap = new Map([
   ["plan link", "planLink"],
   ["bid due", "bidDue"],
   ["bid date", "bidDue"],
+  ["bid opening", "bidDue"],
   ["bid time", "bidDueTime"],
   ["pre-bid", "preBidMeetingDate"],
   ["prebid", "preBidMeetingDate"],
   ["pre-bid meeting", "preBidMeetingDate"],
+  ["required pre-bid meeting", "preBidMeetingDate"],
   ["rfi deadline", "rfiDeadline"],
   ["addendum deadline", "addendumDeadline"],
   ["expected award", "expectedAwardDate"],
   ["scope", "scopeSummary"],
   ["concrete scope", "concreteScope"],
+  ["concrete scope notes", "concreteScope"],
   ["red flags", "redFlags"],
   ["missing info", "missingInfo"],
+  ["rfis / clarifications", "missingInfo"],
+  ["rfi / clarification", "missingInfo"],
   ["next step", "nextStep"],
+  ["next action", "nextStep"],
   ["follow-up", "followUpDate"],
   ["follow up", "followUpDate"],
   ["priority", "priority"],
+  ["risk level", "riskLevel"],
   ["status", "bidStatus"],
+  ["proposal status", "bidStatus"],
+  ["bid strategy", "bidStrategy"],
+  ["assumptions", "notes"],
+  ["exclusions", "notes"],
   ["estimator", "estimatorAssigned"],
 ]);
 
@@ -67,14 +84,15 @@ export function parseBidSmartPasteNotes(notes = "", currentBid = {}) {
   const explicitFields = new Set();
   const inferredNotes = [];
   const concreteLines = [];
+  const entries = collectSmartPasteEntries(lines);
 
-  lines.forEach((line) => {
-    const labeled = parseLabeledLine(line);
-
-    if (labeled) {
-      applyLabeledValue(updates, summary, explicitFields, labeled.field, labeled.value, currentBid);
+  entries.forEach((entry) => {
+    if (entry.field) {
+      applyLabeledValue(updates, summary, explicitFields, entry.field, entry.value, currentBid, entry.label);
       return;
     }
+
+    const line = entry.line;
 
     captureUrls(updates, summary, explicitFields, line);
 
@@ -115,7 +133,7 @@ export function parseBidSmartPasteNotes(notes = "", currentBid = {}) {
   }
 
   if (inferredNotes.length > 0) {
-    updates.notes = appendText(currentBid.notes, inferredNotes.join("\n"));
+    appendUpdateText(updates, currentBid, "notes", inferredNotes.join("\n"));
     summary.fields.push("notes");
   }
 
@@ -137,8 +155,43 @@ export function parseBidSmartPasteNotes(notes = "", currentBid = {}) {
   };
 }
 
+function collectSmartPasteEntries(lines) {
+  const entries = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const labeled = parseLabeledLine(lines[index]);
+
+    if (!labeled) {
+      entries.push({ line: lines[index] });
+      continue;
+    }
+
+    let value = labeled.value;
+
+    if (!hasTextValue(value)) {
+      const blockLines = [];
+      let nextIndex = index + 1;
+
+      while (nextIndex < lines.length && !parseLabeledLine(lines[nextIndex])) {
+        blockLines.push(lines[nextIndex]);
+        nextIndex += 1;
+      }
+
+      value = blockLines.join("\n");
+      index = nextIndex - 1;
+    }
+
+    entries.push({
+      ...labeled,
+      value,
+    });
+  }
+
+  return entries;
+}
+
 function parseLabeledLine(line) {
-  const match = line.match(/^([^:]+):\s*(.+)$/);
+  const match = line.match(/^([^:]+):\s*(.*)$/);
 
   if (!match) {
     return null;
@@ -153,11 +206,12 @@ function parseLabeledLine(line) {
 
   return {
     field,
+    label: match[1].trim(),
     value: match[2].trim(),
   };
 }
 
-function applyLabeledValue(updates, summary, explicitFields, field, value, currentBid = {}) {
+function applyLabeledValue(updates, summary, explicitFields, field, value, currentBid = {}, label = fieldToLabel(field)) {
   explicitFields.add(field);
 
   if (field === "bidDue") {
@@ -193,10 +247,16 @@ function applyLabeledValue(updates, summary, explicitFields, field, value, curre
 
   if (["preBidMeetingDate", "rfiDeadline", "addendumDeadline", "expectedAwardDate", "followUpDate"].includes(field)) {
     const parsedDate = parseDateValue(value);
+    const parsedTime = parseTimeValue(value);
 
     if (parsedDate?.date) {
       updates[field] = parsedDate.date;
       summary.dates.push(fieldToLabel(field));
+
+      if (field === "preBidMeetingDate" && parsedTime) {
+        appendUpdateText(updates, currentBid, "notes", `Pre-bid time: ${formatParsedTime(parsedTime)}`);
+        summary.fields.push("notes");
+      }
     } else {
       summary.unclearItems.push(`${fieldToLabel(field)}: ${value}`);
     }
@@ -210,9 +270,61 @@ function applyLabeledValue(updates, summary, explicitFields, field, value, curre
     return;
   }
 
+  if (field === "riskLevel") {
+    updates.priority = normalizePriority(value);
+    appendUpdateText(updates, currentBid, "redFlags", `Risk level: ${value}`);
+    summary.fields.push("priority");
+    summary.fields.push("red flags");
+    return;
+  }
+
   if (field === "bidStatus") {
     updates.bidStatus = normalizeBidStatus(value);
     summary.fields.push("status");
+    return;
+  }
+
+  if (field === "primaryContact") {
+    const contact = parseContactBlock(value);
+
+    if (contact.name) {
+      updates.contactName = contact.name;
+      summary.contactInfo.push("contact name");
+    }
+
+    if (contact.email) {
+      updates.contactEmail = contact.email;
+      summary.contactInfo.push("contact email");
+    }
+
+    if (contact.phone) {
+      updates.contactPhone = contact.phone;
+      summary.contactInfo.push("contact phone");
+    }
+
+    if (!contact.name && !contact.email && !contact.phone && hasTextValue(value)) {
+      appendUpdateText(updates, currentBid, "notes", `${label}: ${value}`);
+      summary.fields.push("notes");
+    }
+
+    return;
+  }
+
+  if (field === "architectPlansContact" || field === "bidStrategy") {
+    appendUpdateText(updates, currentBid, "notes", `${label}: ${value}`);
+    summary.fields.push("notes");
+
+    if (field === "bidStrategy" && !updates.nextStep && !currentBid.nextStep && /do not price|review|rfi|pre[-\s]?bid/i.test(value)) {
+      updates.nextStep = value;
+      summary.fields.push("next step");
+    }
+
+    return;
+  }
+
+  if (field === "notes") {
+    appendUpdateText(updates, currentBid, "notes", `${label}: ${value}`);
+    summary.fields.push("notes");
     return;
   }
 
@@ -253,7 +365,9 @@ function addWarnings(updates, currentBid, summary) {
     summary.warnings.push("Missing bid due date.");
   }
 
-  if (!hasTextValue(merged.gcCompany) && !hasTextValue(merged.contactName) && !hasTextValue(merged.contactEmail)) {
+  if (!hasTextValue(merged.gcCompany) && hasTextValue(merged.ownerOrClient) && (hasTextValue(merged.contactName) || hasTextValue(merged.contactEmail))) {
+    summary.warnings.push("No GC/prime listed yet; public agency contact was captured.");
+  } else if (!hasTextValue(merged.gcCompany) && !hasTextValue(merged.contactName) && !hasTextValue(merged.contactEmail)) {
     summary.warnings.push("Missing GC/contact.");
   }
 
@@ -266,7 +380,7 @@ function addWarnings(updates, currentBid, summary) {
   }
 
   if (!hasTextValue(merged.bidUrl) && !hasTextValue(merged.planLink)) {
-    summary.warnings.push("No URL or plan link found.");
+    summary.warnings.push("No URL/plan link found. Add one later if available.");
   }
 
   if (summary.unclearItems.some((item) => /date|time/i.test(item))) {
@@ -298,6 +412,10 @@ function normalizePriority(value = "") {
 
 function normalizeBidStatus(value = "") {
   const text = value.toLowerCase();
+
+  if (text.includes("pre-bid review") || text.includes("do not price") || text.includes("draft")) {
+    return "Reviewing";
+  }
 
   if (text.includes("proposal started")) {
     return "Proposal Started";
@@ -407,6 +525,36 @@ function parseTimeValue(value = "") {
   return `${String(hour).padStart(2, "0")}:${minute}`;
 }
 
+function parseContactBlock(value = "") {
+  const lines = String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const emailMatch = String(value || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  const phoneMatch = String(value || "").match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/);
+  const name = lines.find((line) => !line.includes("@") && !phoneMatch?.[0]?.includes(line)) || "";
+
+  return {
+    name,
+    email: emailMatch?.[0] || "",
+    phone: phoneMatch?.[0] || "",
+  };
+}
+
+function formatParsedTime(value = "") {
+  const [hourValue, minute = "00"] = value.split(":");
+  const hour = Number.parseInt(hourValue, 10);
+
+  if (Number.isNaN(hour)) {
+    return value;
+  }
+
+  const displayHour = hour % 12 || 12;
+  const meridiem = hour >= 12 ? "PM" : "AM";
+
+  return `${displayHour}:${minute} ${meridiem}`;
+}
+
 function normalizeYear(value) {
   if (!value) {
     return new Date().getFullYear();
@@ -438,6 +586,10 @@ function fieldToLabel(field = "") {
 
 function appendText(existing = "", addition = "") {
   return [existing, addition].filter(hasTextValue).join("\n");
+}
+
+function appendUpdateText(updates, currentBid, field, addition) {
+  updates[field] = appendText(updates[field] ?? currentBid[field], addition);
 }
 
 function trimUrl(value = "") {

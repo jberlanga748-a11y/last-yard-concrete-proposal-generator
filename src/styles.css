@@ -2221,6 +2221,13 @@ h4 {
   gap: 4px;
 }
 
+.smart-paste-warnings p {
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .smart-paste-warnings span {
   color: #8a5a10;
 }

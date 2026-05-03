@@ -1490,12 +1490,17 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     });
 
-    if (!hasTextValue(normalizedBid.projectName)) {
-      setBidMessage("Enter a project name before saving this bid.");
+    if (!hasBidDraftAnchor(normalizedBid)) {
+      setBidMessage("Enter at least a project, location, owner/GC, scope, or notes before saving this bid.");
       return;
     }
 
-    await commitBids(upsertBid(savedBids, normalizedBid), `Saved ${normalizedBid.projectName} locally.`);
+    const warningMessage =
+      bidSmartPasteResult?.warnings?.length > 0
+        ? " Bid saved with missing-info warnings. You can complete these fields later."
+        : "";
+
+    await commitBids(upsertBid(savedBids, normalizedBid), `Saved ${normalizedBid.projectName || "bid opportunity"} locally.${warningMessage}`);
     setBidDraft(normalizedBid);
   }
 
@@ -3886,6 +3891,7 @@ function BidSmartPastePanel({ notes, result, onFill, onNotesChange }) {
         <p className="smart-paste-help">
           Paste bid invite text, OregonBuys details, GC email notes, plan room notes, or project scope notes. Review all fields before using.
         </p>
+        <p className="smart-paste-help">Bid opportunities can be saved before all details are known.</p>
       </div>
       <label className="editor-field" htmlFor="bid-smart-paste-notes">
         <span>Bid Notes</span>
@@ -3935,7 +3941,8 @@ function BidSmartPasteSummary({ result }) {
       ) : null}
       {warnings.length > 0 ? (
         <div className="smart-paste-warnings">
-          <span>Warnings</span>
+          <span>Missing Info / Review Later</span>
+          <p>These are not errors. You can save the bid now and complete these fields later.</p>
           <ul>
             {warnings.map((warning) => (
               <li key={warning}>{warning}</li>
@@ -7897,6 +7904,18 @@ function normalizeBid(bid = {}) {
     createdAt: bid.createdAt || now,
     updatedAt: bid.updatedAt || now,
   };
+}
+
+function hasBidDraftAnchor(bid = {}) {
+  return [
+    bid.projectName,
+    bid.projectLocation,
+    bid.ownerOrClient,
+    bid.gcCompany,
+    bid.scopeSummary,
+    bid.concreteScope,
+    bid.notes,
+  ].some(hasTextValue);
 }
 
 function normalizeBids(bids = []) {

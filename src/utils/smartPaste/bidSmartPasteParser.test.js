@@ -116,3 +116,80 @@ test("creates warnings for missing due date, contact, location, and concrete sco
   assert.match(warningText(result), /Missing location/);
   assert.match(warningText(result), /Missing concrete scope/);
 });
+
+test("parses incomplete public agency bid invite notes with soft warnings", () => {
+  const result = parseBidSmartPasteNotes(
+    `Project:
+Barlow Center Head Start Improvements
+
+Bid / Solicitation:
+Clackamas County Bid S-C01010-00016812
+
+Location:
+109 E. 2nd St, Canby, OR
+
+Owner / Public Agency:
+Clackamas County
+
+Primary Contact:
+Steve Kelly
+stevekel@clackamas.us
+
+Architect / Plans Contact:
+Tim Richard
+tim@jtrastudio.com
+
+Required Pre-Bid Meeting:
+May 13, 2026 at 2:00 PM
+Location: 109 E. 2nd St, Canby, OR
+
+Bid Opening:
+June 10, 2026 at 2:00 PM
+
+Proposal Status:
+Draft / Pre-bid review / Do not price yet
+
+Bid Strategy:
+Conditional pursue. Do not final price until RFI responses and pre-bid meeting notes are reviewed.
+
+Concrete Scope Notes:
+Potential concrete scope includes sidewalks, ADA ramps, landings, detectable warnings, concrete demolition, sawcutting, patch-back, exterior flatwork, possible small pads/slabs, and related site concrete. Exact scope must be confirmed from plans/specs and pre-bid meeting.
+
+RFIs / Clarifications:
+Confirm concrete scope limits, ADA ramp/landing details, demo limits, existing concrete thickness, excavation responsibility, subgrade prep, base rock, survey/layout, testing, utilities, work hours, access, phasing, and multiple mobilizations.
+
+Assumptions:
+Pricing will assume standard access, normal working hours, one continuous mobilization where practical, suitable subgrade provided by others, utilities located/cleared by others, no survey/staking, no engineering/testing costs, and no work outside clearly shown concrete limits unless clarified otherwise.
+
+Exclusions:
+Exclude unsuitable soils, unknown utility conflicts, over-excavation, base rock unless specifically included, survey/layout, testing/inspection costs, rework caused by design conflicts or others, multiple mobilizations unless included, after-hours/weekend work unless specifically included, and work outside shown concrete limits.
+
+Risk Level:
+Medium-High
+
+Next Action:
+Send saved RFI email Monday morning. Attend required pre-bid meeting on May 13, 2026. Do not take off or price final number until RFI responses/pre-bid notes are reviewed.`,
+    {},
+  );
+
+  assert.equal(result.bid.projectName, "Barlow Center Head Start Improvements");
+  assert.equal(result.bid.ownerOrClient, "Clackamas County");
+  assert.equal(result.bid.projectLocation, "109 E. 2nd St, Canby, OR");
+  assert.equal(result.bid.contactName, "Steve Kelly");
+  assert.equal(result.bid.contactEmail, "stevekel@clackamas.us");
+  assert.equal(result.bid.bidSource, "Clackamas County Bid S-C01010-00016812");
+  assert.equal(result.bid.bidDueDate, "2026-06-10");
+  assert.equal(result.bid.bidDueTime, "14:00");
+  assert.equal(result.bid.preBidMeetingDate, "2026-05-13");
+  assert.equal(result.bid.bidStatus, "Reviewing");
+  assert.equal(result.bid.priority, "High");
+  assert.match(result.bid.concreteScope, /sidewalks, ADA ramps/);
+  assert.match(result.bid.redFlags, /Medium-High/);
+  assert.match(result.bid.notes, /Conditional pursue/);
+  assert.match(result.bid.notes, /Architect \/ Plans Contact/);
+  assert.match(result.bid.missingInfo, /Confirm concrete scope limits/);
+  assert.match(result.bid.nextStep, /Send saved RFI email/);
+  assert.doesNotMatch(warningText(result), /Missing GC\/contact/);
+  assert.match(warningText(result), /No GC\/prime listed yet; public agency contact was captured/);
+  assert.match(warningText(result), /No URL\/plan link found. Add one later if available/);
+});
