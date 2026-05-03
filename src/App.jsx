@@ -21,6 +21,13 @@ const contactsStorageKey = "last-yard-contacts-v1";
 const proposalAssetsBucket = "last-yard-proposal-assets";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
+const demoContactId = "demo-contact-abc-prime-contractors";
+const demoGcProposalId = "demo-proposal-settlemier-park-gc-packet";
+const demoSimpleProposalId = "demo-proposal-residential-driveway";
+const demoMetadata = {
+  isDemo: true,
+  source: "client-ready-demo",
+};
 const cloudLocalOnlyLabel = "Local only";
 const cloudNeedsSyncLabel = "Needs sync";
 const cloudSyncedLabel = "Synced";
@@ -480,6 +487,83 @@ export default function App() {
 
   function createNewResidentialProposal() {
     createNewProposalFromTemplate("driveway");
+  }
+
+  function loadDemoData({ open = "" } = {}) {
+    if (authUser && !window.confirm("Load demo data locally? Demo records will not be pushed to cloud unless you sync them later.")) {
+      return;
+    }
+
+    const demoContact = createDemoContact();
+    const demoProposals = createDemoProposals(companySettings, savedProposals, demoContact.id);
+    const nextContacts = upsertContact(savedContacts.filter((contact) => !isDemoRecord(contact)), demoContact);
+    const nextProposals = demoProposals.reduce((proposals, proposal) => upsertProposal(proposals, proposal), savedProposals.filter((proposal) => !isDemoRecord(proposal)));
+
+    setSavedContacts(nextContacts);
+    setSavedProposals(nextProposals);
+    markProposalsNeedCloudSync("Demo data loaded locally only. It will not sync to cloud unless you choose a sync action.");
+    setSaveMessage("Demo data loaded locally. Real proposals and contacts were left untouched.");
+
+    if (open === "print-gc") {
+      navigate(`/proposals/${demoGcProposalId}/print`, { proposal: demoProposals[0], skipUnsavedCheck: true });
+      return;
+    }
+
+    if (open === "gc") {
+      navigate(`/proposals/${demoGcProposalId}`, { proposal: demoProposals[0], skipUnsavedCheck: true });
+      return;
+    }
+
+    if (open === "simple") {
+      navigate(`/proposals/${demoSimpleProposalId}`, { proposal: demoProposals[1], skipUnsavedCheck: true });
+    }
+  }
+
+  function resetDemoData() {
+    const demoProposalCount = savedProposals.filter(isDemoRecord).length;
+    const demoContactCount = savedContacts.filter(isDemoRecord).length;
+
+    if (demoProposalCount + demoContactCount === 0) {
+      setSaveMessage("No demo records are loaded.");
+      return;
+    }
+
+    if (!window.confirm(`Reset demo data? This removes only ${demoProposalCount} demo proposal(s) and ${demoContactCount} demo contact(s). Real records and cloud data are not deleted.`)) {
+      return;
+    }
+
+    const nextProposals = savedProposals.filter((proposal) => !isDemoRecord(proposal));
+    const nextContacts = savedContacts.filter((contact) => !isDemoRecord(contact));
+    setSavedProposals(nextProposals);
+    setSavedContacts(nextContacts);
+    markProposalsNeedCloudSync("Demo records were removed locally only. Cloud data was not deleted.");
+    setSaveMessage("Demo data reset. Real proposals, contacts, settings, and cloud data were left untouched.");
+
+    if (isDemoRecord(proposalDraft)) {
+      navigate("/dashboard", { skipUnsavedCheck: true });
+    }
+  }
+
+  function openSampleProposal() {
+    const sampleProposal = savedProposals.find((proposal) => proposal.id === demoGcProposalId);
+
+    if (sampleProposal) {
+      navigate(`/proposals/${demoGcProposalId}`, { proposal: sampleProposal });
+      return;
+    }
+
+    loadDemoData({ open: "gc" });
+  }
+
+  function printSamplePacket() {
+    const sampleProposal = savedProposals.find((proposal) => proposal.id === demoGcProposalId);
+
+    if (sampleProposal) {
+      navigate(`/proposals/${demoGcProposalId}/print`, { proposal: sampleProposal });
+      return;
+    }
+
+    loadDemoData({ open: "print-gc" });
   }
 
   function applyProposalTemplate(templateId) {
@@ -2209,13 +2293,17 @@ export default function App() {
           onCreateProposal={createNewProposal}
           onCreateResidentialProposal={createNewResidentialProposal}
           onExportBackup={() => navigate("/backup")}
+          onLoadDemoData={loadDemoData}
           onOpen={openProposal}
           onOpenContacts={() => navigate("/contacts")}
           onOpenList={() => navigate("/proposals")}
           onOpenPrint={openProposalPrintView}
+          onOpenSampleProposal={openSampleProposal}
           onOpenSettings={() => navigate("/settings")}
+          onPrintSamplePacket={printSamplePacket}
           onPullCloudProposals={pullCloudProposals}
           onPushLocalProposals={pushLocalProposalsToCloud}
+          onResetDemoData={resetDemoData}
           onSyncProposals={syncProposalsNow}
         />
       ) : isBackupView ? (
@@ -2467,18 +2555,23 @@ function DashboardView({
   onCreateProposal,
   onCreateResidentialProposal,
   onExportBackup,
+  onLoadDemoData,
   onOpen,
   onOpenContacts,
   onOpenList,
   onOpenPrint,
+  onOpenSampleProposal,
   onOpenSettings,
+  onPrintSamplePacket,
   onPullCloudProposals,
   onPushLocalProposals,
+  onResetDemoData,
   onSyncProposals,
 }) {
   const stats = buildDashboardStats(proposals, contacts);
   const recentProposals = getRecentProposals(proposals);
   const followUpProposals = getFollowUpDueProposals(proposals);
+  const demoStatus = getDemoStatus(proposals, contacts);
 
   return (
     <section className="dashboard-panel no-print">
@@ -2525,6 +2618,15 @@ function DashboardView({
         onPullCloudProposals={onPullCloudProposals}
         onPushLocalProposals={onPushLocalProposals}
         onSyncProposals={onSyncProposals}
+      />
+
+      <DemoOnboardingPanel
+        demoStatus={demoStatus}
+        onLoadDemoData={onLoadDemoData}
+        onOpenSampleProposal={onOpenSampleProposal}
+        onPrintSamplePacket={onPrintSamplePacket}
+        onResetDemoData={onResetDemoData}
+        onStartGcPacket={onCreateGcPacket}
       />
 
       <div className="dashboard-stat-grid">
@@ -3043,6 +3145,74 @@ function ProposalSyncPanel({ authUser, cloudSync, onPullCloudProposals, onPushLo
         </div>
       ) : null}
     </div>
+  );
+}
+
+function DemoOnboardingPanel({
+  demoStatus,
+  onLoadDemoData,
+  onOpenSampleProposal,
+  onPrintSamplePacket,
+  onResetDemoData,
+  onStartGcPacket,
+}) {
+  const checklist = [
+    "Add or select a GC/client contact",
+    "Choose a proposal template",
+    "Paste rough bid notes with Smart Paste",
+    "Review pricing and alternates",
+    "Add plan/takeoff pages if needed",
+    "Save proposal",
+    "Open print view",
+    "Export backup",
+  ];
+
+  return (
+    <section className="demo-onboarding-panel no-print">
+      <div className="demo-onboarding-copy">
+        <p className="list-kicker">Start here</p>
+        <h3>Client-Ready Demo Mode</h3>
+        <p>
+          Load sample data to walk through a GC packet, a simple residential proposal, contacts, print view, and backup/export flow.
+          Demo records are marked and can be reset without deleting real work.
+        </p>
+        <div className="demo-status-line">
+          <Badge>{demoStatus.isLoaded ? "Demo data loaded" : "Demo data not loaded"}</Badge>
+          <span>{demoStatus.proposalCount} demo proposal(s)</span>
+          <span>{demoStatus.contactCount} demo contact(s)</span>
+        </div>
+        <div className="demo-actions">
+          <button type="button" onClick={() => onLoadDemoData()}>
+            Load Demo Data
+          </button>
+          <button type="button" onClick={onResetDemoData}>
+            Reset Demo Data
+          </button>
+          <button className="gold-action" type="button" onClick={onStartGcPacket}>
+            Start New GC Packet
+          </button>
+          <button type="button" onClick={onOpenSampleProposal}>
+            Open Sample Proposal
+          </button>
+          <button type="button" onClick={onPrintSamplePacket}>
+            Print Sample Packet
+          </button>
+        </div>
+      </div>
+
+      <div className="demo-checklist-card">
+        <h4>Walkthrough Checklist</h4>
+        <ul>
+          {checklist.map((item) => (
+            <li key={item}>
+              <span />
+              {item}
+            </li>
+          ))}
+        </ul>
+        <p>Next steps: load demo data, open the GC packet, review Smart Paste-ready fields, then open print view.</p>
+      </div>
+    </section>
   );
 }
 
@@ -6951,6 +7121,10 @@ function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
 
+function isDemoRecord(record = {}) {
+  return Boolean(record.demo || record.metadata?.isDemo);
+}
+
 function createProposalExport(proposal) {
   return {
     backupVersion,
@@ -7439,6 +7613,11 @@ function normalizeContact(contact = {}) {
     defaultProjectAddress: contact.defaultProjectAddress || contact.projectAddress || "",
     contactType,
     notes: contact.notes || "",
+    demo: Boolean(contact.demo || contact.metadata?.isDemo),
+    metadata: {
+      ...(isPlainObject(contact.metadata) ? contact.metadata : {}),
+      isDemo: Boolean(contact.demo || contact.metadata?.isDemo),
+    },
     createdAt: contact.createdAt || now,
     updatedAt: contact.updatedAt || now,
   };
@@ -7468,6 +7647,289 @@ function formatContactOption(contact = {}) {
   const type = contact.contactType ? ` (${contact.contactType})` : "";
 
   return `${formatContactName(contact)}${contactName}${type}`;
+}
+
+function createDemoContact() {
+  const now = new Date().toISOString();
+
+  return normalizeContact({
+    id: demoContactId,
+    companyName: "ABC Prime Contractors",
+    contactName: "Mike Smith",
+    phone: "(555) 123-4567",
+    email: "mike@example.com",
+    billingAddress: "100 Demo Contractor Way\nWoodburn, OR 97071",
+    defaultProjectAddress: "Settlemier Park, Woodburn, Oregon",
+    contactType: "GC / Prime",
+    notes: "Demo GC contact for proposal packet walkthrough",
+    demo: true,
+    metadata: { ...demoMetadata, label: "Sample GC contact" },
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+function createDemoProposals(companySettings = getDefaultCompanySettings(), existingProposals = [], contactId = demoContactId) {
+  return [
+    createDemoGcPacketProposal(companySettings, existingProposals, contactId),
+    createDemoSimpleProposal(companySettings, existingProposals),
+  ];
+}
+
+function createDemoGcPacketProposal(companySettings = getDefaultCompanySettings(), existingProposals = [], contactId = demoContactId) {
+  const now = new Date();
+  const baseProposal = createNewGcPacketDraft(existingProposals, companySettings);
+  const gcPacketTables = normalizeGcPacketTables({
+    pricingSummary: {
+      enabled: true,
+      presentationNotes: "Base Package with Allowances: $355,500. Total if all accepted: $965,000.",
+      rows: [],
+    },
+    scheduleOfValues: {
+      enabled: true,
+      rows: [
+        { item: "1", description: "Base Concrete Work", pricingBasis: "Base bid", amount: "$263,000" },
+        { item: "2", description: "Estimated Shade Footings", pricingBasis: "Allowance", amount: "$42,500" },
+        { item: "3", description: "Concrete Interface / RFI Allowance", pricingBasis: "Allowance", amount: "$50,000" },
+        { item: "4", description: "Pedestrian asphalt-to-concrete", pricingBasis: "Add Alternate 01", amount: "$212,500" },
+        { item: "5", description: "Sport court concrete base", pricingBasis: "Add Alternate 02", amount: "$397,000" },
+      ],
+    },
+    takeoffQuantities: {
+      enabled: true,
+      rows: [
+        { item: "L102 West Walks", quantity: "12,450 SF", detailSize: "4 in flatwork", netCy: "153.7", cyWithTenPercent: "169.1", priceStatus: "Included in base" },
+        { item: "L103 East Walks", quantity: "9,820 SF", detailSize: "4 in flatwork", netCy: "121.2", cyWithTenPercent: "133.3", priceStatus: "Included in base" },
+        { item: "Play Area Pads", quantity: "3,600 SF", detailSize: "5 in slab", netCy: "55.6", cyWithTenPercent: "61.1", priceStatus: "Allowance/RFI" },
+        { item: "Sport Court Base", quantity: "18,200 SF", detailSize: "5 in with #4 rebar", netCy: "280.9", cyWithTenPercent: "309.0", priceStatus: "Add Alt 02" },
+      ],
+    },
+    shadeFootingEstimate: {
+      enabled: true,
+      rows: [
+        { column: "C1-C2", columnSize: "8 in steel columns", estimatedSpreadFooting: "5 ft x 5 ft x 18 in", netCy: "2.8", estimatedSubtotal: "5.6 CY", estimatedCyWithTenPercent: "6.2 CY", allowanceAmount: "$14,000", allowanceNote: "Pending final shade footing design" },
+        { column: "C3-C6", columnSize: "10 in steel columns", estimatedSpreadFooting: "6 ft x 6 ft x 24 in", netCy: "5.3", estimatedSubtotal: "21.2 CY", estimatedCyWithTenPercent: "23.3 CY", allowanceAmount: "$28,500", allowanceNote: "Allowance only until engineered design is issued" },
+      ],
+    },
+    proposalNotes: {
+      enabled: true,
+      proposalBasis: "Demo packet based on preliminary park renovation notes, plan sheet placeholders, and listed clarifications.",
+      contractScopeControl: "Accepted bid form, exclusions, clarifications, and acknowledged addenda control final contract scope.",
+      acceptanceSummary: "GC to identify accepted alternates and allowances before contract execution.",
+      gcPrimeReviewer: "Reviewed by: ______________________________ Date: __________",
+    },
+  });
+
+  return createEditableProposal({
+    ...baseProposal,
+    id: demoGcProposalId,
+    contactId,
+    demo: true,
+    metadata: { ...demoMetadata, label: "Sample GC packet proposal" },
+    proposalNumber: "LYC-DEMO-0001",
+    status: "draft",
+    proposalType: "gc_prime",
+    type: "gc_prime",
+    packetMode: "full_gc_packet",
+    proposalDate: "2026-05-03",
+    validUntil: "2026-06-02",
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    client: {
+      companyName: "ABC Prime Contractors",
+      contactName: "Mike Smith",
+      title: "Project Manager",
+      phone: "(555) 123-4567",
+      email: "mike@example.com",
+      billingAddress: "100 Demo Contractor Way\nWoodburn, OR 97071",
+      projectAddress: "Settlemier Park, Woodburn, Oregon",
+      address: "100 Demo Contractor Way",
+      cityStateZip: "Woodburn, OR 97071",
+    },
+    project: {
+      ...baseProposal.project,
+      name: "Settlemier Park Renovation Demo",
+      location: "Woodburn, Oregon",
+      address: "Settlemier Park, Woodburn, Oregon",
+      category: "GC / Prime concrete packet",
+      estimatedStartDate: "2026-06-03",
+      estimatedDuration: "June 3 - June 28, 2026",
+      description: "Demo full GC packet for concrete flatwork, allowances, alternates, plan/takeoff backup, RFIs, addenda, and acceptance summary.",
+      accessNotes: "Coordinate park access, staging, and haul routes with GC superintendent before mobilization.",
+      siteConditionNotes: "Demo assumes prepared subgrade by others unless specifically listed in base scope.",
+      scheduleRestrictions: "Work sequence subject to GC master schedule, public access limits, and approved concrete placement windows.",
+      specialRequirements: "Confirm final shade footing design, playground equipment footing schedule, and accepted alternates before contract execution.",
+      proposedSchedule: {
+        startDate: "2026-06-03",
+        endDate: "2026-06-28",
+        display: "June 3 - June 28, 2026",
+      },
+    },
+    gcPrime: {
+      ...baseProposal.gcPrime,
+      contractorName: "ABC Prime Contractors",
+      projectManagerName: "Mike Smith",
+      projectManagerPhone: "(555) 123-4567",
+      projectManagerEmail: "mike@example.com",
+      bidPackageNumber: "Demo BP-03 Concrete",
+      specSection: "03 30 00 Cast-in-Place Concrete",
+      drawingReferences: "L102, L103, L104, L203, L601, L602",
+      addendaAcknowledged: "Addendum 01",
+      prevailingWageRequired: true,
+      certifiedPayrollRequired: true,
+      insuranceCertificateRequired: true,
+      w9Required: true,
+      safetyOrientationRequired: true,
+      jobsiteAccessBadgingRequirements: "GC orientation and site access coordination required before mobilization.",
+      retainagePercentage: "5%",
+      paymentApplicationTerms: "Monthly progress billing per GC schedule of values.",
+      changeOrderProcess: "Written GC approval required before added or changed work proceeds.",
+      rfiClarificationNotes:
+        "Final engineered shade footing design for C1-C6 required.\nFinal playground equipment footing schedule required.\nConfirm concrete interface limits at asphalt-to-concrete transitions.",
+    },
+    scopeSections: [
+      { title: "Base Concrete Work", items: ["Demo base bid concrete flatwork per listed plan sheets", "Sidewalks and pedestrian paving", "Concrete pads and miscellaneous site slabs", "Sawcut control joints and standard curing"] },
+      { title: "Allowances", items: ["Estimated shade footing allowance pending final engineered footing design", "Concrete interface / RFI allowance for unresolved transition conditions"] },
+      { title: "Add Alternates", items: ["Add Alternate 01: pedestrian asphalt replaced with concrete where accepted", "Add Alternate 02: sport court concrete base with #4 rebar each way and sawcut allowance"] },
+      { title: "GC Coordination", items: ["Coordinate schedule, access, and phasing with GC", "Submit RFIs for unresolved scope boundaries", "Review addenda and accepted alternates before contract execution"] },
+      { title: "Closeout", items: ["Final cleanup of concrete work areas", "Punch list support for accepted scope", "Warranty documentation per proposal terms"] },
+    ],
+    concreteSpecs: {
+      ...baseProposal.concreteSpecs,
+      estimatedSquareFeet: "44,070 SF demo takeoff",
+      estimatedCubicYards: "Approximately 612 CY with contingency",
+      thickness: "4 in walks / 5 in slabs / footing depths per final design",
+      psi: "4,000 PSI @ 28 days",
+      slump: "4 in +/- 1 in",
+      airEntrainment: "5% - 7%",
+      rebarMeshDetails: "Per plan; sport court alternate assumes #4 rebar each way",
+      finishType: "Broom finish exterior flatwork",
+      controlJointSpacing: "Sawcut per ACI and plan requirements",
+      sawCutTiming: "Early-entry or same-day sawcut as conditions require",
+      cureSealerNotes: "Cure/sealer per specification and weather conditions",
+      truckAccessNotes: "Truck access and washout location by GC.",
+    },
+    lineItems: [{ itemNumber: "1", description: "Base Concrete Work", quantity: 1, unit: "LS", unitPrice: 263000, taxable: true }],
+    pricingSections: [
+      { id: "demo-allowance-shade-footings", type: "allowance", label: "Estimated Shade Footings", description: "Allowance pending final engineered footing design.", amount: 42500, included: true },
+      { id: "demo-allowance-interface-rfi", type: "allowance", label: "Concrete Interface / RFI Allowance", description: "Allowance for unresolved concrete interface items.", amount: 50000, included: true },
+      { id: "demo-add-alt-01", type: "add_alternate", label: "Add Alternate 01", description: "Pedestrian asphalt replaced with concrete where accepted.", amount: 212500, included: false },
+      { id: "demo-add-alt-02", type: "add_alternate", label: "Add Alternate 02", description: "Sport court concrete base with #4 rebar each way and sawcut allowance.", amount: 397000, included: false },
+    ],
+    exclusions: [
+      "Permits, testing, and inspection fees by others unless specifically listed.",
+      "Unsuitable soils, rock excavation, contaminated materials, and subgrade remediation excluded.",
+      "Survey, staking, layout control, traffic control, and public access management by others.",
+      "Cold weather protection, dewatering, and temporary heat excluded unless added by change order.",
+      "Final quantities and accepted alternates must be confirmed by GC before contract execution.",
+      "Shade footing pricing is allowance only until final engineered footing design is issued.",
+    ],
+    assumptions: [
+      "GC provides access, staging, approved subgrade, and timely RFI responses.",
+      "Proposal is based on demo packet assumptions and placeholder plan sheet backup.",
+      "Work will be performed in one efficient mobilization sequence unless otherwise agreed.",
+    ],
+    terms: {
+      payment: "Monthly progress billing per GC payment application schedule. Retainage and final payment per executed subcontract.",
+      depositText: "Deposit waived for approved GC contract unless otherwise noted.",
+      progressBilling: "Progress billings submitted monthly based on completed work and accepted alternates.",
+      acceptance: "Accepted bid form, exclusions, clarifications, and addenda listed in this packet are incorporated into the contract scope.",
+    },
+    proposalNotes:
+      "Base Package with Allowances: $355,500.\nTotal if all accepted: $965,000.\nThis is demo data for walkthrough and should be reviewed before sending any client-facing proposal.",
+    takeoffQuantityBackup:
+      "Demo takeoff includes L102 west walks, L103 east walks, L104 play area enlargement, sport court alternate, L601 detail notes, L602 furnishing notes, and shade footing allowance assumptions.",
+    gcPacketTables,
+    planSheets: normalizePlanSheets([
+      { matchKey: "l102", enabled: true, pageType: "plan_takeoff_sheet", title: "Plan Takeoff Sheet - L102 Materials Plan West", subtitle: "L102 Materials Plan West", calculationTitle: "L102 Takeoff Basis", calculationNotes: ["West materials plan demo quantity backup", "Sidewalk and plaza flatwork summarized for base bid"], clarificationNotes: ["Confirm final paving limits with GC before contract."] },
+      { matchKey: "l103", enabled: true, pageType: "plan_takeoff_sheet", title: "Plan Takeoff Sheet - L103 Materials Plan East", subtitle: "L103 Materials Plan East", calculationTitle: "L103 Takeoff Basis", calculationNotes: ["East materials plan demo quantity backup", "Concrete walks and pads included in base bid"], clarificationNotes: ["RFI required for unresolved transitions."] },
+      { matchKey: "l104", enabled: true, pageType: "plan_takeoff_sheet", title: "Plan Takeoff Sheet - L104 Materials Play Area Enlargement", subtitle: "L104 Play Area Enlargement", calculationTitle: "L104 Takeoff Basis", calculationNotes: ["Play area concrete pads and equipment coordination", "Footing schedule pending final playground equipment package"], clarificationNotes: ["Final equipment footing schedule required."] },
+      { matchKey: "sport-court", enabled: true, pageType: "plan_takeoff_sheet", title: "Sport Courts / L203", subtitle: "Sport Court Alternate", calculationTitle: "Sport Court Alternate", calculationNotes: ["Sport court concrete base priced as Add Alternate 02", "#4 rebar each way and sawcut allowance included"], clarificationNotes: ["Accepted alternate required before procurement."] },
+      { matchKey: "l601", enabled: true, pageType: "detail_notes", title: "L601 Detail Notes", subtitle: "Concrete Detail Backup", calculationTitle: "Detail Notes", calculationNotes: ["Concrete detail assumptions summarized for demo packet", "Jointing and edge conditions per details"], clarificationNotes: [] },
+      { matchKey: "l602", enabled: true, pageType: "detail_notes", title: "L602 Fence / Site Furnishing Notes", subtitle: "Site Furnishing Coordination", calculationTitle: "Furnishing Notes", calculationNotes: ["Coordinate concrete work at site furnishing interfaces", "Fence and furnishing embeds excluded unless shown in accepted scope"], clarificationNotes: [] },
+      { matchKey: "shade-footing-estimate", enabled: true, pageType: "shade_footing_estimate", title: "Shade Footing Estimate", subtitle: "Concrete Footing Backup", calculationTitle: "Shade Footing Estimate", calculationNotes: ["Allowance based on preliminary C1-C6 footing assumptions", "Final engineered footing design required before fixed price"], clarificationNotes: ["Allowance only; final design may change quantity and price."] },
+    ]),
+  });
+}
+
+function createDemoSimpleProposal(companySettings = getDefaultCompanySettings(), existingProposals = []) {
+  const now = new Date();
+  const baseProposal = createEditableProposal(applyTemplateToProposal("driveway", createNewProposalDraft(existingProposals, companySettings)));
+
+  return createEditableProposal({
+    ...baseProposal,
+    id: demoSimpleProposalId,
+    demo: true,
+    metadata: { ...demoMetadata, label: "Sample residential proposal" },
+    proposalNumber: "LYC-DEMO-0002",
+    status: "draft",
+    proposalType: "residential",
+    type: "residential",
+    packetMode: "summary",
+    proposalDate: "2026-05-03",
+    validUntil: "2026-06-02",
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
+    client: {
+      companyName: "",
+      contactName: "Jordan Homeowner",
+      title: "",
+      phone: "(555) 987-6543",
+      email: "jordan@example.com",
+      billingAddress: "220 Demo Drive\nSalem, OR 97301",
+      projectAddress: "220 Demo Drive, Salem, OR 97301",
+      address: "220 Demo Drive",
+      cityStateZip: "Salem, OR 97301",
+    },
+    project: {
+      ...baseProposal.project,
+      name: "Residential Driveway Demo",
+      location: "Salem, OR",
+      address: "220 Demo Drive, Salem, OR 97301",
+      category: "Residential driveway",
+      estimatedStartDate: "2026-06-10",
+      estimatedDuration: "3-4 working days",
+      description: "Demo summary proposal for driveway removal, prep, and replacement with broom-finished concrete.",
+      accessNotes: "Homeowner to keep driveway clear before mobilization.",
+      siteConditionNotes: "Assumes normal excavation and stable subgrade.",
+      scheduleRestrictions: "Schedule subject to weather and concrete supplier availability.",
+      specialRequirements: "Confirm final driveway limits before forming.",
+      proposedSchedule: {
+        startDate: "2026-06-10",
+        endDate: "",
+        display: "3-4 working days",
+      },
+    },
+    scopeSections: [
+      { title: "Site Preparation", items: ["Remove existing driveway concrete", "Prepare and compact subgrade", "Install forms for new driveway limits"] },
+      { title: "Concrete Driveway", items: ["Place 4 in concrete driveway", "Broom finish surface", "Install control joints"] },
+      { title: "Cleanup", items: ["Final cleanup of work area", "Haul off excess concrete debris", "Owner walkthrough at completion"] },
+    ],
+    concreteSpecs: {
+      ...baseProposal.concreteSpecs,
+      estimatedSquareFeet: "720 SF",
+      estimatedCubicYards: "9 CY",
+      thickness: "4 in",
+      psi: "4,000 PSI @ 28 days",
+      finishType: "Broom finish",
+      controlJointSpacing: "Sawcut or tooled joints as appropriate",
+    },
+    lineItems: [
+      { itemNumber: "1", description: "Demo & Haul Off Existing Driveway", quantity: 720, unit: "SF", unitPrice: 2.25, taxable: true },
+      { itemNumber: "2", description: "Driveway Prep & Forms", quantity: 720, unit: "SF", unitPrice: 2.1, taxable: true },
+      { itemNumber: "3", description: "Concrete Driveway - 4 in Broom Finish", quantity: 720, unit: "SF", unitPrice: 8.95, taxable: true },
+      { itemNumber: "4", description: "Control Joints & Cleanup", quantity: 1, unit: "LS", unitPrice: 750, taxable: true },
+    ],
+    pricingSections: [],
+    exclusions: ["Permits by owner if required", "Unexpected unsuitable subgrade", "Landscape repair beyond immediate work area", "Irrigation or utility relocation"],
+    assumptions: ["Owner provides clear access", "Work completed during normal working hours", "Pricing valid for 30 days"],
+    terms: {
+      payment: "50% deposit required to schedule. Balance due upon completion.",
+      depositText: "50% deposit required.",
+      progressBilling: "Final invoice due at completion.",
+      acceptance: "This demo proposal is accepted by signature below after final owner review.",
+    },
+  });
 }
 
 function proposalHasContactConflicts(proposal = {}, contact = {}) {
@@ -7764,6 +8226,17 @@ function buildDashboardStats(proposals = [], contacts = []) {
     fullPacketCount: proposals.filter((proposal) => getPacketModeLabel(proposal) === "Full GC Packet").length,
     lastUpdated,
     totalValue,
+  };
+}
+
+function getDemoStatus(proposals = [], contacts = []) {
+  const proposalCount = proposals.filter(isDemoRecord).length;
+  const contactCount = contacts.filter(isDemoRecord).length;
+
+  return {
+    contactCount,
+    isLoaded: proposalCount > 0 || contactCount > 0,
+    proposalCount,
   };
 }
 
