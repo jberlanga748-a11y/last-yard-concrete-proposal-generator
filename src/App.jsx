@@ -12,7 +12,7 @@ import {
   generateProposalNumber,
   validateProposalCompleteness,
 } from "./proposalData.js";
-import { isSupabaseConfigured } from "./supabaseClient.js";
+import { isSupabaseConfigured, supabase } from "./supabaseClient.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
 const storageKey = "last-yard-proposals-v1";
@@ -209,6 +209,9 @@ export default function App() {
   const [contactSearchQuery, setContactSearchQuery] = useState("");
   const [contactTypeFilter, setContactTypeFilter] = useState("all");
   const [contactMessage, setContactMessage] = useState("");
+  const [authUser, setAuthUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
+  const [authMessage, setAuthMessage] = useState("");
   const [proposalDirty, setProposalDirty] = useState(false);
   const company = proposalDraft.company;
   const isDashboardView = route.view === "dashboard";
@@ -217,6 +220,7 @@ export default function App() {
   const isSettingsView = route.view === "settings";
   const isBackupView = route.view === "backup";
   const isContactsView = route.view === "contacts";
+  const isLoginView = route.view === "login";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
   const proposalValidation = validateProposalCompleteness(proposalDraft);
 
@@ -231,6 +235,39 @@ export default function App() {
   useEffect(() => {
     saveCompanySettings(companySettings);
   }, [companySettings]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) {
+      setAuthLoading(false);
+      setAuthUser(null);
+      return undefined;
+    }
+
+    let isMounted = true;
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!isMounted) {
+        return;
+      }
+
+      if (error) {
+        setAuthMessage(error.message);
+      }
+
+      setAuthUser(data.session?.user || null);
+      setAuthLoading(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthUser(session?.user || null);
+      setAuthLoading(false);
+    });
+
+    return () => {
+      isMounted = false;
+      listener.subscription?.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (window.location.pathname !== route.path) {
@@ -264,7 +301,7 @@ export default function App() {
     function handlePrintShortcut(event) {
       const isPrintShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p";
 
-      if (!isPrintShortcut || isDashboardView || isListView || isSettingsView || isBackupView || isContactsView) {
+      if (!isPrintShortcut || isDashboardView || isListView || isSettingsView || isBackupView || isContactsView || isLoginView) {
         return;
       }
 
@@ -278,7 +315,7 @@ export default function App() {
 
     window.addEventListener("keydown", handlePrintShortcut);
     return () => window.removeEventListener("keydown", handlePrintShortcut);
-  }, [isBackupView, isContactsView, isDashboardView, isListView, isSettingsView, proposalDraft]);
+  }, [isBackupView, isContactsView, isDashboardView, isListView, isLoginView, isSettingsView, proposalDraft]);
 
   useEffect(() => {
     if (validationNotice && proposalValidation.errors.length === 0) {
@@ -483,6 +520,71 @@ export default function App() {
     setProposalDirty(true);
     setProposalDraft((currentProposalValue) => createEditableProposal(applyContactToProposal(currentProposalValue, contact)));
     setSaveMessage(`Linked ${formatContactName(contact)} to this proposal.`);
+  }
+
+  async function signInWithEmail(email, password) {
+    if (!isSupabaseConfigured || !supabase) {
+      setAuthMessage("Supabase is not configured. The app is running in local mode.");
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthMessage("");
+
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      setAuthMessage(error.message);
+      setAuthLoading(false);
+      return;
+    }
+
+    setAuthUser(data.user || null);
+    setAuthMessage("Signed in. Cloud sync will be enabled in a later phase.");
+    setAuthLoading(false);
+  }
+
+  async function signUpWithEmail(email, password) {
+    if (!isSupabaseConfigured || !supabase) {
+      setAuthMessage("Supabase is not configured. The app is running in local mode.");
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthMessage("");
+
+    const { data, error } = await supabase.auth.signUp({ email, password });
+
+    if (error) {
+      setAuthMessage(error.message);
+      setAuthLoading(false);
+      return;
+    }
+
+    setAuthUser(data.user || null);
+    setAuthMessage("Account created. Check email confirmation settings in Supabase if sign-in is pending.");
+    setAuthLoading(false);
+  }
+
+  async function signOut() {
+    if (!isSupabaseConfigured || !supabase) {
+      setAuthUser(null);
+      setAuthMessage("Supabase is not configured. The app is running in local mode.");
+      return;
+    }
+
+    setAuthLoading(true);
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      setAuthMessage(error.message);
+      setAuthLoading(false);
+      return;
+    }
+
+    setAuthUser(null);
+    setAuthMessage("Signed out. Local browser storage remains available.");
+    setAuthLoading(false);
   }
 
   function saveCurrentProposal() {
@@ -1079,9 +1181,13 @@ export default function App() {
 
       {!isPrintView ? (
         <AppChrome
+          authLoading={authLoading}
+          authUser={authUser}
           companyName={company.name}
           currentView={route.view}
           onNavigate={navigate}
+          onOpenLogin={() => navigate("/login")}
+          onSignOut={signOut}
           onNewContact={startNewContact}
           onNewGcPacket={createNewGcPacket}
           onNewProposal={createNewProposal}
@@ -1107,11 +1213,26 @@ export default function App() {
         />
       ) : isBackupView ? (
         <BackupView backupTools={backupTools} onBackToDashboard={() => navigate("/dashboard")} />
+      ) : isLoginView ? (
+        <LoginView
+          authLoading={authLoading}
+          authMessage={authMessage}
+          authUser={authUser}
+          onBackToDashboard={() => navigate("/dashboard")}
+          onSignIn={signInWithEmail}
+          onSignOut={signOut}
+          onSignUp={signUpWithEmail}
+        />
       ) : isSettingsView ? (
         <CompanySettingsView
+          authLoading={authLoading}
+          authMessage={authMessage}
+          authUser={authUser}
           backupTools={backupTools}
           message={settingsMessage}
           settings={settingsDraft}
+          onOpenLogin={() => navigate("/login")}
+          onSignOut={signOut}
           onBackToList={() => navigate("/proposals")}
           onChange={updateSettingsDraft}
           onReset={resetSettingsDraft}
@@ -1233,7 +1354,18 @@ export default function App() {
   );
 }
 
-function AppChrome({ companyName, currentView, onNavigate, onNewContact, onNewGcPacket, onNewProposal }) {
+function AppChrome({
+  authLoading,
+  authUser,
+  companyName,
+  currentView,
+  onNavigate,
+  onNewContact,
+  onNewGcPacket,
+  onNewProposal,
+  onOpenLogin,
+  onSignOut,
+}) {
   const activeView = ["new", "edit", "print"].includes(currentView) ? "list" : currentView;
   const navItems = [
     ["dashboard", "Dashboard", () => onNavigate("/dashboard")],
@@ -1260,6 +1392,20 @@ function AppChrome({ companyName, currentView, onNavigate, onNewContact, onNewGc
         ))}
       </nav>
       <div className="app-quick-actions">
+        <div className="app-auth-pill">
+          <span>{getAuthStatusLabel(authUser, authLoading)}</span>
+          {isSupabaseConfigured ? (
+            authUser ? (
+              <button type="button" onClick={onSignOut}>
+                Sign Out
+              </button>
+            ) : (
+              <button type="button" onClick={onOpenLogin}>
+                Sign In
+              </button>
+            )
+          ) : null}
+        </div>
         <button type="button" onClick={onNewProposal}>
           New Proposal
         </button>
@@ -1424,6 +1570,73 @@ function BackupView({ backupTools, onBackToDashboard }) {
         </button>
       </div>
       {backupTools}
+    </section>
+  );
+}
+
+function LoginView({ authLoading, authMessage, authUser, onBackToDashboard, onSignIn, onSignOut, onSignUp }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  function handleSubmit(action) {
+    if (!hasTextValue(email) || !hasTextValue(password)) {
+      return;
+    }
+
+    action(email.trim(), password);
+  }
+
+  return (
+    <section className="login-panel no-print">
+      <div className="list-toolbar">
+        <div>
+          <p className="list-kicker">Supabase Auth</p>
+          <h2>Login</h2>
+        </div>
+        <button type="button" onClick={onBackToDashboard}>
+          Back to Dashboard
+        </button>
+      </div>
+
+      <div className="login-card">
+        {!isSupabaseConfigured ? (
+          <>
+            <h3>Local Mode</h3>
+            <p>Supabase is not configured. The app will keep using local browser storage.</p>
+          </>
+        ) : authUser ? (
+          <>
+            <h3>Signed In</h3>
+            <p>{authUser.email}</p>
+            <button type="button" onClick={onSignOut} disabled={authLoading}>
+              Sign Out
+            </button>
+          </>
+        ) : (
+          <>
+            <h3>Sign In or Create Account</h3>
+            <p>Authentication is available, but proposal cloud sync is coming in a later phase.</p>
+            <label>
+              <span>Email</span>
+              <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+            </label>
+            <label>
+              <span>Password</span>
+              <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            </label>
+            <div className="login-actions">
+              <button type="button" onClick={() => handleSubmit(onSignIn)} disabled={authLoading}>
+                Sign In
+              </button>
+              <button type="button" onClick={() => handleSubmit(onSignUp)} disabled={authLoading}>
+                Sign Up
+              </button>
+            </div>
+          </>
+        )}
+
+        {authMessage ? <span className="login-message">{authMessage}</span> : null}
+      </div>
     </section>
   );
 }
@@ -1924,7 +2137,20 @@ function ProposalListView({
   );
 }
 
-function CompanySettingsView({ backupTools, message, settings, onBackToList, onChange, onReset, onSave }) {
+function CompanySettingsView({
+  authLoading,
+  authMessage,
+  authUser,
+  backupTools,
+  message,
+  settings,
+  onBackToList,
+  onChange,
+  onOpenLogin,
+  onReset,
+  onSave,
+  onSignOut,
+}) {
   function handleLogoUpload(file) {
     if (!file) {
       return;
@@ -1958,7 +2184,13 @@ function CompanySettingsView({ backupTools, message, settings, onBackToList, onC
 
       {backupTools}
 
-      <CloudStatusCard />
+      <CloudStatusCard
+        authLoading={authLoading}
+        authMessage={authMessage}
+        authUser={authUser}
+        onOpenLogin={onOpenLogin}
+        onSignOut={onSignOut}
+      />
 
       <div className="settings-grid">
         <EditorField label="Company Name" path="settings.companyName" value={settings.companyName} onChange={(_, value) => onChange("companyName", value)} />
@@ -2027,7 +2259,7 @@ function CompanySettingsView({ backupTools, message, settings, onBackToList, onC
   );
 }
 
-function CloudStatusCard() {
+function CloudStatusCard({ authLoading, authMessage, authUser, onOpenLogin, onSignOut }) {
   return (
     <section className="cloud-status-card no-print">
       <div>
@@ -2037,18 +2269,33 @@ function CloudStatusCard() {
       <div className="cloud-status-grid">
         <div>
           <span>Cloud save</span>
-          <strong>{isSupabaseConfigured ? "Configured" : "Not configured"}</strong>
+          <strong>{isSupabaseConfigured ? "Supabase configured" : "Supabase not configured"}</strong>
+        </div>
+        <div>
+          <span>Auth status</span>
+          <strong>{getAuthStatusLabel(authUser, authLoading)}</strong>
         </div>
         <div>
           <span>Current storage mode</span>
           <strong>Local browser storage</strong>
         </div>
-        <div>
-          <span>Connection</span>
-          <strong>{isSupabaseConfigured ? "Supabase connected" : "Local mode fallback"}</strong>
-        </div>
       </div>
-      <p>Cloud sync will be enabled in a later phase.</p>
+      <p>Cloud sync: Coming in a later phase.</p>
+      {authUser ? <p>Current user: {authUser.email}</p> : null}
+      {authMessage ? <p>{authMessage}</p> : null}
+      {isSupabaseConfigured ? (
+        <div className="cloud-status-actions">
+          {authUser ? (
+            <button type="button" onClick={onSignOut} disabled={authLoading}>
+              Sign Out
+            </button>
+          ) : (
+            <button type="button" onClick={onOpenLogin} disabled={authLoading}>
+              Sign In / Sign Up
+            </button>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -4471,6 +4718,10 @@ function parseRoute(pathname) {
     return { view: "backup", path: "/backup" };
   }
 
+  if (segments[0] === "login") {
+    return { view: "login", path: "/login" };
+  }
+
   if (segments[0] === "settings") {
     return { view: "settings", path: "/settings" };
   }
@@ -4500,6 +4751,18 @@ function parseRoute(pathname) {
 
 function isProposalRouteView(view) {
   return view === "new" || view === "edit" || view === "print";
+}
+
+function getAuthStatusLabel(authUser, authLoading = false) {
+  if (!isSupabaseConfigured) {
+    return "Local mode";
+  }
+
+  if (authLoading) {
+    return "Checking auth";
+  }
+
+  return authUser ? `Signed in: ${authUser.email}` : "Signed out";
 }
 
 function getInitialProposalForRoute(route, proposals, companySettings = getDefaultCompanySettings()) {

@@ -125,6 +125,26 @@ h4 {
   justify-content: flex-end;
 }
 
+.app-auth-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 5px 6px 5px 10px;
+}
+
+.app-auth-pill span {
+  max-width: 190px;
+  overflow: hidden;
+  color: white;
+  font-size: 11px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .app-nav button,
 .app-quick-actions button {
   border-radius: 10px;
@@ -216,7 +236,8 @@ h4 {
 .proposal-action-bar,
 .dashboard-panel,
 .backup-page-panel,
-.contacts-panel {
+.contacts-panel,
+.login-panel {
   max-width: 1500px;
   margin: 0 auto 24px;
   border: 1px solid rgba(6, 43, 69, 0.12);
@@ -229,7 +250,8 @@ h4 {
 .company-settings-panel,
 .dashboard-panel,
 .backup-page-panel,
-.contacts-panel {
+.contacts-panel,
+.login-panel {
   padding: 22px;
 }
 
@@ -399,6 +421,27 @@ h4 {
   font-weight: 750;
 }
 
+.cloud-status-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.cloud-status-actions button,
+.login-card button {
+  border-radius: 9px;
+  background: var(--blue);
+  color: white;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.cloud-status-actions button:disabled,
+.login-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .cloud-status-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -426,6 +469,54 @@ h4 {
   margin-top: 5px;
   color: var(--blue);
   font-size: 14px;
+}
+
+.login-card {
+  display: grid;
+  max-width: 560px;
+  gap: 14px;
+  margin-top: 20px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 18px;
+}
+
+.login-card h3 {
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 950;
+}
+
+.login-card p,
+.login-message {
+  color: #556171;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.login-card label {
+  display: grid;
+  gap: 5px;
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.login-card input {
+  border: 1px solid #c9d1dc;
+  border-radius: 7px;
+  background: white;
+  color: var(--body);
+  padding: 9px 10px;
+  font-size: 13px;
+}
+
+.login-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .backup-panel {
