@@ -74,6 +74,7 @@ const storageKey = "last-yard-proposals-v1";
 const companySettingsStorageKey = "last-yard-company-settings-v1";
 const contactsStorageKey = "last-yard-contacts-v1";
 const priceLibraryStorageKey = "last-yard-price-library-v1";
+const bidsStorageKey = "last-yard-bids-v1";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
 const demoContactId = "demo-contact-abc-prime-contractors";
@@ -90,6 +91,19 @@ const cloudSignInLabel = "Sign in to sync proposals, contacts, and settings";
 const cloudSyncErrorLabel = "Sync error";
 const SENT_METHODS = ["", "Email", "Text", "In Person", "Portal Upload", "Other"];
 const SUBMITTED_PACKET_STATUSES = ["generated", "sent", "superseded", "approved", "rejected"];
+const BID_STATUSES = [
+  "New",
+  "Reviewing",
+  "Bid / No-Bid",
+  "Estimating",
+  "Proposal Started",
+  "Submitted",
+  "Follow-Up",
+  "Awarded",
+  "Lost",
+  "No-Bid",
+];
+const BID_PRIORITIES = ["Low", "Medium", "High", "Must Bid"];
 const CONTACT_TYPES = [
   "",
   "GC / Prime",
@@ -298,6 +312,13 @@ export default function App() {
   const [savedContacts, setSavedContacts] = useState(() => loadSavedContacts());
   const [priceLibrary, setPriceLibrary] = useState(() => loadPriceLibrary());
   const [priceLibraryMessage, setPriceLibraryMessage] = useState("");
+  const [savedBids, setSavedBids] = useState(() => loadSavedBids());
+  const [bidDraft, setBidDraft] = useState(() => createEmptyBid());
+  const [bidEditorOpen, setBidEditorOpen] = useState(false);
+  const [bidMessage, setBidMessage] = useState("");
+  const [bidSearchQuery, setBidSearchQuery] = useState("");
+  const [bidStatusFilter, setBidStatusFilter] = useState("all");
+  const [bidPriorityFilter, setBidPriorityFilter] = useState("all");
   const [route, setRoute] = useState(() => parseRoute(window.location.pathname));
   const [proposalDraft, setProposalDraft] = useState(() =>
     getInitialProposalForRoute(parseRoute(window.location.pathname), loadSavedProposals(loadCompanySettings()), loadCompanySettings()),
@@ -333,6 +354,7 @@ export default function App() {
   const isContactsView = route.view === "contacts";
   const isLoginView = route.view === "login";
   const isPriceLibraryView = route.view === "priceLibrary";
+  const isBidsView = route.view === "bids";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
   const proposalValidation = validateProposalCompleteness(proposalDraft);
 
@@ -347,6 +369,10 @@ export default function App() {
   useEffect(() => {
     saveStoredPriceLibrary(priceLibrary);
   }, [priceLibrary]);
+
+  useEffect(() => {
+    saveStoredBids(savedBids);
+  }, [savedBids]);
 
   useEffect(() => {
     saveCompanySettings(companySettings);
@@ -493,7 +519,8 @@ export default function App() {
         isBackupView ||
         isContactsView ||
         isLoginView ||
-        isPriceLibraryView
+        isPriceLibraryView ||
+        isBidsView
       ) {
         return;
       }
@@ -508,7 +535,7 @@ export default function App() {
 
     window.addEventListener("keydown", handlePrintShortcut);
     return () => window.removeEventListener("keydown", handlePrintShortcut);
-  }, [isBackupView, isContactsView, isDashboardView, isListView, isLoginView, isPriceLibraryView, isSettingsView, proposalDraft]);
+  }, [isBackupView, isBidsView, isContactsView, isDashboardView, isListView, isLoginView, isPriceLibraryView, isSettingsView, proposalDraft]);
 
   useEffect(() => {
     if (validationNotice && proposalValidation.errors.length === 0) {
@@ -706,7 +733,7 @@ export default function App() {
   }
 
   function saveSettings() {
-    const normalizedSettings = getSettingsWithPriceLibrary(settingsDraft, priceLibrary);
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     setSettingsMessage(getCloudReadyMessage(authUser, "Company settings saved locally. Syncing to cloud...", "Company settings saved locally."));
@@ -727,7 +754,7 @@ export default function App() {
     }));
 
     try {
-      const companyRecord = await ensureCloudCompany(user, getSettingsWithPriceLibrary(companySettings, priceLibrary), companyCloudDeps);
+      const companyRecord = await ensureCloudCompany(user, getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids), companyCloudDeps);
 
       if (isCancelled()) {
         return;
@@ -735,7 +762,7 @@ export default function App() {
 
       const settingsResult = await loadOrSeedCloudCompanySettings(
         companyRecord.id,
-        getSettingsWithPriceLibrary(companySettings, priceLibrary),
+        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids),
         companyCloudDeps,
       );
 
@@ -758,9 +785,11 @@ export default function App() {
       }
 
       const syncedPriceLibrary = getPriceLibraryFromSettings(settingsResult.settings, priceLibrary);
-      const syncedSettings = getSettingsWithPriceLibrary(settingsResult.settings, syncedPriceLibrary);
+      const syncedBids = getBidsFromSettings(settingsResult.settings, savedBids);
+      const syncedSettings = getSettingsWithPriceLibraryAndBids(settingsResult.settings, syncedPriceLibrary, syncedBids);
 
       setPriceLibrary(syncedPriceLibrary);
+      setSavedBids(syncedBids);
       setCompanySettings(syncedSettings);
       setSettingsDraft(syncedSettings);
       setSavedContacts(contactsResult.contacts);
@@ -808,7 +837,8 @@ export default function App() {
 
   async function syncSettingsToCloud(settings = companySettings) {
     const libraryForSettings = Array.isArray(settings?.priceLibrary) ? settings.priceLibrary : priceLibrary;
-    const normalizedSettings = getSettingsWithPriceLibrary(settings, libraryForSettings);
+    const bidsForSettings = Array.isArray(settings?.bidPipeline) ? settings.bidPipeline : savedBids;
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settings, libraryForSettings, bidsForSettings);
 
     if (!canUseCloudSync(authUser)) {
       setCloudSync((currentSync) => ({
@@ -979,7 +1009,7 @@ export default function App() {
   }
 
   async function pushLocalDataToCloud() {
-    const normalizedSettings = getSettingsWithPriceLibrary(settingsDraft, priceLibrary);
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     await syncSettingsToCloud(normalizedSettings);
@@ -1366,6 +1396,234 @@ export default function App() {
     await deleteSingleCloudContact(contactId);
   }
 
+  function startNewBid() {
+    setBidDraft(createEmptyBid());
+    setBidEditorOpen(true);
+    setBidMessage("Ready for a new bid opportunity.");
+    navigate("/bids");
+  }
+
+  function editBid(bid) {
+    setBidDraft(normalizeBid(bid));
+    setBidEditorOpen(true);
+    setBidMessage(`Editing ${bid.projectName || "bid opportunity"}.`);
+  }
+
+  function updateBidDraft(field, value) {
+    setBidDraft((currentBid) => {
+      const nextBid = {
+        ...currentBid,
+        [field]: value,
+      };
+
+      if (field === "contactId") {
+        const contact = savedContacts.find((item) => item.id === value);
+
+        if (contact) {
+          return applyContactToBid(nextBid, contact);
+        }
+      }
+
+      return nextBid;
+    });
+  }
+
+  async function commitBids(nextBids, message = "Bid pipeline saved locally.") {
+    const normalizedBids = normalizeBids(nextBids);
+    const settingsWithBids = getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, normalizedBids);
+
+    setSavedBids(normalizedBids);
+    setCompanySettings(settingsWithBids);
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, normalizedBids));
+    setBidMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
+
+    if (canUseCloudSync(authUser)) {
+      const synced = await syncSettingsToCloud(settingsWithBids);
+      setBidMessage(synced ? `${message} Synced to cloud settings.` : `${message} Cloud sync failed. See Settings for details.`);
+    }
+  }
+
+  async function saveBid() {
+    if (!bidEditorOpen) {
+      setBidMessage("Select a bid to edit, or create a new bid.");
+      return;
+    }
+
+    const normalizedBid = normalizeBid({
+      ...bidDraft,
+      updatedAt: new Date().toISOString(),
+    });
+
+    if (!hasTextValue(normalizedBid.projectName)) {
+      setBidMessage("Enter a project name before saving this bid.");
+      return;
+    }
+
+    await commitBids(upsertBid(savedBids, normalizedBid), `Saved ${normalizedBid.projectName} locally.`);
+    setBidDraft(normalizedBid);
+  }
+
+  async function duplicateBid(bidId) {
+    const bid = savedBids.find((item) => item.id === bidId);
+
+    if (!bid) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const duplicate = normalizeBid({
+      ...bid,
+      id: createProposalId(),
+      projectName: `${bid.projectName || "Bid Opportunity"} Copy`,
+      bidStatus: "New",
+      proposalId: "",
+      submittedPacketRecordId: "",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await commitBids(upsertBid(savedBids, duplicate), `Duplicated ${bid.projectName || "bid opportunity"} locally.`);
+    setBidDraft(duplicate);
+    setBidEditorOpen(true);
+  }
+
+  async function updateBidStatus(bidId, bidStatus) {
+    const bid = savedBids.find((item) => item.id === bidId);
+
+    if (!bid) {
+      return;
+    }
+
+    const nextBid = normalizeBid({
+      ...bid,
+      bidStatus,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await commitBids(upsertBid(savedBids, nextBid), `Marked ${nextBid.projectName || "bid"} as ${bidStatus}.`);
+
+    if (bidDraft.id === bidId) {
+      setBidDraft(nextBid);
+    }
+  }
+
+  async function deleteBid(bidId) {
+    const bid = savedBids.find((item) => item.id === bidId);
+
+    if (!bid) {
+      return;
+    }
+
+    if (!window.confirm(`Delete bid opportunity "${bid.projectName || "Untitled bid"}"? This may affect local/cloud data after sync.`)) {
+      return;
+    }
+
+    const nextBids = savedBids.filter((item) => item.id !== bidId);
+    await commitBids(nextBids, `Deleted ${bid.projectName || "bid opportunity"} locally.`);
+
+    if (bidDraft.id === bidId) {
+      setBidDraft(createEmptyBid());
+      setBidEditorOpen(false);
+    }
+  }
+
+  async function createProposalFromBid(bidId) {
+    const bid = savedBids.find((item) => item.id === bidId);
+
+    if (!bid) {
+      return;
+    }
+
+    const sourceContact = bid.contactId ? savedContacts.find((contact) => contact.id === bid.contactId) : null;
+    const proposal = createEditableProposal(
+      applyTemplateToProposal("gc_prime_full_packet", createNewProposalDraft(savedProposals, companySettings)),
+    );
+    const proposalFromBid = createEditableProposal({
+      ...proposal,
+      contactId: bid.contactId || "",
+      client: {
+        ...proposal.client,
+        companyName: sourceContact?.companyName || bid.gcCompany || bid.ownerOrClient || proposal.client.companyName,
+        contactName: sourceContact?.contactName || bid.contactName || proposal.client.contactName,
+        email: sourceContact?.email || bid.contactEmail || proposal.client.email,
+        phone: sourceContact?.phone || bid.contactPhone || proposal.client.phone,
+        billingAddress: sourceContact?.billingAddress || proposal.client.billingAddress || "",
+        projectAddress: sourceContact?.defaultProjectAddress || bid.projectLocation || proposal.client.projectAddress || "",
+      },
+      gcPrime: {
+        ...proposal.gcPrime,
+        gcName: bid.gcCompany || proposal.gcPrime.gcName,
+        projectManagerName: bid.contactName || proposal.gcPrime.projectManagerName,
+        projectManagerEmail: bid.contactEmail || proposal.gcPrime.projectManagerEmail,
+        projectManagerPhone: bid.contactPhone || proposal.gcPrime.projectManagerPhone,
+        rfiClarificationNotes: bid.missingInfo || proposal.gcPrime.rfiClarificationNotes,
+      },
+      project: {
+        ...proposal.project,
+        name: bid.projectName || proposal.project.name,
+        location: bid.projectLocation || proposal.project.location,
+        address: bid.projectLocation || proposal.project.address,
+        description: bid.scopeSummary || bid.concreteScope || proposal.project.description,
+        specialRequirements: bid.redFlags || proposal.project.specialRequirements,
+      },
+      proposalNotes: [bid.notes, bid.nextStep ? `Next step: ${bid.nextStep}` : ""].filter(hasTextValue).join("\n"),
+      updatedAt: new Date().toISOString(),
+    });
+    const linkedBid = normalizeBid({
+      ...bid,
+      bidStatus: "Proposal Started",
+      proposalId: proposalFromBid.id,
+      updatedAt: new Date().toISOString(),
+    });
+    const nextProposals = upsertProposal(savedProposals, proposalFromBid);
+
+    setSavedProposals(nextProposals);
+    await commitBids(upsertBid(savedBids, linkedBid), `Created proposal from ${bid.projectName || "bid"} locally.`);
+    setBidDraft(linkedBid);
+    navigate(`/proposals/${proposalFromBid.id}`, { proposal: proposalFromBid, skipUnsavedCheck: true });
+    await syncSingleProposalToCloud(proposalFromBid, "Proposal from bid synced to Supabase.");
+  }
+
+  async function linkBidToProposal(bidId, proposalId) {
+    const bid = savedBids.find((item) => item.id === bidId);
+    const proposal = savedProposals.find((item) => item.id === proposalId || item.proposalNumber === proposalId);
+
+    if (!bid || !proposal) {
+      setBidMessage("Choose a valid proposal to link.");
+      return;
+    }
+
+    const linkedBid = normalizeBid({
+      ...bid,
+      proposalId: proposal.id,
+      bidStatus: bid.bidStatus === "New" || bid.bidStatus === "Reviewing" ? "Proposal Started" : bid.bidStatus,
+      updatedAt: new Date().toISOString(),
+    });
+
+    await commitBids(upsertBid(savedBids, linkedBid), `Linked ${bid.projectName || "bid"} to ${proposal.proposalNumber}.`);
+    setBidDraft(linkedBid);
+  }
+
+  async function markBidSubmitted(bidId) {
+    const bid = savedBids.find((item) => item.id === bidId);
+
+    if (!bid) {
+      return;
+    }
+
+    const linkedProposal = savedProposals.find((proposal) => proposal.id === bid.proposalId);
+    const latestPacketRecord = linkedProposal ? getLatestSubmittedPacketRecord(linkedProposal) : null;
+    const submittedBid = normalizeBid({
+      ...bid,
+      bidStatus: "Submitted",
+      submittedPacketRecordId: latestPacketRecord?.id || bid.submittedPacketRecordId || "",
+      updatedAt: new Date().toISOString(),
+    });
+
+    await commitBids(upsertBid(savedBids, submittedBid), `Marked ${bid.projectName || "bid"} as submitted.`);
+    setBidDraft(submittedBid);
+  }
+
   function applyContactToCurrentProposal(contactId) {
     if (!contactId) {
       setProposalDirty(true);
@@ -1703,11 +1961,11 @@ export default function App() {
 
   async function commitPriceLibrary(nextLibrary, message = "Price library saved locally.") {
     const normalizedLibrary = normalizePriceLibrary(nextLibrary);
-    const settingsWithLibrary = getSettingsWithPriceLibrary(companySettings, normalizedLibrary);
+    const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(companySettings, normalizedLibrary, savedBids);
 
     setPriceLibrary(normalizedLibrary);
     setCompanySettings(settingsWithLibrary);
-    setSettingsDraft((currentSettings) => getSettingsWithPriceLibrary(currentSettings, normalizedLibrary));
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, normalizedLibrary, savedBids));
     setPriceLibraryMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
     if (canUseCloudSync(authUser)) {
@@ -2633,7 +2891,7 @@ export default function App() {
       }
 
       if (type === "settings") {
-        downloadJsonFile(createCompanySettingsExport(getSettingsWithPriceLibrary(companySettings, priceLibrary)), getCompanySettingsBackupFileName());
+        downloadJsonFile(createCompanySettingsExport(getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids)), getCompanySettingsBackupFileName());
         setBackupMessage("Exported company settings.");
         return;
       }
@@ -2644,10 +2902,16 @@ export default function App() {
         return;
       }
 
+      if (type === "bids") {
+        downloadJsonFile(createBidsExport(savedBids), getBidsBackupFileName());
+        setBackupMessage(`Exported ${savedBids.length} bids.`);
+        return;
+      }
+
       if (type === "full") {
-        downloadJsonFile(createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary), getFullBackupFileName());
+        downloadJsonFile(createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary, savedBids), getFullBackupFileName());
         setBackupMessage(
-          `Exported full app backup with ${savedProposals.length} proposals, ${savedContacts.length} contacts, ${priceLibrary.length} price items, and company settings.`,
+          `Exported full app backup with ${savedProposals.length} proposals, ${savedContacts.length} contacts, ${savedBids.length} bids, ${priceLibrary.length} price items, and company settings.`,
         );
       }
     } catch (error) {
@@ -2694,9 +2958,11 @@ export default function App() {
       if (type === "settings") {
         const importedSettings = parseCompanySettingsImport(importedJson);
         const importedPriceLibrary = getPriceLibraryFromSettings(importedSettings, priceLibrary);
-        const settingsWithLibrary = getSettingsWithPriceLibrary(importedSettings, importedPriceLibrary);
+        const importedBids = getBidsFromSettings(importedSettings, savedBids);
+        const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids);
 
         setPriceLibrary(importedPriceLibrary);
+        setSavedBids(importedBids);
         setCompanySettings(settingsWithLibrary);
         setSettingsDraft(settingsWithLibrary);
         setBackupMessage("Imported company settings. New proposals will use the restored defaults.");
@@ -2716,6 +2982,22 @@ export default function App() {
         setContactDraft(createEmptyContact());
         setContactEditorOpen(false);
         setBackupMessage(`${mode === "replace" ? "Replaced" : "Merged"} ${importedContacts.length} imported contacts.`);
+        return;
+      }
+
+      if (type === "bids") {
+        const importedBids = parseBidCollectionImport(importedJson);
+        const nextBids = mergeOrReplaceImportedBids(importedBids, savedBids, mode, "bids");
+
+        if (!nextBids) {
+          setBackupMessage("Import cancelled.");
+          return;
+        }
+
+        await commitBids(nextBids, `${mode === "replace" ? "Replaced" : "Merged"} ${importedBids.length} imported bids locally.`);
+        setBidDraft(createEmptyBid());
+        setBidEditorOpen(false);
+        setBackupMessage(`${mode === "replace" ? "Replaced" : "Merged"} ${importedBids.length} imported bids.`);
         return;
       }
 
@@ -2739,19 +3021,26 @@ export default function App() {
             ? importedBackup.contacts.map((contact) => normalizeContact(contact))
             : mergeImportedContacts(importedBackup.contacts, savedContacts),
         );
+        const nextBids =
+          mode === "replace"
+            ? importedBackup.bids.map((bid) => normalizeBid(bid))
+            : mergeImportedBids(importedBackup.bids, savedBids);
         const importedPriceLibrary =
           importedBackup.priceLibrary.length > 0 ? normalizePriceLibrary(importedBackup.priceLibrary) : priceLibrary;
-        const importedSettings = getSettingsWithPriceLibrary(importedBackup.companySettings, importedPriceLibrary);
+        const importedSettings = getSettingsWithPriceLibraryAndBids(importedBackup.companySettings, importedPriceLibrary, nextBids);
 
         setPriceLibrary(importedPriceLibrary);
+        setSavedBids(nextBids);
         setCompanySettings(importedSettings);
         setSettingsDraft(importedSettings);
         setContactDraft(createEmptyContact());
         setContactEditorOpen(false);
+        setBidDraft(createEmptyBid());
+        setBidEditorOpen(false);
         syncDraftAfterProposalRestore(nextProposals);
         markProposalsNeedCloudSync("Imported full backup locally. Use Sync Proposals or Push Local Data to Cloud when ready.");
         setBackupMessage(
-          `${mode === "replace" ? "Restored" : "Merged"} full backup with ${importedBackup.proposals.length} proposals, ${importedBackup.contacts.length} contacts, ${importedPriceLibrary.length} price items, and company settings.`,
+          `${mode === "replace" ? "Restored" : "Merged"} full backup with ${importedBackup.proposals.length} proposals, ${importedBackup.contacts.length} contacts, ${nextBids.length} bids, ${importedPriceLibrary.length} price items, and company settings.`,
         );
       }
     } catch (error) {
@@ -2800,6 +3089,7 @@ export default function App() {
           onNavigate={navigate}
           onOpenLogin={() => navigate("/login")}
           onSignOut={signOut}
+          onNewBid={startNewBid}
           onNewContact={startNewContact}
           onNewGcPacket={createNewGcPacket}
           onNewProposal={createNewProposal}
@@ -2811,9 +3101,11 @@ export default function App() {
       {isDashboardView ? (
         <DashboardView
           authUser={authUser}
+          bids={savedBids}
           cloudSync={cloudSync}
           contacts={savedContacts}
           proposals={savedProposals}
+          onCreateBid={startNewBid}
           onCreateCommercialProposal={createNewCommercialProposal}
           onCreateContact={startNewContact}
           onCreateGcPacket={createNewGcPacket}
@@ -2823,6 +3115,7 @@ export default function App() {
           onLoadDemoData={loadDemoData}
           onOpen={openProposal}
           onOpenContacts={() => navigate("/contacts")}
+          onOpenBids={() => navigate("/bids")}
           onOpenList={() => navigate("/proposals")}
           onOpenPrint={openProposalPrintView}
           onOpenSampleProposal={openSampleProposal}
@@ -2858,6 +3151,33 @@ export default function App() {
           onImport={importPriceLibraryBackup}
           onSave={savePriceLibraryItem}
           onToggleActive={togglePriceLibraryItem}
+        />
+      ) : isBidsView ? (
+        <BidsView
+          bidDraft={bidDraft}
+          bids={savedBids}
+          contacts={savedContacts}
+          isEditorOpen={bidEditorOpen}
+          message={bidMessage}
+          priorityFilter={bidPriorityFilter}
+          proposals={savedProposals}
+          searchQuery={bidSearchQuery}
+          statusFilter={bidStatusFilter}
+          onBackToDashboard={() => navigate("/dashboard")}
+          onCreateProposal={createProposalFromBid}
+          onDelete={deleteBid}
+          onDuplicate={duplicateBid}
+          onEdit={editBid}
+          onLinkProposal={linkBidToProposal}
+          onMarkSubmitted={markBidSubmitted}
+          onNew={startNewBid}
+          onOpenProposal={openProposal}
+          onPriorityFilterChange={setBidPriorityFilter}
+          onSave={saveBid}
+          onSearchChange={setBidSearchQuery}
+          onStatusChange={updateBidStatus}
+          onStatusFilterChange={setBidStatusFilter}
+          onUpdateDraft={updateBidDraft}
         />
       ) : isSettingsView ? (
         <CompanySettingsView
@@ -3028,9 +3348,11 @@ export default function App() {
 
 function DashboardView({
   authUser,
+  bids = [],
   cloudSync,
   contacts = [],
   proposals,
+  onCreateBid,
   onCreateCommercialProposal,
   onCreateContact,
   onCreateGcPacket,
@@ -3039,6 +3361,7 @@ function DashboardView({
   onExportBackup,
   onLoadDemoData,
   onOpen,
+  onOpenBids,
   onOpenContacts,
   onOpenList,
   onOpenPrint,
@@ -3051,9 +3374,10 @@ function DashboardView({
   onResetDemoData,
   onSyncProposals,
 }) {
-  const stats = buildDashboardStats(proposals, contacts);
+  const stats = buildDashboardStats(proposals, contacts, bids);
   const recentProposals = getRecentProposals(proposals);
   const followUpProposals = getFollowUpDueProposals(proposals);
+  const upcomingBids = getUpcomingBids(bids);
   const demoStatus = getDemoStatus(proposals, contacts);
 
   return (
@@ -3080,11 +3404,17 @@ function DashboardView({
           <button type="button" onClick={onCreateContact}>
             New Contact
           </button>
+          <button type="button" onClick={onCreateBid}>
+            Add Bid
+          </button>
           <button type="button" onClick={onOpenList}>
             Open Proposals
           </button>
           <button type="button" onClick={onOpenContacts}>
             Contacts
+          </button>
+          <button type="button" onClick={onOpenBids}>
+            Bid Tracker
           </button>
           <button type="button" onClick={onOpenPriceLibrary}>
             Price Library
@@ -3152,6 +3482,38 @@ function DashboardView({
       <div className="recent-proposals-card">
         <div className="recent-heading">
           <div>
+            <p className="list-kicker">Bid pipeline</p>
+            <h3>Upcoming Bid Opportunities</h3>
+          </div>
+          <button type="button" onClick={onOpenBids}>
+            Open Bids
+          </button>
+        </div>
+
+        {upcomingBids.length > 0 ? (
+          <div className="bid-dashboard-list">
+            {upcomingBids.map((bid) => (
+              <div className="bid-dashboard-row" key={bid.id}>
+                <div>
+                  <strong>{bid.projectName || "Untitled bid"}</strong>
+                  <span>{[bid.gcCompany, bid.projectLocation].filter(Boolean).join(" | ") || "No GC/location entered"}</span>
+                </div>
+                <div>
+                  <Badge className={getBidStatusClass(bid.bidStatus)}>{bid.bidStatus}</Badge>
+                  <small>{bid.bidDueDate ? `Due ${formatDisplayDate(bid.bidDueDate)}` : "No due date"}</small>
+                </div>
+                <p>{bid.nextStep || "Review opportunity details."}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-list-message">No open bid opportunities are due soon.</p>
+        )}
+      </div>
+
+      <div className="recent-proposals-card">
+        <div className="recent-heading">
+          <div>
             <p className="list-kicker">Proposal follow-up</p>
             <h3>Needs Follow-Up</h3>
           </div>
@@ -3198,6 +3560,267 @@ function DashboardView({
         ) : (
           <p className="empty-list-message">No proposals yet. Start with a standard proposal or a full GC packet.</p>
         )}
+      </div>
+    </section>
+  );
+}
+
+function BidsView({
+  bidDraft,
+  bids = [],
+  contacts = [],
+  isEditorOpen,
+  message,
+  priorityFilter,
+  proposals = [],
+  searchQuery,
+  statusFilter,
+  onBackToDashboard,
+  onCreateProposal,
+  onDelete,
+  onDuplicate,
+  onEdit,
+  onLinkProposal,
+  onMarkSubmitted,
+  onNew,
+  onOpenProposal,
+  onPriorityFilterChange,
+  onSave,
+  onSearchChange,
+  onStatusChange,
+  onStatusFilterChange,
+  onUpdateDraft,
+}) {
+  const filteredBids = filterBids(bids, {
+    priorityFilter,
+    searchQuery,
+    statusFilter,
+  });
+  const linkedProposal = proposals.find((proposal) => proposal.id === bidDraft.proposalId);
+  const isSavedBid = bids.some((bid) => bid.id === bidDraft.id);
+
+  return (
+    <section className="bids-panel no-print">
+      <div className="list-heading">
+        <div>
+          <p className="list-kicker">Bid Tracker</p>
+          <h2>Bid Pipeline</h2>
+          <p>Track GC bid opportunities before they become proposal packets.</p>
+        </div>
+        <div className="settings-actions">
+          <button type="button" onClick={onBackToDashboard}>
+            Back to Dashboard
+          </button>
+          <button className="gold-action" type="button" onClick={onNew}>
+            Add Bid
+          </button>
+        </div>
+      </div>
+
+      {message ? <p className="backup-message">{message}</p> : null}
+
+      <div className="bids-layout">
+        <div className="bids-list-card">
+          <div className="list-filters bid-filters">
+            <label>
+              <span>Search</span>
+              <input
+                value={searchQuery}
+                placeholder="Search project, GC, location..."
+                onChange={(event) => onSearchChange(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Status</span>
+              <select value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value)}>
+                <option value="all">All Statuses</option>
+                <option value="due_this_week">Due This Week</option>
+                <option value="overdue">Overdue</option>
+                <option value="no_proposal">No Proposal Linked</option>
+                {BID_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Priority</span>
+              <select value={priorityFilter} onChange={(event) => onPriorityFilterChange(event.target.value)}>
+                <option value="all">All Priorities</option>
+                {BID_PRIORITIES.map((priority) => (
+                  <option key={priority} value={priority}>
+                    {priority}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {filteredBids.length > 0 ? (
+            <div className="bid-list">
+              {filteredBids.map((bid) => {
+                const bidProposal = proposals.find((proposal) => proposal.id === bid.proposalId);
+
+                return (
+                  <article className="bid-card" key={bid.id}>
+                    <div className="bid-card-main">
+                      <div>
+                        <div className="bid-card-title">
+                          <strong>{bid.projectName || "Untitled bid"}</strong>
+                          <Badge className={getBidStatusClass(bid.bidStatus)}>{bid.bidStatus}</Badge>
+                          <Badge className={getBidPriorityClass(bid.priority)}>{bid.priority}</Badge>
+                        </div>
+                        <p>{[bid.gcCompany, bid.projectLocation].filter(Boolean).join(" | ") || "No GC/location entered"}</p>
+                        <small>
+                          {bid.bidDueDate ? `Due ${formatDisplayDate(bid.bidDueDate)}` : "No due date"} |{" "}
+                          {bid.nextStep || "No next step"}
+                        </small>
+                      </div>
+                      <div className="bid-card-meta">
+                        <span>{bidProposal ? `Linked: ${bidProposal.proposalNumber}` : "No proposal linked"}</span>
+                        {bid.followUpDate ? <span>Follow-up {formatDisplayDate(bid.followUpDate)}</span> : null}
+                      </div>
+                    </div>
+                    <div className="table-actions">
+                      <button type="button" onClick={() => onEdit(bid)}>
+                        Edit
+                      </button>
+                      <button type="button" onClick={() => onCreateProposal(bid.id)}>
+                        Create Proposal
+                      </button>
+                      {bidProposal ? (
+                        <button type="button" onClick={() => onOpenProposal(bidProposal.id)}>
+                          Open Proposal
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const proposalKey = window.prompt("Enter proposal number or ID to link:");
+                            if (proposalKey) {
+                              onLinkProposal(bid.id, proposalKey);
+                            }
+                          }}
+                        >
+                          Link Existing
+                        </button>
+                      )}
+                      <button type="button" onClick={() => onStatusChange(bid.id, "No-Bid")}>
+                        Mark No-Bid
+                      </button>
+                      <button type="button" onClick={() => onMarkSubmitted(bid.id)}>
+                        Mark Submitted
+                      </button>
+                      <button type="button" onClick={() => onStatusChange(bid.id, "Awarded")}>
+                        Awarded
+                      </button>
+                      <button type="button" onClick={() => onStatusChange(bid.id, "Lost")}>
+                        Lost
+                      </button>
+                      <button type="button" onClick={() => onDuplicate(bid.id)}>
+                        Duplicate
+                      </button>
+                      <button type="button" onClick={() => onDelete(bid.id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="empty-list-message">No bid opportunities match the current filters.</p>
+          )}
+        </div>
+
+        <div className="bid-form-card">
+          {isEditorOpen ? (
+            <>
+              <div className="contact-form-heading">
+                <p className="list-kicker">Bid details</p>
+                <h3>{bidDraft.projectName || "New Bid Opportunity"}</h3>
+                <p>Save project pursuit details, due dates, GC contacts, and proposal links.</p>
+              </div>
+
+              <div className="bid-form-grid">
+                <EditorField label="Project Name" path="projectName" value={bidDraft.projectName} onChange={(_, value) => onUpdateDraft("projectName", value)} />
+                <EditorField label="Project Location" path="projectLocation" value={bidDraft.projectLocation} onChange={(_, value) => onUpdateDraft("projectLocation", value)} />
+                <EditorField label="Owner / Client" path="ownerOrClient" value={bidDraft.ownerOrClient} onChange={(_, value) => onUpdateDraft("ownerOrClient", value)} />
+                <EditorField label="GC Company" path="gcCompany" value={bidDraft.gcCompany} onChange={(_, value) => onUpdateDraft("gcCompany", value)} />
+                <EditorField label="Bid Status" path="bidStatus" value={bidDraft.bidStatus} onChange={(_, value) => onUpdateDraft("bidStatus", value)} options={BID_STATUSES} />
+                <EditorField label="Priority" path="priority" value={bidDraft.priority} onChange={(_, value) => onUpdateDraft("priority", value)} options={BID_PRIORITIES} />
+                <EditorField label="Estimator Assigned" path="estimatorAssigned" value={bidDraft.estimatorAssigned} onChange={(_, value) => onUpdateDraft("estimatorAssigned", value)} />
+                <EditorField label="Bid Source" path="bidSource" value={bidDraft.bidSource} onChange={(_, value) => onUpdateDraft("bidSource", value)} />
+                <EditorField label="Bid URL" path="bidUrl" value={bidDraft.bidUrl} onChange={(_, value) => onUpdateDraft("bidUrl", value)} />
+                <EditorField label="Plan Link" path="planLink" value={bidDraft.planLink} onChange={(_, value) => onUpdateDraft("planLink", value)} />
+                <EditorField label="Bid Due Date" path="bidDueDate" type="date" value={bidDraft.bidDueDate} onChange={(_, value) => onUpdateDraft("bidDueDate", value)} />
+                <EditorField label="Bid Due Time" path="bidDueTime" type="time" value={bidDraft.bidDueTime} onChange={(_, value) => onUpdateDraft("bidDueTime", value)} />
+                <EditorField label="Pre-Bid Meeting" path="preBidMeetingDate" type="date" value={bidDraft.preBidMeetingDate} onChange={(_, value) => onUpdateDraft("preBidMeetingDate", value)} />
+                <EditorField label="RFI Deadline" path="rfiDeadline" type="date" value={bidDraft.rfiDeadline} onChange={(_, value) => onUpdateDraft("rfiDeadline", value)} />
+                <EditorField label="Addendum Deadline" path="addendumDeadline" type="date" value={bidDraft.addendumDeadline} onChange={(_, value) => onUpdateDraft("addendumDeadline", value)} />
+                <EditorField label="Expected Award Date" path="expectedAwardDate" type="date" value={bidDraft.expectedAwardDate} onChange={(_, value) => onUpdateDraft("expectedAwardDate", value)} />
+
+                <label className="contact-select-field">
+                  <span>Select Saved Contact / GC</span>
+                  <select value={bidDraft.contactId} onChange={(event) => onUpdateDraft("contactId", event.target.value)}>
+                    <option value="">No saved contact linked</option>
+                    {contacts.map((contact) => (
+                      <option key={contact.id} value={contact.id}>
+                        {formatContactName(contact)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <EditorField label="Contact Name" path="contactName" value={bidDraft.contactName} onChange={(_, value) => onUpdateDraft("contactName", value)} />
+                <EditorField label="Contact Email" path="contactEmail" value={bidDraft.contactEmail} onChange={(_, value) => onUpdateDraft("contactEmail", value)} />
+                <EditorField label="Contact Phone" path="contactPhone" value={bidDraft.contactPhone} onChange={(_, value) => onUpdateDraft("contactPhone", value)} />
+
+                <label className="contact-select-field">
+                  <span>Linked Proposal</span>
+                  <select value={bidDraft.proposalId} onChange={(event) => onUpdateDraft("proposalId", event.target.value)}>
+                    <option value="">No proposal linked</option>
+                    {proposals.map((proposal) => (
+                      <option key={proposal.id} value={proposal.id}>
+                        {proposal.proposalNumber} - {proposal.project?.name || "Untitled"}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {linkedProposal ? (
+                  <p className="contact-selector-note">Linked to {linkedProposal.proposalNumber}. Save this bid to keep the link.</p>
+                ) : null}
+
+                <EditorField label="Scope Summary" path="scopeSummary" value={bidDraft.scopeSummary} onChange={(_, value) => onUpdateDraft("scopeSummary", value)} multiline />
+                <EditorField label="Concrete Scope" path="concreteScope" value={bidDraft.concreteScope} onChange={(_, value) => onUpdateDraft("concreteScope", value)} multiline />
+                <EditorField label="Red Flags" path="redFlags" value={bidDraft.redFlags} onChange={(_, value) => onUpdateDraft("redFlags", value)} multiline />
+                <EditorField label="Missing Info" path="missingInfo" value={bidDraft.missingInfo} onChange={(_, value) => onUpdateDraft("missingInfo", value)} multiline />
+                <EditorField label="Next Step" path="nextStep" value={bidDraft.nextStep} onChange={(_, value) => onUpdateDraft("nextStep", value)} multiline />
+                <EditorField label="Follow-Up Date" path="followUpDate" type="date" value={bidDraft.followUpDate} onChange={(_, value) => onUpdateDraft("followUpDate", value)} />
+                <EditorField label="Notes" path="notes" value={bidDraft.notes} onChange={(_, value) => onUpdateDraft("notes", value)} multiline />
+              </div>
+
+              <div className="contact-form-actions">
+                <button type="button" onClick={onSave}>
+                  Save Bid
+                </button>
+                <button className="gold-action" type="button" onClick={() => onCreateProposal(bidDraft.id)} disabled={!isSavedBid}>
+                  Create Proposal from Bid
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="contact-empty-state">
+              <p className="list-kicker">No bid selected</p>
+              <h3>Select a bid to edit, or create a new opportunity.</h3>
+              <p>Use the bid tracker for due dates, GC pursuit notes, no-bid decisions, and proposal links.</p>
+              <button type="button" onClick={onNew}>
+                Add Bid
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -6138,6 +6761,10 @@ function parseRoute(pathname) {
     return { view: "contacts", path: "/contacts" };
   }
 
+  if (segments[0] === "bids") {
+    return { view: "bids", path: "/bids" };
+  }
+
   if (segments[0] === "price-library") {
     return { view: "priceLibrary", path: "/price-library" };
   }
@@ -6321,6 +6948,42 @@ function saveStoredContacts(contacts) {
   }
 }
 
+function loadSavedBids() {
+  try {
+    const storedValue = window.localStorage.getItem(bidsStorageKey);
+
+    if (storedValue) {
+      const parsedValue = JSON.parse(storedValue);
+
+      if (Array.isArray(parsedValue)) {
+        return normalizeBids(parsedValue);
+      }
+    }
+
+    const storedSettings = window.localStorage.getItem(companySettingsStorageKey);
+
+    if (storedSettings) {
+      const parsedSettings = JSON.parse(storedSettings);
+
+      if (Array.isArray(parsedSettings?.bidPipeline)) {
+        return normalizeBids(parsedSettings.bidPipeline);
+      }
+    }
+  } catch {
+    // Fall through to an empty bid list if local storage is unavailable or malformed.
+  }
+
+  return [];
+}
+
+function saveStoredBids(bids) {
+  try {
+    window.localStorage.setItem(bidsStorageKey, JSON.stringify(normalizeBids(bids)));
+  } catch {
+    // Local bid saving is best-effort for this phase.
+  }
+}
+
 function loadPriceLibrary() {
   try {
     const storedValue = window.localStorage.getItem(priceLibraryStorageKey);
@@ -6364,12 +7027,28 @@ function getSettingsWithPriceLibrary(settings = {}, priceLibrary = []) {
   });
 }
 
+function getSettingsWithPriceLibraryAndBids(settings = {}, priceLibrary = [], bids = []) {
+  return normalizeCompanySettings({
+    ...(settings || {}),
+    bidPipeline: normalizeBids(bids),
+    priceLibrary: normalizePriceLibrary(priceLibrary),
+  });
+}
+
 function getPriceLibraryFromSettings(settings = {}, fallbackLibrary = []) {
   if (Array.isArray(settings?.priceLibrary)) {
     return normalizePriceLibrary(settings.priceLibrary);
   }
 
   return normalizePriceLibrary(fallbackLibrary);
+}
+
+function getBidsFromSettings(settings = {}, fallbackBids = []) {
+  if (Array.isArray(settings?.bidPipeline)) {
+    return normalizeBids(settings.bidPipeline);
+  }
+
+  return normalizeBids(fallbackBids);
 }
 
 function isDemoRecord(record = {}) {
@@ -6419,6 +7098,17 @@ function createContactsExport(contacts) {
   };
 }
 
+function createBidsExport(bids = []) {
+  return {
+    backupVersion,
+    bids: cloneObject(normalizeBids(bids)),
+    exportedAt: new Date().toISOString(),
+    source: backupSource,
+    storageKey: bidsStorageKey,
+    type: "bids",
+  };
+}
+
 function createPriceLibraryExport(priceLibrary = []) {
   return {
     backupVersion,
@@ -6430,8 +7120,9 @@ function createPriceLibraryExport(priceLibrary = []) {
   };
 }
 
-function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = []) {
+function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = [], bids = []) {
   const normalizedPriceLibrary = normalizePriceLibrary(priceLibrary);
+  const normalizedBids = normalizeBids(bids);
 
   return {
     backupVersion,
@@ -6442,11 +7133,13 @@ function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = 
       proposals: storageKey,
       companySettings: companySettingsStorageKey,
       contacts: contactsStorageKey,
+      bids: bidsStorageKey,
       priceLibrary: priceLibraryStorageKey,
     },
     proposals: cloneObject(proposals),
-    companySettings: cloneObject(getSettingsWithPriceLibrary(settings, normalizedPriceLibrary)),
+    companySettings: cloneObject(getSettingsWithPriceLibraryAndBids(settings, normalizedPriceLibrary, normalizedBids)),
     contacts: cloneObject(contacts),
+    bids: cloneObject(normalizedBids),
     priceLibrary: cloneObject(normalizedPriceLibrary),
   };
 }
@@ -6536,6 +7229,16 @@ function parsePriceLibraryImport(importedJson) {
   return normalizePriceLibrary(priceLibrary).filter((item) => hasTextValue(item.name));
 }
 
+function parseBidCollectionImport(importedJson) {
+  const bids = Array.isArray(importedJson) ? importedJson : importedJson?.bids || importedJson?.companySettings?.bidPipeline;
+
+  if (!Array.isArray(bids)) {
+    throw new Error("This file does not include a bids array.");
+  }
+
+  return normalizeBids(bids).filter((bid) => hasTextValue(bid.projectName));
+}
+
 function parseFullAppBackupImport(importedJson) {
   if (!isPlainObject(importedJson) || (!Array.isArray(importedJson.proposals) && !isPlainObject(importedJson.companySettings))) {
     throw new Error("This file does not look like a full app backup.");
@@ -6545,11 +7248,15 @@ function parseFullAppBackupImport(importedJson) {
   const importedPriceLibrary = Array.isArray(importedJson.priceLibrary)
     ? parsePriceLibraryImport(importedJson)
     : getPriceLibraryFromSettings(importedSettings, []);
+  const importedBids = Array.isArray(importedJson.bids) || Array.isArray(importedSettings.bidPipeline)
+    ? parseBidCollectionImport(importedJson)
+    : [];
 
   return {
     proposals: parseProposalCollectionImport(importedJson),
-    companySettings: getSettingsWithPriceLibrary(importedSettings, importedPriceLibrary),
+    companySettings: getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids),
     contacts: Array.isArray(importedJson.contacts) ? parseContactCollectionImport(importedJson) : [],
+    bids: importedBids,
     priceLibrary: importedPriceLibrary,
   };
 }
@@ -6589,9 +7296,31 @@ function mergeOrReplaceImportedContacts(importedContacts, existingContacts, mode
   return mergeImportedContacts(importedContacts, existingContacts);
 }
 
+function mergeOrReplaceImportedBids(importedBids, existingBids, mode, label) {
+  if (mode === "replace") {
+    const confirmed = window.confirm(
+      `Replace existing bids with ${label}? This may affect local and cloud data after your next settings sync. This cannot be undone unless you have a backup.`,
+    );
+
+    if (!confirmed) {
+      return null;
+    }
+
+    return normalizeBids(importedBids);
+  }
+
+  return mergeImportedBids(importedBids, existingBids);
+}
+
 function mergeImportedContacts(importedContacts = [], existingContacts = []) {
   return importedContacts.reduce((contacts, contact) => upsertContact(contacts, resolveImportedContactIdentity(contact, contacts)), [
     ...existingContacts,
+  ]);
+}
+
+function mergeImportedBids(importedBids = [], existingBids = []) {
+  return importedBids.reduce((bids, bid) => upsertBid(bids, resolveImportedBidIdentity(bid, bids)), [
+    ...normalizeBids(existingBids),
   ]);
 }
 
@@ -6623,6 +7352,18 @@ function resolveImportedPriceLibraryIdentity(item, existingItems = []) {
 
   normalizedItem.updatedAt = new Date().toISOString();
   return normalizedItem;
+}
+
+function resolveImportedBidIdentity(bid, existingBids = []) {
+  const normalizedBid = normalizeBid(bid);
+  const existingIds = new Set(existingBids.map((existingBid) => existingBid.id));
+
+  if (!normalizedBid.id || existingIds.has(normalizedBid.id)) {
+    normalizedBid.id = createProposalId();
+  }
+
+  normalizedBid.updatedAt = new Date().toISOString();
+  return normalizedBid;
 }
 
 function resolveImportedProposalIdentity(proposal, existingProposals = []) {
@@ -6697,6 +7438,10 @@ function getCompanySettingsBackupFileName() {
 
 function getContactsBackupFileName() {
   return `Last_Yard_Contacts_Backup_${getBackupDateStamp()}.json`;
+}
+
+function getBidsBackupFileName() {
+  return `Last_Yard_Bids_Backup_${getBackupDateStamp()}.json`;
 }
 
 function getPriceLibraryBackupFileName() {
@@ -6951,6 +7696,176 @@ function upsertContact(contacts, contact) {
   const otherContacts = contacts.filter((item) => item.id !== normalizedContact.id);
 
   return [normalizedContact, ...otherContacts].sort((a, b) => formatContactName(a).localeCompare(formatContactName(b)));
+}
+
+function createEmptyBid() {
+  const now = new Date().toISOString();
+
+  return {
+    id: createProposalId(),
+    projectName: "",
+    ownerOrClient: "",
+    gcCompany: "",
+    contactId: "",
+    contactName: "",
+    contactEmail: "",
+    contactPhone: "",
+    projectLocation: "",
+    bidSource: "",
+    bidUrl: "",
+    planLink: "",
+    bidDueDate: "",
+    bidDueTime: "",
+    preBidMeetingDate: "",
+    rfiDeadline: "",
+    addendumDeadline: "",
+    expectedAwardDate: "",
+    bidStatus: "New",
+    priority: "Medium",
+    estimatorAssigned: "",
+    scopeSummary: "",
+    concreteScope: "",
+    redFlags: "",
+    missingInfo: "",
+    nextStep: "",
+    followUpDate: "",
+    proposalId: "",
+    submittedPacketRecordId: "",
+    notes: "",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function normalizeBid(bid = {}) {
+  const now = new Date().toISOString();
+
+  return {
+    ...createEmptyBid(),
+    ...bid,
+    id: bid.id || createProposalId(),
+    projectName: bid.projectName || "",
+    ownerOrClient: bid.ownerOrClient || "",
+    gcCompany: bid.gcCompany || "",
+    contactId: bid.contactId || "",
+    contactName: bid.contactName || "",
+    contactEmail: bid.contactEmail || "",
+    contactPhone: bid.contactPhone || "",
+    projectLocation: bid.projectLocation || "",
+    bidSource: bid.bidSource || "",
+    bidUrl: bid.bidUrl || "",
+    planLink: bid.planLink || "",
+    bidDueDate: bid.bidDueDate || "",
+    bidDueTime: bid.bidDueTime || "",
+    preBidMeetingDate: bid.preBidMeetingDate || "",
+    rfiDeadline: bid.rfiDeadline || "",
+    addendumDeadline: bid.addendumDeadline || "",
+    expectedAwardDate: bid.expectedAwardDate || "",
+    bidStatus: BID_STATUSES.includes(bid.bidStatus) ? bid.bidStatus : "New",
+    priority: BID_PRIORITIES.includes(bid.priority) ? bid.priority : "Medium",
+    estimatorAssigned: bid.estimatorAssigned || "",
+    scopeSummary: bid.scopeSummary || "",
+    concreteScope: bid.concreteScope || "",
+    redFlags: bid.redFlags || "",
+    missingInfo: bid.missingInfo || "",
+    nextStep: bid.nextStep || "",
+    followUpDate: bid.followUpDate || "",
+    proposalId: bid.proposalId || "",
+    submittedPacketRecordId: bid.submittedPacketRecordId || "",
+    notes: bid.notes || "",
+    createdAt: bid.createdAt || now,
+    updatedAt: bid.updatedAt || now,
+  };
+}
+
+function normalizeBids(bids = []) {
+  return (Array.isArray(bids) ? bids : [])
+    .filter(isPlainObject)
+    .map((bid) => normalizeBid(bid))
+    .sort((a, b) => getBidSortTimestamp(a) - getBidSortTimestamp(b));
+}
+
+function upsertBid(bids, bid) {
+  const normalizedBid = normalizeBid(bid);
+  const otherBids = normalizeBids(bids).filter((item) => item.id !== normalizedBid.id);
+
+  return normalizeBids([normalizedBid, ...otherBids]);
+}
+
+function applyContactToBid(bid, contact) {
+  return {
+    ...bid,
+    contactId: contact.id,
+    contactName: contact.contactName || bid.contactName,
+    contactEmail: contact.email || bid.contactEmail,
+    contactPhone: contact.phone || bid.contactPhone,
+    gcCompany: contact.companyName || bid.gcCompany,
+    projectLocation: contact.defaultProjectAddress || bid.projectLocation,
+  };
+}
+
+function filterBids(bids = [], { priorityFilter = "all", searchQuery = "", statusFilter = "all" } = {}) {
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
+  return normalizeBids(bids).filter((bid) => {
+    const searchText = [bid.projectName, bid.gcCompany, bid.ownerOrClient, bid.projectLocation, bid.contactName, bid.contactEmail]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    const matchesSearch = !normalizedSearch || searchText.includes(normalizedSearch);
+    const matchesPriority = priorityFilter === "all" || bid.priority === priorityFilter;
+    const matchesStatus =
+      statusFilter === "all" ||
+      (statusFilter === "due_this_week" && isBidDueThisWeek(bid)) ||
+      (statusFilter === "overdue" && isBidOverdue(bid)) ||
+      (statusFilter === "no_proposal" && !hasTextValue(bid.proposalId)) ||
+      bid.bidStatus === statusFilter;
+
+    return matchesSearch && matchesPriority && matchesStatus;
+  });
+}
+
+function getUpcomingBids(bids = [], limit = 5) {
+  return normalizeBids(bids)
+    .filter((bid) => !["Awarded", "Lost", "No-Bid"].includes(bid.bidStatus))
+    .slice(0, limit);
+}
+
+function getBidSortTimestamp(bid = {}) {
+  if (hasTextValue(bid.bidDueDate)) {
+    return getDateOnlyTimestamp(bid.bidDueDate);
+  }
+
+  const timestamp = new Date(bid.updatedAt || bid.createdAt || "").valueOf();
+  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
+}
+
+function isBidDueThisWeek(bid = {}) {
+  if (!hasTextValue(bid.bidDueDate)) {
+    return false;
+  }
+
+  const dueTimestamp = getDateOnlyTimestamp(bid.bidDueDate);
+  const todayTimestamp = getTodayTimestamp();
+  const weekFromToday = todayTimestamp + 7 * 24 * 60 * 60 * 1000;
+
+  return dueTimestamp >= todayTimestamp && dueTimestamp <= weekFromToday;
+}
+
+function isBidOverdue(bid = {}) {
+  return (
+    hasTextValue(bid.bidDueDate) &&
+    getDateOnlyTimestamp(bid.bidDueDate) < getTodayTimestamp() &&
+    !["Submitted", "Awarded", "Lost", "No-Bid"].includes(bid.bidStatus)
+  );
+}
+
+function getBidStatusClass(status = "") {
+  return `bid-status-${String(status || "new").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+function getBidPriorityClass(priority = "") {
+  return `bid-priority-${String(priority || "medium").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 }
 
 function createEmptyPriceLibraryDraft() {
@@ -7522,7 +8437,7 @@ function getDateOnlyTimestamp(value) {
   return Number.isNaN(date.valueOf()) ? Number.POSITIVE_INFINITY : date.valueOf();
 }
 
-function buildDashboardStats(proposals = [], contacts = []) {
+function buildDashboardStats(proposals = [], contacts = [], bids = []) {
   const statusCounts = PROPOSAL_STATUSES.reduce(
     (counts, status) => ({
       ...counts,
@@ -7539,6 +8454,15 @@ function buildDashboardStats(proposals = [], contacts = []) {
   const submittedPackets = getSubmittedPacketRecordsForDashboard(proposals);
   const packetsGeneratedThisMonth = submittedPackets.filter((record) => isCurrentMonthDate(record.createdAt)).length;
   const lastSubmittedPacket = submittedPackets[0] || null;
+  const openBids = bids.filter((bid) => !["Awarded", "Lost", "No-Bid"].includes(bid.bidStatus));
+  const bidsDueThisWeek = bids.filter(isBidDueThisWeek);
+  const bidsOverdue = bids.filter(isBidOverdue);
+  const estimatingBids = bids.filter((bid) => bid.bidStatus === "Estimating");
+  const submittedBidsAwaitingFollowUp = bids.filter(
+    (bid) =>
+      (bid.bidStatus === "Submitted" || bid.bidStatus === "Follow-Up") &&
+      (!hasTextValue(bid.followUpDate) || getDateOnlyTimestamp(bid.followUpDate) <= getTodayTimestamp()),
+  );
 
   return {
     cards: [
@@ -7555,6 +8479,11 @@ function buildDashboardStats(proposals = [], contacts = []) {
       { label: "Contacts", value: contacts.length },
       { label: "Packets This Month", value: packetsGeneratedThisMonth },
       { label: "Win Rate", value: decidedCount > 0 ? `${winRate}%` : "-" },
+      { label: "Open Bids", value: openBids.length },
+      { label: "Bids Due This Week", value: bidsDueThisWeek.length },
+      { label: "Bids Overdue", value: bidsOverdue.length },
+      { label: "Bids Estimating", value: estimatingBids.length },
+      { label: "Submitted Bid Follow-Up", value: submittedBidsAwaitingFollowUp.length },
     ],
     fullPacketCount: proposals.filter((proposal) => getPacketModeLabel(proposal) === "Full GC Packet").length,
     lastSubmittedPacket,

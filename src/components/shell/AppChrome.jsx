@@ -6,6 +6,7 @@ export function AppChrome({
   currentView,
   isCloudConfigured,
   onNavigate,
+  onNewBid,
   onNewContact,
   onNewGcPacket,
   onNewProposal,
@@ -16,6 +17,7 @@ export function AppChrome({
   const navItems = [
     ["dashboard", "Dashboard", () => onNavigate("/dashboard")],
     ["list", "Proposals", () => onNavigate("/proposals")],
+    ["bids", "Bids", () => onNavigate("/bids")],
     ["contacts", "Contacts", () => onNavigate("/contacts")],
     ["priceLibrary", "Price Library", () => onNavigate("/price-library")],
     ["settings", "Company Settings", () => onNavigate("/settings")],
@@ -58,6 +60,9 @@ export function AppChrome({
         </button>
         <button type="button" onClick={onNewContact}>
           New Contact
+        </button>
+        <button type="button" onClick={onNewBid}>
+          New Bid
         </button>
         <button className="gold-action" type="button" onClick={onNewGcPacket}>
           New GC Packet

@@ -4,7 +4,7 @@ export function BackupRestorePanel({ canExportCurrent = false, message = "", onE
   const [importType, setImportType] = useState("proposal");
   const [importMode, setImportMode] = useState("merge");
   const [importFile, setImportFile] = useState(null);
-  const showMergeMode = importType === "all" || importType === "contacts" || importType === "full";
+  const showMergeMode = importType === "all" || importType === "contacts" || importType === "bids" || importType === "full";
 
   return (
     <section className="backup-panel no-print">
@@ -35,6 +35,9 @@ export function BackupRestorePanel({ canExportCurrent = false, message = "", onE
             <button type="button" onClick={() => onExport("contacts")}>
               Export Contacts
             </button>
+            <button type="button" onClick={() => onExport("bids")}>
+              Export Bids
+            </button>
             <button type="button" onClick={() => onExport("full")}>
               Export Full App Backup
             </button>
@@ -51,6 +54,7 @@ export function BackupRestorePanel({ canExportCurrent = false, message = "", onE
                 <option value="all">All Proposals JSON</option>
                 <option value="settings">Company Settings JSON</option>
                 <option value="contacts">Contacts JSON</option>
+                <option value="bids">Bids JSON</option>
                 <option value="full">Full App Backup JSON</option>
               </select>
             </label>

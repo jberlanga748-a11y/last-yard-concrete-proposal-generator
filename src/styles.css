@@ -259,6 +259,7 @@ h4 {
 .dashboard-panel,
 .backup-page-panel,
 .contacts-panel,
+.bids-panel,
 .price-library-panel,
 .login-panel {
   max-width: 1500px;
@@ -274,6 +275,7 @@ h4 {
 .dashboard-panel,
 .backup-page-panel,
 .contacts-panel,
+.bids-panel,
 .price-library-panel,
 .login-panel {
   padding: 22px;
@@ -1133,6 +1135,127 @@ h4 {
   display: grid;
   gap: 10px;
   margin-top: 14px;
+}
+
+.bids-layout {
+  display: grid;
+  grid-template-columns: minmax(520px, 1.1fr) minmax(420px, 0.9fr);
+  gap: 18px;
+}
+
+.bids-list-card,
+.bid-form-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 16px;
+}
+
+.bid-filters {
+  grid-template-columns: minmax(260px, 1fr) 190px 170px;
+  margin-top: 0;
+}
+
+.bid-list,
+.bid-dashboard-list {
+  display: grid;
+  gap: 10px;
+}
+
+.bid-card,
+.bid-dashboard-row {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: white;
+  padding: 12px;
+}
+
+.bid-card-main,
+.bid-dashboard-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.bid-card-main {
+  display: grid;
+  gap: 12px;
+}
+
+.bid-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bid-card-title strong,
+.bid-dashboard-row strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.bid-card p,
+.bid-dashboard-row span,
+.bid-card small,
+.bid-dashboard-row small,
+.bid-card-meta span,
+.bid-dashboard-row p {
+  color: #556171;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.bid-card-meta {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.bid-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.bid-form-grid label {
+  display: grid;
+  gap: 5px;
+}
+
+.bid-form-grid input,
+.bid-form-grid select,
+.bid-form-grid textarea {
+  border: 1px solid #c9d1dc;
+  border-radius: 7px;
+  background: white;
+  padding: 8px 9px;
+  color: var(--ink);
+  font: inherit;
+}
+
+.bid-form-grid textarea {
+  min-height: 76px;
+}
+
+.bid-status-awarded,
+.bid-priority-must-bid {
+  background: rgba(6, 43, 69, 0.1);
+  color: var(--blue);
+}
+
+.bid-status-lost,
+.bid-status-no-bid {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.bid-status-submitted,
+.bid-status-follow-up,
+.bid-priority-high {
+  background: rgba(201, 166, 74, 0.18);
+  color: #7a5c0f;
 }
 
 .contact-row {
