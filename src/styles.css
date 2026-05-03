@@ -590,6 +590,137 @@ h4 {
   font-size: 14px;
 }
 
+.team-access-card {
+  display: grid;
+  gap: 13px;
+  margin-top: 20px;
+  border: 1px solid rgba(6, 43, 69, 0.14);
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 16px;
+}
+
+.team-access-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.team-access-heading h3 {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.team-access-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.team-access-grid div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.team-access-grid span,
+.team-invite-row span,
+.team-member-row span {
+  display: block;
+  color: #556171;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.team-access-grid strong {
+  display: block;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+  color: var(--blue);
+  font-size: 13px;
+}
+
+.team-access-help,
+.team-access-message {
+  color: var(--body);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.team-access-message {
+  color: var(--blue);
+}
+
+.team-invite-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 180px auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.team-invite-row label {
+  display: grid;
+  gap: 5px;
+}
+
+.team-invite-row input,
+.team-invite-row select {
+  border: 1px solid #c9d1dc;
+  border-radius: 7px;
+  background: white;
+  color: var(--body);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.team-invite-row button,
+.team-member-row button {
+  border-radius: 9px;
+  background: var(--blue);
+  color: white;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.team-invite-row button:disabled,
+.team-member-row button:disabled,
+.team-invite-row input:disabled,
+.team-invite-row select:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.team-member-list {
+  display: grid;
+  gap: 8px;
+}
+
+.team-member-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.team-member-row strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
 .storage-diagnostics-panel {
   border-top: 1px solid var(--line);
   padding-top: 12px;

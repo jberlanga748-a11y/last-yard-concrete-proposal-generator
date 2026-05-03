@@ -35,6 +35,8 @@ const cloudSignInLabel = "Sign in to sync proposals, contacts, and settings";
 const cloudSyncErrorLabel = "Sync error";
 const SENT_METHODS = ["", "Email", "Text", "In Person", "Portal Upload", "Other"];
 const SUBMITTED_PACKET_STATUSES = ["generated", "sent", "superseded", "approved", "rejected"];
+const TEAM_ROLES = ["owner", "admin", "estimator", "viewer"];
+const TEAM_INVITE_ROLES = ["admin", "estimator", "viewer"];
 const CONTACT_TYPES = [
   "",
   "GC / Prime",
@@ -231,6 +233,8 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState("");
   const [cloudSync, setCloudSync] = useState(() => createCloudSyncState());
   const [saveState, setSaveState] = useState(() => createSaveState());
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [teamMessage, setTeamMessage] = useState("");
   const [proposalDirty, setProposalDirty] = useState(false);
   const company = proposalDraft.company;
   const isDashboardView = route.view === "dashboard";
@@ -259,10 +263,13 @@ export default function App() {
     if (!isSupabaseConfigured || !supabase) {
       setAuthLoading(false);
       setAuthUser(null);
+      setTeamMembers([]);
+      setTeamMessage("Team access is available after Supabase is configured.");
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: "",
         contactsStatus: cloudLocalOnlyLabel,
+        currentRole: "local",
         loading: false,
         message: "Cloud save is not configured. Proposals, contacts, and settings are stored locally.",
         proposalStatus: cloudLocalOnlyLabel,
@@ -303,10 +310,13 @@ export default function App() {
     }
 
     if (!authUser) {
+      setTeamMembers([]);
+      setTeamMessage("Sign in to sync team access.");
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: "",
         contactsStatus: cloudLocalOnlyLabel,
+        currentRole: "local",
         loading: false,
         message: cloudSignInLabel,
         proposalStatus: cloudLocalOnlyLabel,
@@ -634,6 +644,7 @@ export default function App() {
       }
 
       const proposalsResult = await loadOrMergeCloudProposals(companyRecord.id, savedProposals);
+      const cloudTeamMembers = await fetchCloudTeamMembers(companyRecord.id);
       const syncedAt = new Date().toISOString();
 
       if (isCancelled()) {
@@ -644,6 +655,12 @@ export default function App() {
       setSettingsDraft(settingsResult.settings);
       setSavedContacts(contactsResult.contacts);
       setSavedProposals(proposalsResult.proposals);
+      setTeamMembers(cloudTeamMembers);
+      setTeamMessage(
+        cloudTeamMembers.length > 0
+          ? `Loaded ${cloudTeamMembers.length} team member${cloudTeamMembers.length === 1 ? "" : "s"}.`
+          : "Team access is ready. Add invited partners from Settings.",
+      );
 
       if (isProposalRouteView(route.view)) {
         const syncedDraft = proposalsResult.proposals.find((proposal) => proposal.id === proposalDraft.id);
@@ -656,6 +673,7 @@ export default function App() {
       setCloudSync({
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
+        currentRole: companyRecord.role || "owner",
         lastError: "",
         lastSyncedAt: syncedAt,
         loading: false,
@@ -704,6 +722,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
         lastError: "",
         lastSyncedAt: syncedAt,
         loading: false,
@@ -750,6 +769,7 @@ export default function App() {
         ...currentSync,
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
         lastError: "",
         lastSyncedAt: syncedAt,
         loading: false,
@@ -788,6 +808,7 @@ export default function App() {
         ...currentSync,
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
         lastError: "",
         lastSyncedAt: new Date().toISOString(),
         message: "Contact synced to Supabase.",
@@ -818,6 +839,7 @@ export default function App() {
         ...currentSync,
         companyId: companyRecord.id,
         contactsStatus: cloudSyncedLabel,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
         lastError: "",
         lastSyncedAt: new Date().toISOString(),
         message: "Contact deleted from Supabase.",
@@ -854,6 +876,100 @@ export default function App() {
     await pushLocalProposalsToCloud(savedProposals);
   }
 
+  async function refreshTeamMembers() {
+    if (!canUseCloudSync(authUser)) {
+      setTeamMessage(getCloudSignInMessage());
+      return;
+    }
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      const members = await fetchCloudTeamMembers(companyRecord.id);
+
+      setTeamMembers(members);
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
+      }));
+      setTeamMessage(`Loaded ${members.length} team member${members.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setTeamMessage(`Team refresh failed: ${error.message}`);
+    }
+  }
+
+  async function inviteTeamMember(inviteEmail, role) {
+    if (!canUseCloudSync(authUser)) {
+      setTeamMessage(getCloudSignInMessage());
+      return;
+    }
+
+    if (!canManageTeamAccess(cloudSync.currentRole)) {
+      setTeamMessage("Only owner/admin users can manage team access.");
+      return;
+    }
+
+    try {
+      const email = String(inviteEmail || "").trim().toLowerCase();
+
+      if (!email || !email.includes("@")) {
+        setTeamMessage("Enter a valid invite email.");
+        return;
+      }
+
+      if (email === String(authUser.email || "").trim().toLowerCase()) {
+        setTeamMessage("You are already the signed-in company user.");
+        return;
+      }
+
+      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      const invitedMember = await createCloudTeamInvite(companyRecord.id, email, role);
+      const members = await fetchCloudTeamMembers(companyRecord.id);
+
+      setTeamMembers(members);
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
+      }));
+      setTeamMessage(`Invited ${invitedMember.inviteEmail} as ${formatTeamRole(invitedMember.role)}.`);
+    } catch (error) {
+      setTeamMessage(`Invite failed: ${error.message}`);
+    }
+  }
+
+  async function deactivateTeamMember(memberId) {
+    if (!canUseCloudSync(authUser)) {
+      setTeamMessage(getCloudSignInMessage());
+      return;
+    }
+
+    if (!canManageTeamAccess(cloudSync.currentRole)) {
+      setTeamMessage("Only owner/admin users can manage team access.");
+      return;
+    }
+
+    if (!window.confirm("Deactivate this team member? This may affect local/cloud data access.")) {
+      return;
+    }
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      await deactivateCloudTeamMember(companyRecord.id, memberId);
+      const members = await fetchCloudTeamMembers(companyRecord.id);
+
+      setTeamMembers(members);
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
+      }));
+      setTeamMessage("Team member deactivated.");
+    } catch (error) {
+      setTeamMessage(`Deactivate failed: ${error.message}`);
+    }
+  }
+
   function markProposalsNeedCloudSync(message = "Local proposals changed. Push or sync proposals to update Supabase.") {
     setCloudSync((currentSync) => ({
       ...currentSync,
@@ -879,6 +995,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
         lastError: "",
         lastSyncedAt: new Date().toISOString(),
         message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
@@ -930,6 +1047,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
         lastError: "",
         lastSyncedAt: new Date().toISOString(),
         loading: false,
@@ -994,6 +1112,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
         lastError: "",
         lastSyncedAt: syncedAt,
         loading: false,
@@ -1039,6 +1158,7 @@ export default function App() {
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
         lastError: "",
         lastSyncedAt: new Date().toISOString(),
         loading: false,
@@ -1227,10 +1347,13 @@ export default function App() {
 
     setAuthUser(null);
     setAuthMessage("Signed out. Local browser storage remains available.");
+    setTeamMembers([]);
+    setTeamMessage("Sign in to sync team access.");
     setCloudSync((currentSync) => ({
       ...currentSync,
       companyId: "",
       contactsStatus: cloudLocalOnlyLabel,
+      currentRole: "local",
       lastError: "",
       loading: false,
       message: cloudSignInLabel,
@@ -2445,12 +2568,17 @@ export default function App() {
           saveState={saveState}
           settings={settingsDraft}
           storageDiagnostics={storageDiagnostics}
+          teamMembers={teamMembers}
+          teamMessage={teamMessage}
           onClearCloudSyncMessage={clearCloudSyncMessage}
+          onDeactivateTeamMember={deactivateTeamMember}
+          onInviteTeamMember={inviteTeamMember}
           onOpenLogin={() => navigate("/login")}
           onPullCloudData={pullCloudData}
           onPullCloudProposals={pullCloudProposals}
           onPushLocalDataToCloud={pushLocalDataToCloud}
           onPushLocalProposals={pushLocalProposalsToCloud}
+          onRefreshTeamMembers={refreshTeamMembers}
           onSignOut={signOut}
           onSyncContacts={syncContactsToCloud}
           onSyncProposals={syncProposalsNow}
@@ -3582,14 +3710,19 @@ function CompanySettingsView({
   saveState,
   settings,
   storageDiagnostics,
+  teamMembers,
+  teamMessage,
   onBackToList,
   onChange,
   onClearCloudSyncMessage,
+  onDeactivateTeamMember,
+  onInviteTeamMember,
   onOpenLogin,
   onPullCloudData,
   onPullCloudProposals,
   onPushLocalDataToCloud,
   onPushLocalProposals,
+  onRefreshTeamMembers,
   onReset,
   onSave,
   onSignOut,
@@ -3649,6 +3782,18 @@ function CompanySettingsView({
         onSyncProposals={onSyncProposals}
         onSyncSettings={() => onSyncSettings(settings)}
         onTestStorageUpload={onTestStorageUpload}
+      />
+
+      <TeamAccessPanel
+        authUser={authUser}
+        cloudSync={cloudSync}
+        members={teamMembers}
+        message={teamMessage}
+        settings={settings}
+        onDeactivateMember={onDeactivateTeamMember}
+        onInviteMember={onInviteTeamMember}
+        onOpenLogin={onOpenLogin}
+        onRefreshMembers={onRefreshTeamMembers}
       />
 
       <div className="settings-grid">
@@ -3713,6 +3858,130 @@ function CompanySettingsView({
             multiline
           />
         </div>
+      </div>
+    </section>
+  );
+}
+
+function TeamAccessPanel({
+  authUser,
+  cloudSync,
+  members = [],
+  message,
+  settings,
+  onDeactivateMember,
+  onInviteMember,
+  onOpenLogin,
+  onRefreshMembers,
+}) {
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("estimator");
+  const canUseCloud = canUseCloudSync(authUser);
+  const canManage = canUseCloud && canManageTeamAccess(cloudSync.currentRole);
+  const currentRole = authUser ? formatTeamRole(cloudSync.currentRole || "owner") : "Local user";
+
+  async function handleInvite(event) {
+    event.preventDefault();
+    await onInviteMember(inviteEmail, inviteRole);
+    setInviteEmail("");
+  }
+
+  return (
+    <section className="team-access-card no-print">
+      <div className="team-access-heading">
+        <div>
+          <p className="list-kicker">Team / Access</p>
+          <h3>Team Access</h3>
+        </div>
+        <div className="cloud-status-actions">
+          {canUseCloud ? (
+            <button type="button" onClick={onRefreshMembers}>
+              Refresh Team
+            </button>
+          ) : (
+            <button type="button" onClick={onOpenLogin} disabled={!isSupabaseConfigured}>
+              Sign In to Sync
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="team-access-grid">
+        <div>
+          <span>Company</span>
+          <strong>{settings.companyName || "Last Yard Concrete LLC"}</strong>
+        </div>
+        <div>
+          <span>Signed-in email</span>
+          <strong>{authUser?.email || "Local mode"}</strong>
+        </div>
+        <div>
+          <span>Current role</span>
+          <strong>{currentRole}</strong>
+        </div>
+        <div>
+          <span>Company id</span>
+          <strong>{cloudSync.companyId || "-"}</strong>
+        </div>
+      </div>
+
+      <p className="team-access-help">
+        Owner/admin users can invite partners to the same company account. Signed-out users can continue using local browser storage.
+      </p>
+      {message ? <p className="team-access-message">{message}</p> : null}
+
+      <form className="team-invite-row" onSubmit={handleInvite}>
+        <label>
+          <span>Invite Email</span>
+          <input
+            type="email"
+            value={inviteEmail}
+            onChange={(event) => setInviteEmail(event.target.value)}
+            placeholder="partner@example.com"
+            disabled={!canManage}
+          />
+        </label>
+        <label>
+          <span>Role</span>
+          <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)} disabled={!canManage}>
+            {TEAM_INVITE_ROLES.map((role) => (
+              <option key={role} value={role}>
+                {formatTeamRole(role)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button type="submit" disabled={!canManage}>
+          Invite / Add Member
+        </button>
+      </form>
+
+      <div className="team-member-list">
+        {members.length > 0 ? (
+          members.map((member) => {
+            const memberEmail = member.inviteEmail || member.userId || "Pending user";
+            const isCurrentUser = member.userId && member.userId === authUser?.id;
+            const disableDeactivate = !canManage || member.role === "owner" || isCurrentUser || member.status === "inactive";
+
+            return (
+              <div className="team-member-row" key={member.id}>
+                <div>
+                  <strong>{memberEmail}</strong>
+                  <span>{member.userId ? "Linked account" : "Invite pending"}</span>
+                </div>
+                <Badge>{formatTeamRole(member.role)}</Badge>
+                <Badge className={member.status === "active" ? "status-approved" : member.status === "inactive" ? "status-rejected" : "status-sent"}>
+                  {formatOptionLabel(member.status || "invited")}
+                </Badge>
+                <button type="button" onClick={() => onDeactivateMember(member.id)} disabled={disableDeactivate}>
+                  Deactivate
+                </button>
+              </div>
+            );
+          })
+        ) : (
+          <p className="empty-list-message">No cloud team members found yet. The owner row will appear after running the Phase 33 SQL and refreshing.</p>
+        )}
       </div>
     </section>
   );
@@ -3789,7 +4058,7 @@ function CloudStatusCard({
         </div>
         <div>
           <span>Current role</span>
-          <strong>{authUser ? "Owner/Admin" : "Local user"}</strong>
+          <strong>{authUser ? formatTeamRole(cloudSync.currentRole || "owner") : "Local user"}</strong>
         </div>
       </div>
       <p>Cloud sync is enabled for proposals, company settings, contacts, and uploaded proposal assets. Legacy data URL images still render and can remain in backups.</p>
@@ -6778,6 +7047,7 @@ function createCloudSyncState() {
   return {
     companyId: "",
     contactsStatus: cloudLocalOnlyLabel,
+    currentRole: "local",
     lastError: "",
     lastSyncedAt: "",
     loading: false,
@@ -7077,6 +7347,19 @@ async function ensureCloudCompany(user, settings = getDefaultCompanySettings()) 
     throw profileError;
   }
 
+  const activeMembership = await claimInvitedMembership(user);
+
+  if (activeMembership?.companyId) {
+    const memberCompany = await fetchCloudCompanyById(activeMembership.companyId);
+
+    if (memberCompany?.id) {
+      return {
+        ...memberCompany,
+        role: activeMembership.role,
+      };
+    }
+  }
+
   const { data: existingCompanies, error: companyLoadError } = await supabase
     .from("companies")
     .select("id,name")
@@ -7089,7 +7372,12 @@ async function ensureCloudCompany(user, settings = getDefaultCompanySettings()) 
   }
 
   if (existingCompanies?.length > 0) {
-    return existingCompanies[0];
+    const ownedCompany = {
+      ...existingCompanies[0],
+      role: "owner",
+    };
+    await ensureOwnerCompanyMembership(ownedCompany, user);
+    return ownedCompany;
   }
 
   const { data: createdCompany, error: companyCreateError } = await supabase
@@ -7105,7 +7393,324 @@ async function ensureCloudCompany(user, settings = getDefaultCompanySettings()) 
     throw companyCreateError;
   }
 
-  return createdCompany;
+  const ownedCompany = {
+    ...createdCompany,
+    role: "owner",
+  };
+  await ensureOwnerCompanyMembership(ownedCompany, user);
+  return ownedCompany;
+}
+
+function isMissingTeamTableError(error) {
+  const message = String(error?.message || error?.details || error?.hint || "").toLowerCase();
+  return error?.code === "42P01" || message.includes("company_members") || message.includes("does not exist");
+}
+
+function normalizeTeamRole(role) {
+  const normalizedRole = String(role || "").trim().toLowerCase();
+  return TEAM_ROLES.includes(normalizedRole) ? normalizedRole : "viewer";
+}
+
+function formatTeamRole(role) {
+  if (String(role || "").trim().toLowerCase() === "local") {
+    return "Local user";
+  }
+
+  const normalizedRole = normalizeTeamRole(role);
+  if (normalizedRole === "owner") {
+    return "Owner";
+  }
+  if (normalizedRole === "admin") {
+    return "Admin";
+  }
+  if (normalizedRole === "estimator") {
+    return "Estimator";
+  }
+  return "Viewer";
+}
+
+function canManageTeamAccess(role) {
+  const normalizedRole = normalizeTeamRole(role);
+  return normalizedRole === "owner" || normalizedRole === "admin";
+}
+
+function normalizeTeamMember(row = {}) {
+  return {
+    companyId: row.company_id || row.companyId || "",
+    createdAt: row.created_at || row.createdAt || "",
+    id: row.id || createId("team"),
+    inviteEmail: String(row.invite_email || row.inviteEmail || "").trim().toLowerCase(),
+    role: normalizeTeamRole(row.role),
+    status: String(row.status || "invited").trim().toLowerCase(),
+    updatedAt: row.updated_at || row.updatedAt || "",
+    userId: row.user_id || row.userId || "",
+  };
+}
+
+async function fetchCloudCompanyById(companyId) {
+  if (!companyId) {
+    return null;
+  }
+
+  const { data, error } = await supabase.from("companies").select("id,name,owner_id").eq("id", companyId).maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data || null;
+}
+
+async function claimInvitedMembership(user) {
+  const email = String(user?.email || "").trim().toLowerCase();
+
+  if (!email) {
+    return null;
+  }
+
+  const inviteResult = await supabase
+    .from("company_members")
+    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
+    .ilike("invite_email", email)
+    .eq("status", "invited")
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (inviteResult.error) {
+    if (isMissingTeamTableError(inviteResult.error)) {
+      return null;
+    }
+
+    throw inviteResult.error;
+  }
+
+  const invite = inviteResult.data?.[0];
+
+  if (invite) {
+    const { data, error } = await supabase
+      .from("company_members")
+      .update({
+        status: "active",
+        updated_at: new Date().toISOString(),
+        user_id: user.id,
+      })
+      .eq("id", invite.id)
+      .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
+      .single();
+
+    if (error) {
+      if (isMissingTeamTableError(error)) {
+        return null;
+      }
+
+      throw error;
+    }
+
+    return normalizeTeamMember(data);
+  }
+
+  const activeResult = await supabase
+    .from("company_members")
+    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (activeResult.error) {
+    if (isMissingTeamTableError(activeResult.error)) {
+      return null;
+    }
+
+    throw activeResult.error;
+  }
+
+  if (activeResult.data?.length > 0) {
+    return normalizeTeamMember(activeResult.data[0]);
+  }
+
+  return null;
+}
+
+async function ensureOwnerCompanyMembership(companyRecord, user) {
+  if (!companyRecord?.id || !user?.id) {
+    return null;
+  }
+
+  const email = String(user.email || "").trim().toLowerCase();
+  const { data: existingRows, error: loadError } = await supabase
+    .from("company_members")
+    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
+    .eq("company_id", companyRecord.id)
+    .eq("user_id", user.id)
+    .limit(1);
+
+  if (loadError) {
+    if (isMissingTeamTableError(loadError)) {
+      return null;
+    }
+
+    throw loadError;
+  }
+
+  if (existingRows?.length > 0) {
+    const existingMember = normalizeTeamMember(existingRows[0]);
+
+    if (existingMember.role === "owner" && existingMember.status === "active") {
+      return existingMember;
+    }
+
+    const { data, error } = await supabase
+      .from("company_members")
+      .update({
+        invite_email: existingMember.inviteEmail || email,
+        role: "owner",
+        status: "active",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existingMember.id)
+      .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
+      .single();
+
+    if (error) {
+      if (isMissingTeamTableError(error)) {
+        return null;
+      }
+
+      throw error;
+    }
+
+    return normalizeTeamMember(data);
+  }
+
+  const { data, error } = await supabase
+    .from("company_members")
+    .insert({
+      company_id: companyRecord.id,
+      invite_email: email,
+      role: "owner",
+      status: "active",
+      user_id: user.id,
+    })
+    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
+    .single();
+
+  if (error) {
+    if (isMissingTeamTableError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+
+  return normalizeTeamMember(data);
+}
+
+async function fetchCloudTeamMembers(companyId) {
+  if (!companyId) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("company_members")
+    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    if (isMissingTeamTableError(error)) {
+      return [];
+    }
+
+    throw error;
+  }
+
+  return (data || []).map((row) => normalizeTeamMember(row));
+}
+
+async function createCloudTeamInvite(companyId, inviteEmail, role = "estimator") {
+  const normalizedEmail = String(inviteEmail || "").trim().toLowerCase();
+  const normalizedRole = TEAM_INVITE_ROLES.includes(normalizeTeamRole(role)) ? normalizeTeamRole(role) : "estimator";
+
+  if (!companyId) {
+    throw new Error("Cloud company is not ready yet.");
+  }
+
+  if (!normalizedEmail || !normalizedEmail.includes("@")) {
+    throw new Error("Enter a valid invite email.");
+  }
+
+  const existingResult = await supabase
+    .from("company_members")
+    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
+    .eq("company_id", companyId)
+    .eq("invite_email", normalizedEmail)
+    .limit(1);
+
+  if (existingResult.error) {
+    if (isMissingTeamTableError(existingResult.error)) {
+      throw new Error("Run the Phase 33 Supabase SQL before inviting team members.");
+    }
+
+    throw existingResult.error;
+  }
+
+  const existingMember = existingResult.data?.[0];
+
+  if (existingMember) {
+    const { data, error } = await supabase
+      .from("company_members")
+      .update({
+        role: normalizedRole,
+        status: existingMember.user_id ? "active" : "invited",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existingMember.id)
+      .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return normalizeTeamMember(data);
+  }
+
+  const { data, error } = await supabase
+    .from("company_members")
+    .insert({
+      company_id: companyId,
+      invite_email: normalizedEmail,
+      role: normalizedRole,
+      status: "invited",
+    })
+    .select("id,company_id,user_id,invite_email,role,status,created_at,updated_at")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return normalizeTeamMember(data);
+}
+
+async function deactivateCloudTeamMember(companyId, memberId) {
+  if (!companyId || !memberId) {
+    throw new Error("Choose a team member to deactivate.");
+  }
+
+  const { error } = await supabase
+    .from("company_members")
+    .update({
+      status: "inactive",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("company_id", companyId)
+    .eq("id", memberId);
+
+  if (error) {
+    throw error;
+  }
 }
 
 async function uploadProposalAssetToCloud(file, { area, companySettings, companyUser, fileStem, proposalId }) {
