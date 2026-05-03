@@ -20,6 +20,9 @@ const companySettingsStorageKey = "last-yard-company-settings-v1";
 const contactsStorageKey = "last-yard-contacts-v1";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
+const cloudLocalOnlyLabel = "Local only";
+const cloudSyncedLabel = "Synced";
+const cloudSignInLabel = "Sign in to sync contacts/settings";
 const SENT_METHODS = ["", "Email", "Text", "In Person", "Portal Upload", "Other"];
 const CONTACT_TYPES = [
   "",
@@ -212,6 +215,7 @@ export default function App() {
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(isSupabaseConfigured);
   const [authMessage, setAuthMessage] = useState("");
+  const [cloudSync, setCloudSync] = useState(() => createCloudSyncState());
   const [proposalDirty, setProposalDirty] = useState(false);
   const company = proposalDraft.company;
   const isDashboardView = route.view === "dashboard";
@@ -240,6 +244,14 @@ export default function App() {
     if (!isSupabaseConfigured || !supabase) {
       setAuthLoading(false);
       setAuthUser(null);
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: "",
+        contactsStatus: cloudLocalOnlyLabel,
+        loading: false,
+        message: "Cloud save is not configured. Contacts and settings are stored locally.",
+        settingsStatus: cloudLocalOnlyLabel,
+      }));
       return undefined;
     }
 
@@ -268,6 +280,32 @@ export default function App() {
       listener.subscription?.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) {
+      return;
+    }
+
+    if (!authUser) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: "",
+        contactsStatus: cloudLocalOnlyLabel,
+        loading: false,
+        message: cloudSignInLabel,
+        settingsStatus: cloudLocalOnlyLabel,
+      }));
+      return;
+    }
+
+    let isCancelled = false;
+
+    initializeCloudSync(authUser, { isCancelled: () => isCancelled });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [authUser?.id]);
 
   useEffect(() => {
     if (window.location.pathname !== route.path) {
@@ -426,13 +464,232 @@ export default function App() {
     const normalizedSettings = normalizeCompanySettings(settingsDraft);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
-    setSettingsMessage("Company settings saved locally.");
+    setSettingsMessage(getCloudReadyMessage(authUser, "Company settings saved locally. Syncing to cloud...", "Company settings saved locally."));
+    syncSettingsToCloud(normalizedSettings);
   }
 
   function resetSettingsDraft() {
     const defaults = getDefaultCompanySettings();
     setSettingsDraft(defaults);
     setSettingsMessage("Company settings reset to Last Yard defaults. Save to keep these defaults.");
+  }
+
+  async function initializeCloudSync(user, { isCancelled = () => false } = {}) {
+    setCloudSync((currentSync) => ({
+      ...currentSync,
+      loading: true,
+      message: "Loading cloud contacts and settings...",
+    }));
+
+    try {
+      const companyRecord = await ensureCloudCompany(user, companySettings);
+
+      if (isCancelled()) {
+        return;
+      }
+
+      const settingsResult = await loadOrSeedCloudCompanySettings(companyRecord.id, companySettings);
+
+      if (isCancelled()) {
+        return;
+      }
+
+      const contactsResult = await loadOrSeedCloudContacts(companyRecord.id, savedContacts);
+      const syncedAt = new Date().toISOString();
+
+      if (isCancelled()) {
+        return;
+      }
+
+      setCompanySettings(settingsResult.settings);
+      setSettingsDraft(settingsResult.settings);
+      setSavedContacts(contactsResult.contacts);
+      setCloudSync({
+        companyId: companyRecord.id,
+        contactsStatus: cloudSyncedLabel,
+        lastSyncedAt: syncedAt,
+        loading: false,
+        message: `${settingsResult.message} ${contactsResult.message}`,
+        settingsStatus: cloudSyncedLabel,
+      });
+      setAuthMessage("Signed in. Contacts and company settings are syncing with Supabase.");
+    } catch (error) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        contactsStatus: "Sync error",
+        loading: false,
+        message: `Cloud sync failed: ${error.message}`,
+        settingsStatus: "Sync error",
+      }));
+      setAuthMessage(`Cloud sync failed: ${error.message}`);
+    }
+  }
+
+  async function syncSettingsToCloud(settings = companySettings) {
+    const normalizedSettings = normalizeCompanySettings(settings);
+
+    if (!canUseCloudSync(authUser)) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        message: getCloudSignInMessage(),
+        settingsStatus: cloudLocalOnlyLabel,
+      }));
+      return false;
+    }
+
+    setCloudSync((currentSync) => ({
+      ...currentSync,
+      loading: true,
+      message: "Syncing company settings...",
+    }));
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, normalizedSettings);
+      await saveCloudCompanySettings(companyRecord.id, normalizedSettings);
+      const syncedAt = new Date().toISOString();
+
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        lastSyncedAt: syncedAt,
+        loading: false,
+        message: "Company settings synced to Supabase. Proposals remain local-only.",
+        settingsStatus: cloudSyncedLabel,
+      }));
+      setSettingsMessage("Company settings saved locally and synced to Supabase.");
+      return true;
+    } catch (error) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        loading: false,
+        message: `Settings sync failed: ${error.message}`,
+        settingsStatus: "Sync error",
+      }));
+      setSettingsMessage(`Company settings saved locally. Cloud sync failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  async function syncContactsToCloud(contacts = savedContacts) {
+    if (!canUseCloudSync(authUser)) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        contactsStatus: cloudLocalOnlyLabel,
+        message: getCloudSignInMessage(),
+      }));
+      return false;
+    }
+
+    setCloudSync((currentSync) => ({
+      ...currentSync,
+      loading: true,
+      message: "Syncing contacts...",
+    }));
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      await replaceCloudContacts(companyRecord.id, contacts);
+      const syncedAt = new Date().toISOString();
+
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        contactsStatus: cloudSyncedLabel,
+        lastSyncedAt: syncedAt,
+        loading: false,
+        message: "Contacts synced to Supabase. Proposals remain local-only.",
+      }));
+      setContactMessage(`Synced ${contacts.length} contact${contacts.length === 1 ? "" : "s"} to Supabase.`);
+      return true;
+    } catch (error) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        contactsStatus: "Sync error",
+        loading: false,
+        message: `Contacts sync failed: ${error.message}`,
+      }));
+      setContactMessage(`Contacts saved locally. Cloud sync failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  async function syncSingleContactToCloud(contact) {
+    if (!canUseCloudSync(authUser)) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        contactsStatus: cloudLocalOnlyLabel,
+        message: getCloudSignInMessage(),
+      }));
+      return false;
+    }
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      await saveCloudContact(companyRecord.id, contact);
+
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        contactsStatus: cloudSyncedLabel,
+        lastSyncedAt: new Date().toISOString(),
+        message: "Contact synced to Supabase. Proposals remain local-only.",
+      }));
+      return true;
+    } catch (error) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        contactsStatus: "Sync error",
+        message: `Contact sync failed: ${error.message}`,
+      }));
+      setContactMessage(`Contact saved locally. Cloud sync failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  async function deleteSingleCloudContact(contactId) {
+    if (!canUseCloudSync(authUser)) {
+      return false;
+    }
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, companySettings);
+      await deleteCloudContact(companyRecord.id, contactId);
+
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        contactsStatus: cloudSyncedLabel,
+        lastSyncedAt: new Date().toISOString(),
+        message: "Contact deleted from Supabase. Proposals remain local-only.",
+      }));
+      return true;
+    } catch (error) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        contactsStatus: "Sync error",
+        message: `Cloud contact delete failed: ${error.message}`,
+      }));
+      setContactMessage(`Contact deleted locally. Cloud delete failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  async function pullCloudData() {
+    if (!canUseCloudSync(authUser)) {
+      setSettingsMessage(getCloudSignInMessage());
+      setContactMessage(getCloudSignInMessage());
+      return;
+    }
+
+    await initializeCloudSync(authUser);
+  }
+
+  async function pushLocalDataToCloud() {
+    const normalizedSettings = normalizeCompanySettings(settingsDraft);
+    setCompanySettings(normalizedSettings);
+    setSettingsDraft(normalizedSettings);
+    await syncSettingsToCloud(normalizedSettings);
+    await syncContactsToCloud(savedContacts);
   }
 
   function startNewContact() {
@@ -453,7 +710,7 @@ export default function App() {
     }));
   }
 
-  function saveContact() {
+  async function saveContact() {
     const normalizedContact = normalizeContact({
       ...contactDraft,
       updatedAt: new Date().toISOString(),
@@ -466,10 +723,11 @@ export default function App() {
 
     setSavedContacts((currentContacts) => upsertContact(currentContacts, normalizedContact));
     setContactDraft(normalizedContact);
-    setContactMessage(`Saved ${formatContactName(normalizedContact)}.`);
+    setContactMessage(getCloudReadyMessage(authUser, `Saved ${formatContactName(normalizedContact)} locally. Syncing to cloud...`, `Saved ${formatContactName(normalizedContact)} locally.`));
+    await syncSingleContactToCloud(normalizedContact);
   }
 
-  function deleteContact(contactId) {
+  async function deleteContact(contactId) {
     const contact = savedContacts.find((item) => item.id === contactId);
 
     if (!contact) {
@@ -490,6 +748,7 @@ export default function App() {
     }
 
     setContactMessage(`Deleted ${formatContactName(contact)} from contacts. Linked proposals were left untouched.`);
+    await deleteSingleCloudContact(contactId);
   }
 
   function applyContactToCurrentProposal(contactId) {
@@ -540,7 +799,7 @@ export default function App() {
     }
 
     setAuthUser(data.user || null);
-    setAuthMessage("Signed in. Cloud sync will be enabled in a later phase.");
+    setAuthMessage("Signed in. Loading cloud contacts and company settings.");
     setAuthLoading(false);
   }
 
@@ -562,7 +821,7 @@ export default function App() {
     }
 
     setAuthUser(data.user || null);
-    setAuthMessage("Account created. Check email confirmation settings in Supabase if sign-in is pending.");
+    setAuthMessage("Account created. Contacts and company settings will sync after sign-in is confirmed.");
     setAuthLoading(false);
   }
 
@@ -584,6 +843,14 @@ export default function App() {
 
     setAuthUser(null);
     setAuthMessage("Signed out. Local browser storage remains available.");
+    setCloudSync((currentSync) => ({
+      ...currentSync,
+      companyId: "",
+      contactsStatus: cloudLocalOnlyLabel,
+      loading: false,
+      message: cloudSignInLabel,
+      settingsStatus: cloudLocalOnlyLabel,
+    }));
     setAuthLoading(false);
   }
 
@@ -1229,10 +1496,15 @@ export default function App() {
           authMessage={authMessage}
           authUser={authUser}
           backupTools={backupTools}
+          cloudSync={cloudSync}
           message={settingsMessage}
           settings={settingsDraft}
           onOpenLogin={() => navigate("/login")}
+          onPullCloudData={pullCloudData}
+          onPushLocalDataToCloud={pushLocalDataToCloud}
           onSignOut={signOut}
+          onSyncContacts={syncContactsToCloud}
+          onSyncSettings={syncSettingsToCloud}
           onBackToList={() => navigate("/proposals")}
           onChange={updateSettingsDraft}
           onReset={resetSettingsDraft}
@@ -2142,14 +2414,19 @@ function CompanySettingsView({
   authMessage,
   authUser,
   backupTools,
+  cloudSync,
   message,
   settings,
   onBackToList,
   onChange,
   onOpenLogin,
+  onPullCloudData,
+  onPushLocalDataToCloud,
   onReset,
   onSave,
   onSignOut,
+  onSyncContacts,
+  onSyncSettings,
 }) {
   function handleLogoUpload(file) {
     if (!file) {
@@ -2188,8 +2465,13 @@ function CompanySettingsView({
         authLoading={authLoading}
         authMessage={authMessage}
         authUser={authUser}
+        cloudSync={cloudSync}
         onOpenLogin={onOpenLogin}
+        onPullCloudData={onPullCloudData}
+        onPushLocalDataToCloud={onPushLocalDataToCloud}
         onSignOut={onSignOut}
+        onSyncContacts={onSyncContacts}
+        onSyncSettings={() => onSyncSettings(settings)}
       />
 
       <div className="settings-grid">
@@ -2259,11 +2541,24 @@ function CompanySettingsView({
   );
 }
 
-function CloudStatusCard({ authLoading, authMessage, authUser, onOpenLogin, onSignOut }) {
+function CloudStatusCard({
+  authLoading,
+  authMessage,
+  authUser,
+  cloudSync,
+  onOpenLogin,
+  onPullCloudData,
+  onPushLocalDataToCloud,
+  onSignOut,
+  onSyncContacts,
+  onSyncSettings,
+}) {
+  const cloudActionsDisabled = authLoading || cloudSync.loading || !canUseCloudSync(authUser);
+
   return (
     <section className="cloud-status-card no-print">
       <div>
-        <p className="list-kicker">Cloud save foundation</p>
+        <p className="list-kicker">Cloud sync</p>
         <h3>Cloud Status</h3>
       </div>
       <div className="cloud-status-grid">
@@ -2272,23 +2567,50 @@ function CloudStatusCard({ authLoading, authMessage, authUser, onOpenLogin, onSi
           <strong>{isSupabaseConfigured ? "Supabase configured" : "Supabase not configured"}</strong>
         </div>
         <div>
-          <span>Auth status</span>
-          <strong>{getAuthStatusLabel(authUser, authLoading)}</strong>
+          <span>Signed in</span>
+          <strong>{isSupabaseConfigured && authUser ? "Yes" : "No"}</strong>
         </div>
         <div>
           <span>Current storage mode</span>
           <strong>Local browser storage</strong>
         </div>
+        <div>
+          <span>Settings sync</span>
+          <strong>{cloudSync.settingsStatus}</strong>
+        </div>
+        <div>
+          <span>Contacts sync</span>
+          <strong>{cloudSync.contactsStatus}</strong>
+        </div>
+        <div>
+          <span>Last cloud sync</span>
+          <strong>{formatCloudSyncTime(cloudSync.lastSyncedAt)}</strong>
+        </div>
       </div>
-      <p>Cloud sync: Coming in a later phase.</p>
+      <p>Cloud sync is enabled for company settings and contacts only. Proposals, photos, and plan images remain local-only for now.</p>
       {authUser ? <p>Current user: {authUser.email}</p> : null}
       {authMessage ? <p>{authMessage}</p> : null}
+      {cloudSync.message ? <p>{cloudSync.message}</p> : null}
       {isSupabaseConfigured ? (
         <div className="cloud-status-actions">
           {authUser ? (
-            <button type="button" onClick={onSignOut} disabled={authLoading}>
-              Sign Out
-            </button>
+            <>
+              <button type="button" onClick={() => onSyncSettings()} disabled={cloudActionsDisabled}>
+                Sync Settings Now
+              </button>
+              <button type="button" onClick={() => onSyncContacts()} disabled={cloudActionsDisabled}>
+                Sync Contacts Now
+              </button>
+              <button type="button" onClick={onPullCloudData} disabled={cloudActionsDisabled}>
+                Pull Cloud Data
+              </button>
+              <button type="button" onClick={onPushLocalDataToCloud} disabled={cloudActionsDisabled}>
+                Push Local Data to Cloud
+              </button>
+              <button type="button" onClick={onSignOut} disabled={authLoading || cloudSync.loading}>
+                Sign Out
+              </button>
+            </>
           ) : (
             <button type="button" onClick={onOpenLogin} disabled={authLoading}>
               Sign In / Sign Up
@@ -4753,6 +5075,52 @@ function isProposalRouteView(view) {
   return view === "new" || view === "edit" || view === "print";
 }
 
+function createCloudSyncState() {
+  const localMessage = isSupabaseConfigured ? cloudSignInLabel : "Cloud save is not configured. Contacts and settings are stored locally.";
+
+  return {
+    companyId: "",
+    contactsStatus: cloudLocalOnlyLabel,
+    lastSyncedAt: "",
+    loading: false,
+    message: localMessage,
+    settingsStatus: cloudLocalOnlyLabel,
+  };
+}
+
+function canUseCloudSync(authUser) {
+  return Boolean(isSupabaseConfigured && supabase && authUser?.id);
+}
+
+function getCloudSignInMessage() {
+  if (!isSupabaseConfigured) {
+    return "Supabase is not configured. Contacts and settings are stored locally.";
+  }
+
+  return cloudSignInLabel;
+}
+
+function getCloudReadyMessage(authUser, cloudMessage, localMessage) {
+  return canUseCloudSync(authUser) ? cloudMessage : localMessage;
+}
+
+function formatCloudSyncTime(value) {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.valueOf())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
 function getAuthStatusLabel(authUser, authLoading = false) {
   if (!isSupabaseConfigured) {
     return "Local mode";
@@ -4853,6 +5221,240 @@ function saveStoredContacts(contacts) {
   } catch {
     // Local contact saving is best-effort for this phase.
   }
+}
+
+async function ensureCloudCompany(user, settings = getDefaultCompanySettings()) {
+  if (!canUseCloudSync(user)) {
+    throw new Error("Sign in to sync contacts/settings.");
+  }
+
+  const normalizedSettings = normalizeCompanySettings(settings);
+  const email = user.email || "";
+
+  const { error: profileError } = await supabase.from("profiles").upsert(
+    {
+      email,
+      id: user.id,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "id" },
+  );
+
+  if (profileError) {
+    throw profileError;
+  }
+
+  const { data: existingCompanies, error: companyLoadError } = await supabase
+    .from("companies")
+    .select("id,name")
+    .eq("owner_id", user.id)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (companyLoadError) {
+    throw companyLoadError;
+  }
+
+  if (existingCompanies?.length > 0) {
+    return existingCompanies[0];
+  }
+
+  const { data: createdCompany, error: companyCreateError } = await supabase
+    .from("companies")
+    .insert({
+      name: normalizedSettings.companyName || "Last Yard Concrete LLC",
+      owner_id: user.id,
+    })
+    .select("id,name")
+    .single();
+
+  if (companyCreateError) {
+    throw companyCreateError;
+  }
+
+  return createdCompany;
+}
+
+async function loadOrSeedCloudCompanySettings(companyId, localSettings = getDefaultCompanySettings()) {
+  const cloudSettingsRow = await fetchCloudCompanySettingsRow(companyId);
+
+  if (isPlainObject(cloudSettingsRow?.settings) && Object.keys(cloudSettingsRow.settings).length > 0) {
+    return {
+      message: "Loaded company settings from Supabase.",
+      settings: normalizeCompanySettings(cloudSettingsRow.settings),
+    };
+  }
+
+  const normalizedSettings = normalizeCompanySettings(localSettings);
+  await saveCloudCompanySettings(companyId, normalizedSettings, cloudSettingsRow?.id);
+
+  return {
+    message: "Seeded Supabase company settings from local defaults.",
+    settings: normalizedSettings,
+  };
+}
+
+async function fetchCloudCompanySettingsRow(companyId) {
+  const { data, error } = await supabase
+    .from("company_settings")
+    .select("id,settings")
+    .eq("company_id", companyId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data || null;
+}
+
+async function saveCloudCompanySettings(companyId, settings, existingRowId = "") {
+  const normalizedSettings = normalizeCompanySettings(settings);
+  const rowId = existingRowId || (await fetchCloudCompanySettingsRow(companyId))?.id;
+  const payload = {
+    company_id: companyId,
+    settings: normalizedSettings,
+  };
+
+  if (rowId) {
+    const { error } = await supabase.from("company_settings").update(payload).eq("id", rowId);
+
+    if (error) {
+      throw error;
+    }
+
+    return;
+  }
+
+  const { error } = await supabase.from("company_settings").insert(payload);
+
+  if (error) {
+    throw error;
+  }
+}
+
+async function loadOrSeedCloudContacts(companyId, localContacts = []) {
+  const cloudContacts = await fetchCloudContacts(companyId);
+
+  if (cloudContacts.length > 0) {
+    return {
+      contacts: cloudContacts,
+      message: `Loaded ${cloudContacts.length} cloud contact${cloudContacts.length === 1 ? "" : "s"}.`,
+    };
+  }
+
+  const normalizedContacts = localContacts.filter(isPlainObject).map((contact) => normalizeContact(contact));
+
+  if (normalizedContacts.length > 0) {
+    await replaceCloudContacts(companyId, normalizedContacts);
+
+    return {
+      contacts: normalizedContacts,
+      message: `Seeded ${normalizedContacts.length} local contact${normalizedContacts.length === 1 ? "" : "s"} to Supabase.`,
+    };
+  }
+
+  return {
+    contacts: [],
+    message: "No cloud contacts found yet.",
+  };
+}
+
+async function fetchCloudContacts(companyId) {
+  const { data, error } = await supabase
+    .from("contacts")
+    .select("id,contact_data,created_at,updated_at")
+    .eq("company_id", companyId)
+    .order("updated_at", { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []).map((row) => normalizeCloudContactRow(row));
+}
+
+async function replaceCloudContacts(companyId, contacts = []) {
+  const { error: deleteError } = await supabase.from("contacts").delete().eq("company_id", companyId);
+
+  if (deleteError) {
+    throw deleteError;
+  }
+
+  const rows = contacts.filter(isPlainObject).map((contact) => createCloudContactRow(companyId, contact));
+
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase.from("contacts").insert(rows).select("id,contact_data,created_at,updated_at");
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []).map((row) => normalizeCloudContactRow(row));
+}
+
+async function saveCloudContact(companyId, contact) {
+  const row = createCloudContactRow(companyId, contact);
+
+  if (row.id) {
+    const { error } = await supabase.from("contacts").upsert(row, { onConflict: "id" });
+
+    if (error) {
+      throw error;
+    }
+
+    return;
+  }
+
+  const { error } = await supabase.from("contacts").insert(row);
+
+  if (error) {
+    throw error;
+  }
+}
+
+async function deleteCloudContact(companyId, contactId) {
+  if (!isUuid(contactId)) {
+    return;
+  }
+
+  const { error } = await supabase.from("contacts").delete().eq("company_id", companyId).eq("id", contactId);
+
+  if (error) {
+    throw error;
+  }
+}
+
+function createCloudContactRow(companyId, contact) {
+  const normalizedContact = normalizeContact(contact);
+  const row = {
+    company_id: companyId,
+    contact_data: normalizedContact,
+  };
+
+  if (isUuid(normalizedContact.id)) {
+    row.id = normalizedContact.id;
+  }
+
+  return row;
+}
+
+function normalizeCloudContactRow(row = {}) {
+  return normalizeContact({
+    ...(isPlainObject(row.contact_data) ? row.contact_data : {}),
+    id: row.contact_data?.id || row.id,
+    createdAt: row.contact_data?.createdAt || row.created_at,
+    updatedAt: row.contact_data?.updatedAt || row.updated_at,
+  });
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
 
 function createProposalExport(proposal) {

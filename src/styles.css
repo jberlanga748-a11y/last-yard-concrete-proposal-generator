@@ -423,6 +423,7 @@ h4 {
 
 .cloud-status-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
