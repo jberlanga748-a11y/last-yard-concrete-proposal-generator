@@ -67,6 +67,7 @@ import {
   uploadProposalAssetToCloud,
 } from "./utils/cloud/storageCloud.js";
 import { formatCloudSyncTime, formatDashboardDate, formatDisplayDate, formatOptionLabel } from "./utils/formatting/display.js";
+import { parseBidSmartPasteNotes } from "./utils/smartPaste/bidSmartPasteParser.js";
 import { parseSmartPasteNotes } from "./utils/smartPaste/smartPasteParser.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
@@ -316,6 +317,8 @@ export default function App() {
   const [bidDraft, setBidDraft] = useState(() => createEmptyBid());
   const [bidEditorOpen, setBidEditorOpen] = useState(false);
   const [bidMessage, setBidMessage] = useState("");
+  const [bidSmartPasteNotes, setBidSmartPasteNotes] = useState("");
+  const [bidSmartPasteResult, setBidSmartPasteResult] = useState(null);
   const [bidSearchQuery, setBidSearchQuery] = useState("");
   const [bidStatusFilter, setBidStatusFilter] = useState("all");
   const [bidPriorityFilter, setBidPriorityFilter] = useState("all");
@@ -503,6 +506,7 @@ export default function App() {
     setSaveMessage("");
     setValidationNotice("");
     setSmartPasteResult(null);
+    setBidSmartPasteResult(null);
     setBackupMessage("");
     setAssetUploadMessage("");
   }, [route.path]);
@@ -1400,6 +1404,8 @@ export default function App() {
     setBidDraft(createEmptyBid());
     setBidEditorOpen(true);
     setBidMessage("Ready for a new bid opportunity.");
+    setBidSmartPasteNotes("");
+    setBidSmartPasteResult(null);
     navigate("/bids");
   }
 
@@ -1407,6 +1413,8 @@ export default function App() {
     setBidDraft(normalizeBid(bid));
     setBidEditorOpen(true);
     setBidMessage(`Editing ${bid.projectName || "bid opportunity"}.`);
+    setBidSmartPasteNotes("");
+    setBidSmartPasteResult(null);
   }
 
   function updateBidDraft(field, value) {
@@ -1426,6 +1434,34 @@ export default function App() {
 
       return nextBid;
     });
+  }
+
+  function fillBidFromNotes() {
+    const { bid: parsedBid, summary } = parseBidSmartPasteNotes(bidSmartPasteNotes, bidDraft);
+    const hasUpdates =
+      summary.fields.length > 0 ||
+      summary.dates.length > 0 ||
+      summary.contactInfo.length > 0 ||
+      summary.unclearItems.length > 0;
+
+    if (!hasUpdates) {
+      setBidSmartPasteResult({
+        ...summary,
+        warnings: summary.warnings.length > 0 ? summary.warnings : ["No clearly labeled bid fields were found."],
+      });
+      setBidMessage("No clearly labeled bid fields were found.");
+      return;
+    }
+
+    const normalizedBid = normalizeBid({
+      ...parsedBid,
+      updatedAt: new Date().toISOString(),
+    });
+
+    setBidDraft(normalizedBid);
+    setBidEditorOpen(true);
+    setBidSmartPasteResult(summary);
+    setBidMessage("Filled bid fields from pasted notes. Review before saving.");
   }
 
   async function commitBids(nextBids, message = "Bid pipeline saved locally.") {
@@ -3155,6 +3191,8 @@ export default function App() {
       ) : isBidsView ? (
         <BidsView
           bidDraft={bidDraft}
+          bidSmartPasteNotes={bidSmartPasteNotes}
+          bidSmartPasteResult={bidSmartPasteResult}
           bids={savedBids}
           contacts={savedContacts}
           isEditorOpen={bidEditorOpen}
@@ -3168,6 +3206,7 @@ export default function App() {
           onDelete={deleteBid}
           onDuplicate={duplicateBid}
           onEdit={editBid}
+          onFillBidFromNotes={fillBidFromNotes}
           onLinkProposal={linkBidToProposal}
           onMarkSubmitted={markBidSubmitted}
           onNew={startNewBid}
@@ -3177,6 +3216,7 @@ export default function App() {
           onSearchChange={setBidSearchQuery}
           onStatusChange={updateBidStatus}
           onStatusFilterChange={setBidStatusFilter}
+          onUpdateBidSmartPasteNotes={setBidSmartPasteNotes}
           onUpdateDraft={updateBidDraft}
         />
       ) : isSettingsView ? (
@@ -3567,6 +3607,8 @@ function DashboardView({
 
 function BidsView({
   bidDraft,
+  bidSmartPasteNotes,
+  bidSmartPasteResult,
   bids = [],
   contacts = [],
   isEditorOpen,
@@ -3580,6 +3622,7 @@ function BidsView({
   onDelete,
   onDuplicate,
   onEdit,
+  onFillBidFromNotes,
   onLinkProposal,
   onMarkSubmitted,
   onNew,
@@ -3589,6 +3632,7 @@ function BidsView({
   onSearchChange,
   onStatusChange,
   onStatusFilterChange,
+  onUpdateBidSmartPasteNotes,
   onUpdateDraft,
 }) {
   const filteredBids = filterBids(bids, {
@@ -3743,6 +3787,13 @@ function BidsView({
                 <p>Save project pursuit details, due dates, GC contacts, and proposal links.</p>
               </div>
 
+              <BidSmartPastePanel
+                notes={bidSmartPasteNotes}
+                result={bidSmartPasteResult}
+                onFill={onFillBidFromNotes}
+                onNotesChange={onUpdateBidSmartPasteNotes}
+              />
+
               <div className="bid-form-grid">
                 <EditorField label="Project Name" path="projectName" value={bidDraft.projectName} onChange={(_, value) => onUpdateDraft("projectName", value)} />
                 <EditorField label="Project Location" path="projectLocation" value={bidDraft.projectLocation} onChange={(_, value) => onUpdateDraft("projectLocation", value)} />
@@ -3823,6 +3874,76 @@ function BidsView({
         </div>
       </div>
     </section>
+  );
+}
+
+function BidSmartPastePanel({ notes, result, onFill, onNotesChange }) {
+  return (
+    <div className="bid-smart-paste-panel no-print">
+      <div>
+        <p className="list-kicker">Smart Paste</p>
+        <h4>Paste Bid Notes</h4>
+        <p className="smart-paste-help">
+          Paste bid invite text, OregonBuys details, GC email notes, plan room notes, or project scope notes. Review all fields before using.
+        </p>
+      </div>
+      <label className="editor-field" htmlFor="bid-smart-paste-notes">
+        <span>Bid Notes</span>
+        <textarea
+          id="bid-smart-paste-notes"
+          value={notes}
+          rows={6}
+          placeholder="Project: Settlemier Park Renovation&#10;GC: ABC Prime Contractors&#10;Contact: Mike Smith&#10;Bid Due: June 14, 2026 2:30 PM&#10;Scope: sidewalks, ADA ramps, curb and concrete flatwork"
+          onChange={(event) => onNotesChange(event.target.value)}
+        />
+      </label>
+      <button className="editor-add-button" type="button" onClick={onFill}>
+        Fill Bid From Notes
+      </button>
+      {result ? <BidSmartPasteSummary result={result} /> : null}
+    </div>
+  );
+}
+
+function BidSmartPasteSummary({ result }) {
+  const fields = result.fields || [];
+  const dates = result.dates || [];
+  const contactInfo = result.contactInfo || [];
+  const unclearItems = result.unclearItems || [];
+  const warnings = result.warnings || [];
+
+  return (
+    <div className="smart-paste-summary" aria-live="polite">
+      <strong>Bid Smart Paste Summary</strong>
+      <ul>
+        <li>{fields.length} fields updated</li>
+        <li>{dates.length} dates detected</li>
+        <li>{contactInfo.length} contact items detected</li>
+        {fields.length > 0 ? <li>Updated: {fields.join(", ")}</li> : null}
+        {dates.length > 0 ? <li>Dates: {dates.join(", ")}</li> : null}
+        {contactInfo.length > 0 ? <li>Contact info: {contactInfo.join(", ")}</li> : null}
+      </ul>
+      {unclearItems.length > 0 ? (
+        <div className="smart-paste-warnings">
+          <span>Unclear items</span>
+          <ul>
+            {unclearItems.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {warnings.length > 0 ? (
+        <div className="smart-paste-warnings">
+          <span>Warnings</span>
+          <ul>
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

@@ -1219,6 +1219,23 @@ h4 {
   gap: 10px;
 }
 
+.bid-smart-paste-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid #c9d1dc;
+  border-left: 4px solid var(--gold);
+  border-radius: 10px;
+  background: white;
+  margin-bottom: 14px;
+  padding: 12px;
+}
+
+.bid-smart-paste-panel h4 {
+  margin: 2px 0 0;
+  color: var(--blue);
+  font-size: 15px;
+}
+
 .bid-form-grid label {
   display: grid;
   gap: 5px;

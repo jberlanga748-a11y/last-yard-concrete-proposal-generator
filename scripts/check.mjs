@@ -11,6 +11,8 @@ const filesToCheck = [
   "src/utils/cloud/storageCloud.js",
   "src/utils/cloud/teamAccess.js",
   "src/utils/formatting/display.js",
+  "src/utils/smartPaste/bidSmartPasteParser.js",
+  "src/utils/smartPaste/bidSmartPasteParser.test.js",
   "src/utils/smartPaste/smartPasteParser.js",
   "src/utils/smartPaste/smartPasteParser.test.js",
   "src/proposalData.test.js",
