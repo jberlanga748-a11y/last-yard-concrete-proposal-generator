@@ -5,10 +5,10 @@ export function ProposalPrintToolbar({ onBackToList, onPrint, onSavePacketRecord
         <button type="button" onClick={onBackToList}>
           Back to proposals
         </button>
-        <button type="button" onClick={onSavePacketRecord}>
+        <button type="button" title="Save a historical record of this packet before or after printing." onClick={onSavePacketRecord}>
           Save Packet Record
         </button>
-        <button type="button" onClick={onPrint}>
+        <button type="button" title="Open the browser print dialog to save this proposal as a PDF." onClick={onPrint}>
           Print / Save PDF
         </button>
       </div>

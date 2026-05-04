@@ -569,6 +569,7 @@ h4 {
 .list-toolbar button,
 .settings-actions button,
 .proposal-actions button,
+.proposal-action-link,
 .table-actions button {
   border-radius: 9px;
   background: var(--blue);
@@ -576,6 +577,7 @@ h4 {
   padding: 9px 12px;
   font-size: 12px;
   font-weight: 850;
+  text-decoration: none;
 }
 
 .proposal-actions button:disabled,
@@ -1573,6 +1575,22 @@ h4 {
   font-size: 14px;
 }
 
+.test-record-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: end;
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.test-record-filter input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--blue);
+}
+
 .dashboard-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2249,6 +2267,25 @@ h4 {
   line-height: 1.4;
 }
 
+.template-picker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.template-picker-actions a,
+.template-picker-actions button {
+  border: 1px solid rgba(6, 43, 69, 0.28);
+  border-radius: 9px;
+  background: white;
+  color: var(--blue);
+  padding: 9px 11px;
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .template-card-grid {
   display: grid;
   gap: 12px;
@@ -2385,6 +2422,27 @@ h4 {
 .line-item-editor {
   display: grid;
   gap: 12px;
+}
+
+.pricing-mini-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 9px;
+}
+
+.pricing-mini-toolbar a {
+  border-radius: 999px;
+  background: white;
+  color: var(--blue);
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 900;
+  text-decoration: none;
 }
 
 .price-library-picker-toolbar {

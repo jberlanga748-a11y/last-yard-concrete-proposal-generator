@@ -626,6 +626,12 @@ export default function App() {
     navigate("/proposals/new", { proposal });
   }
 
+  function createBlankProposal() {
+    const proposal = createBlankProposalDraft(savedProposals, companySettings);
+    navigate("/proposals/new", { proposal });
+    setSaveMessage("Started a blank proposal draft. Add required fields before saving or printing.");
+  }
+
   function createNewProposalFromTemplate(templateId) {
     const proposal = createEditableProposal(applyTemplateToProposal(templateId, createNewProposalDraft(savedProposals, companySettings)));
     navigate("/proposals/new", { proposal });
@@ -736,6 +742,12 @@ export default function App() {
     setProposalDraft((currentProposal) => createEditableProposal(applyTemplateToProposal(templateId, currentProposal)));
     setProposalDirty(false);
     setSaveMessage(`Applied ${template.name} template.`);
+  }
+
+  function startBlankProposalFromTemplatePicker() {
+    setProposalDraft(createBlankProposalDraft(savedProposals, companySettings));
+    setProposalDirty(false);
+    setSaveMessage("Started a blank proposal draft. Add required fields before saving or printing.");
   }
 
   function updateSettingsDraft(field, value) {
@@ -1508,8 +1520,10 @@ export default function App() {
       bidSmartPasteResult?.warnings?.length > 0
         ? " Bid saved with missing-info warnings. You can complete these fields later."
         : "";
+    const duplicateWarning = getBidDuplicateWarning(normalizedBid, savedBids);
+    const duplicateMessage = duplicateWarning ? ` ${duplicateWarning}` : "";
 
-    await commitBids(upsertBid(savedBids, normalizedBid), `Saved ${normalizedBid.projectName || "bid opportunity"} locally.${warningMessage}`);
+    await commitBids(upsertBid(savedBids, normalizedBid), `Saved ${normalizedBid.projectName || "bid opportunity"} locally.${warningMessage}${duplicateMessage}`);
     setBidDraft(normalizedBid);
   }
 
@@ -1811,6 +1825,9 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     });
     const savedAt = new Date().toISOString();
+    const duplicateWarning = getProposalDuplicateWarning(proposalToSave, savedProposals);
+    const saveSuccessMessage = duplicateWarning ? `Saved locally. ${duplicateWarning}` : "Saved locally.";
+    const cloudSuccessMessage = duplicateWarning ? `Saved locally and synced to cloud. ${duplicateWarning}` : "Saved locally and synced to cloud.";
 
     setSaveState((currentState) => ({
       ...currentState,
@@ -1841,7 +1858,9 @@ export default function App() {
         status: synced ? "Saved locally and synced to cloud" : "Saved locally. Cloud sync failed",
       }));
       if (synced) {
-        setSaveMessage("Saved locally and synced to cloud.");
+        setSaveMessage(cloudSuccessMessage);
+      } else {
+        setSaveMessage(`Saved locally. Cloud sync failed: ${cloudSync.lastError || "See Settings for details."}`);
       }
     } else {
       setSaveState((currentState) => ({
@@ -1849,7 +1868,7 @@ export default function App() {
         isSaving: false,
         status: "Saved locally",
       }));
-      setSaveMessage("Saved locally.");
+      setSaveMessage(saveSuccessMessage);
     }
 
     if (route.view === "new") {
@@ -2169,8 +2188,12 @@ export default function App() {
       updatedAt: now,
     });
     const nextLibrary = upsertPriceLibraryItem(priceLibrary, normalizedItem);
+    const duplicateWarning = getPriceLibraryDuplicateWarning(normalizedItem, priceLibrary);
 
-    await commitPriceLibrary(nextLibrary, `Saved ${normalizedItem.name} to the price library.`);
+    await commitPriceLibrary(
+      nextLibrary,
+      `Saved ${normalizedItem.name} to the price library.${duplicateWarning ? ` ${duplicateWarning}` : ""}`,
+    );
   }
 
   async function togglePriceLibraryItem(itemId, active) {
@@ -3467,6 +3490,7 @@ export default function App() {
                 revisionHistory={getRevisionHistory(proposalDraft, savedProposals)}
                 saveMessage={saveMessage}
                 saveState={saveState}
+                showStartBlank={route.view === "new"}
                 onBackToList={() => navigate("/proposals")}
                 onCreateRevision={createRevision}
                 onCreatePacketRecord={saveSubmittedPacketRecord}
@@ -3477,6 +3501,7 @@ export default function App() {
                 onOpenPrintView={openPrintView}
                 onRemovePacketPdf={removeSubmittedPacketPdf}
                 onSave={saveCurrentProposal}
+                onStartBlankProposal={startBlankProposalFromTemplatePicker}
                 onStatusChange={updateCurrentStatus}
                 onUpdatePacketRecord={updateSubmittedPacketRecord}
               />
@@ -3521,6 +3546,7 @@ export default function App() {
                 onMovePacketBuilderSection={movePacketBuilderSection}
                 onPacketBuilderChange={updatePacketBuilderSection}
                 onResetPacketBuilder={resetPacketBuilderOrder}
+                onStartBlankProposal={startBlankProposalFromTemplatePicker}
                 onSmartPasteFill={fillProposalFromNotes}
                 onSmartPasteNotesChange={setSmartPasteNotes}
                 onSelectContact={applyContactToCurrentProposal}
@@ -3844,7 +3870,9 @@ function BidsView({
   onUpdateBidSmartPasteNotes,
   onUpdateDraft,
 }) {
-  const filteredBids = filterBids(bids, {
+  const [hideQaTestRecords, setHideQaTestRecords] = useState(false);
+  const displayBids = hideQaTestRecords ? bids.filter((bid) => !isQaTestRecord(bid)) : bids;
+  const filteredBids = filterBids(displayBids, {
     priorityFilter,
     searchQuery,
     statusFilter,
@@ -3908,6 +3936,14 @@ function BidsView({
                 ))}
               </select>
             </label>
+            <label className="test-record-filter">
+              <input
+                checked={hideQaTestRecords}
+                type="checkbox"
+                onChange={(event) => setHideQaTestRecords(event.target.checked)}
+              />
+              <span>Hide QA/Test Records</span>
+            </label>
           </div>
 
           {filteredBids.length > 0 ? (
@@ -3927,7 +3963,7 @@ function BidsView({
                           <Badge className={getBidPriorityClass(bid.priority)}>{bid.priority}</Badge>
                           {bid.bidStatus === "Submitted" || bidPacketRecord ? (
                             <Badge className={bidPacketHasPdf ? "packet-pdf-attached" : "packet-pdf-missing"}>
-                              {bidPacketHasPdf ? "Submitted PDF attached" : "PDF not attached"}
+                              {bidPacketHasPdf ? "PDF attached" : "PDF missing"}
                             </Badge>
                           ) : null}
                         </div>
@@ -3946,7 +3982,7 @@ function BidsView({
                       <button type="button" onClick={() => onEdit(bid)}>
                         Edit
                       </button>
-                      <button type="button" onClick={() => onCreateProposal(bid.id)}>
+                      <button type="button" title="Create a GC proposal draft from this bid opportunity." onClick={() => onCreateProposal(bid.id)}>
                         Create Proposal
                       </button>
                       {bidProposal ? (
@@ -3978,7 +4014,7 @@ function BidsView({
                       <button type="button" onClick={() => onStatusChange(bid.id, "Lost")}>
                         Lost
                       </button>
-                      <button type="button" onClick={() => onDuplicate(bid.id)}>
+                      <button type="button" title="Copy this bid opportunity as a new record." onClick={() => onDuplicate(bid.id)}>
                         Duplicate
                       </button>
                       <button type="button" onClick={() => onDelete(bid.id)}>
@@ -4069,10 +4105,16 @@ function BidsView({
               </div>
 
               <div className="contact-form-actions">
-                <button type="button" onClick={onSave}>
+                <button type="button" title="Save this bid locally and sync through company settings when available." onClick={onSave}>
                   Save Bid
                 </button>
-                <button className="gold-action" type="button" onClick={() => onCreateProposal(bidDraft.id)} disabled={!isSavedBid}>
+                <button
+                  className="gold-action"
+                  type="button"
+                  title="Create a proposal from this saved bid opportunity."
+                  onClick={() => onCreateProposal(bidDraft.id)}
+                  disabled={!isSavedBid}
+                >
                   Create Proposal from Bid
                 </button>
               </div>
@@ -4227,10 +4269,29 @@ function ContactsView({
                 <h3>{contactHeading}</h3>
               </div>
               <div className="contact-form-grid">
-                <EditorField label="Company Name" path="contact.companyName" value={contactDraft.companyName} onChange={(_, value) => onUpdateDraft("companyName", value)} />
-                <EditorField label="Contact Name" path="contact.contactName" value={contactDraft.contactName} onChange={(_, value) => onUpdateDraft("contactName", value)} />
-                <EditorField label="Phone" path="contact.phone" value={contactDraft.phone} onChange={(_, value) => onUpdateDraft("phone", value)} />
-                <EditorField label="Email" path="contact.email" type="email" value={contactDraft.email} onChange={(_, value) => onUpdateDraft("email", value)} />
+                <EditorField
+                  label="Company Name"
+                  path="contact.companyName"
+                  value={contactDraft.companyName}
+                  placeholder="ABC Prime Contractors"
+                  onChange={(_, value) => onUpdateDraft("companyName", value)}
+                />
+                <EditorField
+                  label="Contact Name"
+                  path="contact.contactName"
+                  value={contactDraft.contactName}
+                  placeholder="Project manager or estimator"
+                  onChange={(_, value) => onUpdateDraft("contactName", value)}
+                />
+                <EditorField label="Phone" path="contact.phone" value={contactDraft.phone} placeholder="(555) 123-4567" onChange={(_, value) => onUpdateDraft("phone", value)} />
+                <EditorField
+                  label="Email"
+                  path="contact.email"
+                  type="email"
+                  value={contactDraft.email}
+                  placeholder="name@company.com"
+                  onChange={(_, value) => onUpdateDraft("email", value)}
+                />
                 <EditorField
                   label="Contact Type"
                   path="contact.contactType"
@@ -4242,6 +4303,7 @@ function ContactsView({
                   label="Default Project Address"
                   path="contact.defaultProjectAddress"
                   value={contactDraft.defaultProjectAddress}
+                  placeholder="Common jobsite address or service area"
                   onChange={(_, value) => onUpdateDraft("defaultProjectAddress", value)}
                 />
                 <div className="contact-wide-field">
@@ -4249,6 +4311,7 @@ function ContactsView({
                     label="Billing Address"
                     path="contact.billingAddress"
                     value={contactDraft.billingAddress}
+                    placeholder="Billing street, city, state, ZIP"
                     onChange={(_, value) => onUpdateDraft("billingAddress", value)}
                     multiline
                   />
@@ -4258,6 +4321,7 @@ function ContactsView({
                     label="Notes"
                     path="contact.notes"
                     value={contactDraft.notes}
+                    placeholder="Portal notes, preferred contact method, estimating notes"
                     onChange={(_, value) => onUpdateDraft("notes", value)}
                     multiline
                   />
@@ -4406,7 +4470,7 @@ function PriceLibraryView({
           <button type="button" onClick={() => setDraft(createEmptyPriceLibraryDraft())}>
             New Item
           </button>
-          <button type="button" onClick={onExport}>
+          <button type="button" title="Export the unit price library as a JSON backup file." onClick={onExport}>
             Export Library
           </button>
         </div>
@@ -4477,7 +4541,7 @@ function PriceLibraryView({
                         <button type="button" onClick={() => editItem(item)}>
                           Edit
                         </button>
-                        <button type="button" onClick={() => onDuplicate(item.id)}>
+                        <button type="button" title="Create a copy of this price item." onClick={() => onDuplicate(item.id)}>
                           Duplicate
                         </button>
                         <button type="button" onClick={() => onDelete(item.id)}>
@@ -4490,7 +4554,13 @@ function PriceLibraryView({
               </tbody>
             </table>
           </div>
-          {filteredItems.length === 0 ? <p className="empty-list-message">No price library items match those filters.</p> : null}
+          {activeCount === 0 ? (
+            <p className="empty-list-message">
+              No active price library items are available. Add an item or turn an existing item active to use it from proposal pricing.
+            </p>
+          ) : filteredItems.length === 0 ? (
+            <p className="empty-list-message">No price library items match those filters.</p>
+          ) : null}
 
           <div className="price-library-import-card">
             <h3>Import Price Library</h3>
@@ -4507,7 +4577,7 @@ function PriceLibraryView({
                 <span>JSON File</span>
                 <input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] || null)} />
               </label>
-              <button type="button" onClick={() => onImport(importFile, importMode)}>
+              <button type="button" title="Import price library items from a JSON backup file." onClick={() => onImport(importFile, importMode)}>
                 Import Price Library
               </button>
             </div>
@@ -4605,7 +4675,7 @@ function PriceLibraryView({
             </div>
           </div>
           <div className="price-library-form-actions">
-            <button type="button" onClick={saveDraft}>
+            <button type="button" title="Save this reusable price item for future proposal line items." onClick={saveDraft}>
               Save Price Item
             </button>
             <button type="button" onClick={() => setDraft(createEmptyPriceLibraryDraft())}>
@@ -4641,7 +4711,7 @@ function ProposalSummaryRow({ compact = false, contacts = [], onDuplicate, onExp
         </Badge>
         {latestPacketRecord ? (
           <Badge className={hasPacketPdfAttachment(latestPacketRecord) ? "packet-pdf-attached" : "packet-pdf-missing"}>
-            {hasPacketPdfAttachment(latestPacketRecord) ? "Packet PDF attached" : "Submitted PDF missing"}
+            {hasPacketPdfAttachment(latestPacketRecord) ? "PDF attached" : "PDF missing"}
           </Badge>
         ) : null}
         <StatusBadge status={proposal.status} />
@@ -4659,9 +4729,9 @@ function ProposalSummaryRow({ compact = false, contacts = [], onDuplicate, onExp
           Print
         </button>
         {onDuplicate ? (
-          <button type="button" onClick={() => onDuplicate(proposal)}>
-            Duplicate
-          </button>
+        <button type="button" title="Create a separate copy of this proposal as a new draft." onClick={() => onDuplicate(proposal)}>
+          Duplicate
+        </button>
         ) : null}
         {onExport ? (
           <button type="button" onClick={() => onExport(proposal)}>
@@ -4823,7 +4893,12 @@ function ProposalListView({
   onStatusFilterChange,
   onSyncProposals,
 }) {
+  const [hideQaTestRecords, setHideQaTestRecords] = useState(false);
   const filteredProposals = proposals.filter((proposal) => {
+    if (hideQaTestRecords && isQaTestRecord(proposal)) {
+      return false;
+    }
+
     const linkedContact = getLinkedContact(proposal, contacts);
     const searchText = [
       proposal.client?.companyName,
@@ -4884,6 +4959,14 @@ function ProposalListView({
               </option>
             ))}
           </select>
+        </label>
+        <label className="test-record-filter">
+          <input
+            checked={hideQaTestRecords}
+            type="checkbox"
+            onChange={(event) => setHideQaTestRecords(event.target.checked)}
+          />
+          <span>Hide QA/Test Records</span>
         </label>
       </div>
 
@@ -4985,13 +5068,13 @@ function ProposalListView({
                       <button type="button" onClick={() => onOpen(proposal.id)}>
                         Open
                       </button>
-                      <button type="button" onClick={() => onPrint(proposal)}>
+                      <button type="button" title="Open the print/PDF view for this proposal." onClick={() => onPrint(proposal)}>
                         Print
                       </button>
-                      <button type="button" onClick={() => onDuplicate(proposal)}>
+                      <button type="button" title="Create a separate copy of this proposal as a new draft." onClick={() => onDuplicate(proposal)}>
                         Duplicate
                       </button>
-                      <button type="button" onClick={() => onExportProposal(proposal)}>
+                      <button type="button" title="Export this proposal as a JSON backup file." onClick={() => onExportProposal(proposal)}>
                         Export
                       </button>
                     </div>
@@ -5179,6 +5262,7 @@ function ProposalActionBar({
   revisionHistory = [],
   saveMessage,
   saveState,
+  showStartBlank = false,
   onBackToList,
   onAttachPacketPdf,
   onCreatePacketRecord,
@@ -5189,6 +5273,7 @@ function ProposalActionBar({
   onOpenPrintView,
   onRemovePacketPdf,
   onSave,
+  onStartBlankProposal,
   onStatusChange,
   onUpdatePacketRecord,
 }) {
@@ -5228,25 +5313,30 @@ function ProposalActionBar({
           Back to List
         </button>
         {!isPrintView ? (
-          <button type="button" onClick={onSave} disabled={saveState.isSaving}>
+          <button type="button" title="Save the current proposal draft locally and sync to cloud when available." onClick={onSave} disabled={saveState.isSaving}>
             {saveState.isSaving ? "Saving..." : "Save Draft"}
           </button>
         ) : null}
-        <button type="button" onClick={onDuplicate}>
+        {showStartBlank ? (
+          <a className="proposal-action-link" href="/proposals/new/blank" title="Clear starter template data for a fresh proposal draft.">
+            Start Blank Proposal
+          </a>
+        ) : null}
+        <button type="button" title="Create a separate copy with a new proposal ID and draft status." onClick={onDuplicate}>
           Duplicate
         </button>
         {!isPrintView ? (
-          <button type="button" onClick={onCreateRevision}>
+          <button type="button" title="Create the next revision while preserving the current proposal." onClick={onCreateRevision}>
             Create Revision
           </button>
         ) : null}
         {!isPrintView ? (
-          <button type="button" onClick={onCreatePacketRecord}>
+          <button type="button" title="Save a historical record of the current proposal packet version." onClick={onCreatePacketRecord}>
             Create Packet Record
           </button>
         ) : null}
         {!isPrintView ? (
-          <button type="button" onClick={onOpenPrintView}>
+          <button type="button" title="Open the clean print/PDF view for this proposal." onClick={onOpenPrintView}>
             Print View
           </button>
         ) : null}
@@ -5327,7 +5417,7 @@ function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onPrepa
                     <strong>{record.revisionLabel || formatRevisionLabel(record.revisionNumber)}</strong>
                     <span>{record.packetTitle}</span>
                     <Badge className={hasPdf ? "packet-pdf-attached" : "packet-pdf-missing"}>
-                      {hasPdf ? "Packet PDF attached" : "Submitted PDF missing"}
+                      {hasPdf ? "PDF attached" : "PDF missing"}
                     </Badge>
                   </div>
                   <div className="submitted-packet-meta">
@@ -5348,14 +5438,14 @@ function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onPrepa
                 </div>
                 <div className="submitted-packet-actions">
                   {record.status !== "sent" ? (
-                    <button type="button" onClick={() => onMarkSent(record.id)}>
+                    <button type="button" title="Mark this saved packet record as sent." onClick={() => onMarkSent(record.id)}>
                       Mark Packet as Sent
                     </button>
                   ) : null}
-                  <button type="button" onClick={() => onPrepareSend(record.id)}>
+                  <button type="button" title="Prepare a copy-and-paste email package for this packet record." onClick={() => onPrepareSend(record.id)}>
                     Prepare Send
                   </button>
-                  <label className="submitted-packet-upload-button">
+                  <label className="submitted-packet-upload-button" title="Attach the final saved PDF to this submitted packet record.">
                     <span>{hasPdf ? "Replace PDF" : "Attach PDF"}</span>
                     <input
                       accept="application/pdf,.pdf"
@@ -5542,13 +5632,17 @@ function SendSubmissionPanel({ contacts = [], packetRecords = [], proposal, sele
       </div>
       {!hasPdf ? <p className="send-submission-warning">Attach submitted PDF before marking sent.</p> : null}
       <div className="send-submission-actions">
-        <button type="button" onClick={() => copyToClipboard(draft.body, "Email body copied.")}>
+        <button type="button" title="Copy only the drafted email body." onClick={() => copyToClipboard(draft.body, "Email body copied.")}>
           Copy Email Body
         </button>
-        <button type="button" onClick={() => copyToClipboard(formatSendPackageClipboardText(draft), "Recipient, subject, and body copied.")}>
+        <button
+          type="button"
+          title="Copy recipient, subject, and body for manual sending."
+          onClick={() => copyToClipboard(formatSendPackageClipboardText(draft), "Recipient, subject, and body copied.")}
+        >
           Copy Recipient / Subject / Body
         </button>
-        <button type="button" onClick={() => onMarkSent({ ...draft, packetRecordId })}>
+        <button type="button" title="Record this package as sent without sending an email automatically." onClick={() => onMarkSent({ ...draft, packetRecordId })}>
           Mark as Sent
         </button>
       </div>
@@ -5629,6 +5723,7 @@ function ProposalEditor({
   onPacketBuilderChange,
   onRemoveGcPacketTableRow,
   onResetPacketBuilder,
+  onStartBlankProposal,
   onSmartPasteFill,
   onSmartPasteNotesChange,
   onSelectContact,
@@ -5646,7 +5741,12 @@ function ProposalEditor({
       <ValidationPanel notice={validationNotice} validation={validation} />
 
       {showTemplatePicker ? (
-        <TemplatePicker currentTemplateId={proposal.templateId} templates={PROPOSAL_TEMPLATES} onApplyTemplate={onApplyTemplate} />
+        <TemplatePicker
+          currentTemplateId={proposal.templateId}
+          templates={PROPOSAL_TEMPLATES}
+          onApplyTemplate={onApplyTemplate}
+          onStartBlankProposal={onStartBlankProposal}
+        />
       ) : null}
 
       <SmartPastePanel
@@ -5896,6 +5996,12 @@ function ProposalEditor({
       </EditorSection>
 
       <EditorSection title="Pricing">
+        <nav className="pricing-mini-toolbar" aria-label="Pricing editor shortcuts">
+          <a href="#pricing-line-items">Line Items</a>
+          <a href="#pricing-library-picker">Add from Price Library</a>
+          <a href="#pricing-alternates">Alternates / Allowances</a>
+          <a href="#pricing-summary">Pricing Summary</a>
+        </nav>
         <LineItemEditor
           lineItems={proposal.lineItems}
           priceLibrary={priceLibrary}
@@ -5942,7 +6048,7 @@ function ProposalEditor({
   );
 }
 
-function TemplatePicker({ currentTemplateId, onApplyTemplate, templates }) {
+function TemplatePicker({ currentTemplateId, onApplyTemplate, onStartBlankProposal, templates }) {
   function useTemplate(event, templateId) {
     event.preventDefault();
     onApplyTemplate(templateId);
@@ -5959,6 +6065,14 @@ function TemplatePicker({ currentTemplateId, onApplyTemplate, templates }) {
       <p className="starter-data-notice">
         This draft starts with starter template data. Choose a template or edit fields before sending.
       </p>
+      <div className="template-picker-actions">
+        <a
+          href="/proposals/new/blank"
+          title="Clear starter project, client, scope, and pricing fields for a fresh draft."
+        >
+          Start Blank Proposal
+        </a>
+      </div>
       <div className="template-card-grid">
         {templates.map((template) => (
           <article
@@ -6059,9 +6173,14 @@ function LineItemEditor({
   const filteredLibraryItems = filterPriceLibraryItems(activeLibraryItems, librarySearch, libraryCategoryFilter);
 
   return (
-    <div className="line-item-editor">
-      <div className="price-library-picker-toolbar">
-        <button className="editor-secondary-button" type="button" onClick={() => setLibraryPickerOpen((isOpen) => !isOpen)}>
+    <div className="line-item-editor" id="pricing-line-items">
+      <div className="price-library-picker-toolbar" id="pricing-library-picker">
+        <button
+          className="editor-secondary-button"
+          type="button"
+          title="Open reusable unit price items and add one to this proposal."
+          onClick={() => setLibraryPickerOpen((isOpen) => !isOpen)}
+        >
           Add from Price Library
         </button>
         <span>{activeLibraryItems.length} active reusable items</span>
@@ -6194,7 +6313,7 @@ function PricingSectionsEditor({
   const sections = normalizePricingSections(pricingSections);
 
   return (
-    <div className="pricing-section-editor">
+    <div className="pricing-section-editor" id="pricing-alternates">
       <div className="pricing-section-editor-header">
         <strong>Alternates / Allowances</strong>
         <span>Included items are added to the proposal total.</span>
@@ -6298,7 +6417,7 @@ function LegalTermsEditor({ terms = {}, onChange }) {
 
 function PricingSummary({ totals }) {
   return (
-    <div className="editor-totals">
+    <div className="editor-totals" id="pricing-summary">
       <div>
         <span>Subtotal</span>
         <strong>{formatCurrency(totals.subtotal)}</strong>
@@ -7284,7 +7403,7 @@ function EditorSection({ title, children }) {
   );
 }
 
-function EditorField({ label, path, value, onChange, type = "text", multiline = false, options }) {
+function EditorField({ label, path, value, onChange, type = "text", multiline = false, options, placeholder = "" }) {
   const inputId = `field-${path.replaceAll(".", "-")}`;
 
   return (
@@ -7299,9 +7418,9 @@ function EditorField({ label, path, value, onChange, type = "text", multiline = 
           ))}
         </select>
       ) : multiline ? (
-        <textarea id={inputId} value={value} rows={3} onChange={(event) => onChange(path, event.target.value)} />
+        <textarea id={inputId} value={value} rows={3} placeholder={placeholder} onChange={(event) => onChange(path, event.target.value)} />
       ) : (
-        <input id={inputId} type={type} value={value} onChange={(event) => onChange(path, event.target.value)} />
+        <input id={inputId} type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(path, event.target.value)} />
       )}
     </label>
   );
@@ -7344,6 +7463,10 @@ function parseRoute(pathname) {
 
   if (segments.length === 1) {
     return { view: "list", path: "/proposals" };
+  }
+
+  if (segments[1] === "new" && segments[2] === "blank") {
+    return { view: "new", path: "/proposals/new/blank", blank: true };
   }
 
   if (segments[1] === "new") {
@@ -7429,6 +7552,10 @@ function getAuthStatusLabel(authUser, authLoading = false) {
 
 function getInitialProposalForRoute(route, proposals, companySettings = getDefaultCompanySettings()) {
   if (route.view === "new") {
+    if (route.blank) {
+      return createBlankProposalDraft(proposals, companySettings);
+    }
+
     return createNewProposalDraft(proposals, companySettings);
   }
 
@@ -8073,6 +8200,49 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
     validUntil: formatInputDate(validUntil),
     createdAt: today.toISOString(),
     updatedAt: today.toISOString(),
+  });
+}
+
+function createBlankProposalDraft(existingProposals, companySettings = getDefaultCompanySettings()) {
+  const baseProposal = createNewProposalDraft(existingProposals, companySettings);
+
+  return createEditableProposal({
+    ...baseProposal,
+    templateId: "blank",
+    contactId: "",
+    client: {
+      companyName: "",
+      contactName: "",
+      phone: "",
+      email: "",
+      billingAddress: "",
+      projectAddress: "",
+    },
+    project: {
+      name: "",
+      location: "",
+      address: "",
+      description: "",
+      category: "",
+      proposedSchedule: {
+        startDate: "",
+        display: "",
+      },
+      estimatedDuration: "",
+      accessNotes: "",
+      siteConditionNotes: "",
+      scheduleRestrictions: "",
+      specialRequirements: "",
+    },
+    scopeSections: [],
+    concreteSpecs: getDefaultConcreteSpecs(),
+    lineItems: [],
+    pricingSections: [],
+    exclusions: [],
+    assumptions: [],
+    projectPhotos: normalizeProjectPhotos([]),
+    submittedPacketRecords: [],
+    sendRecords: [],
   });
 }
 
@@ -11142,6 +11312,95 @@ function buildGcPrimeRows(gcPrime = {}) {
 
 function hasTextValue(value) {
   return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function getProposalDuplicateWarning(proposal = {}, proposals = []) {
+  const projectName = normalizeComparableText(proposal.project?.name);
+  const clientName = normalizeComparableText(proposal.client?.companyName || proposal.client?.contactName);
+
+  if (!projectName || !clientName) {
+    return "";
+  }
+
+  const duplicate = proposals.some((existingProposal) => {
+    if (existingProposal.id === proposal.id) {
+      return false;
+    }
+
+    return (
+      normalizeComparableText(existingProposal.project?.name) === projectName &&
+      normalizeComparableText(existingProposal.client?.companyName || existingProposal.client?.contactName) === clientName
+    );
+  });
+
+  return duplicate ? "Possible duplicate found. Review existing records before continuing." : "";
+}
+
+function getBidDuplicateWarning(bid = {}, bids = []) {
+  const projectName = normalizeComparableText(bid.projectName);
+  const projectLocation = normalizeComparableText(bid.projectLocation);
+
+  if (!projectName || !projectLocation) {
+    return "";
+  }
+
+  const duplicate = bids.some((existingBid) => {
+    if (existingBid.id === bid.id) {
+      return false;
+    }
+
+    return normalizeComparableText(existingBid.projectName) === projectName && normalizeComparableText(existingBid.projectLocation) === projectLocation;
+  });
+
+  return duplicate ? "Possible duplicate found. Review existing records before continuing." : "";
+}
+
+function getPriceLibraryDuplicateWarning(item = {}, items = []) {
+  const itemName = normalizeComparableText(item.name);
+  const itemCategory = normalizeComparableText(item.category);
+
+  if (!itemName || !itemCategory) {
+    return "";
+  }
+
+  const duplicate = items.some((existingItem) => {
+    if (existingItem.id === item.id) {
+      return false;
+    }
+
+    return normalizeComparableText(existingItem.name) === itemName && normalizeComparableText(existingItem.category) === itemCategory;
+  });
+
+  return duplicate ? "Possible duplicate found. Review existing records before continuing." : "";
+}
+
+function normalizeComparableText(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+function isQaTestRecord(value = {}) {
+  const searchableText = [
+    value.proposalNumber,
+    value.projectName,
+    value.projectLocation,
+    value.gcCompany,
+    value.ownerOrClient,
+    value.name,
+    value.companyName,
+    value.contactName,
+    value.client?.companyName,
+    value.client?.contactName,
+    value.project?.name,
+    value.project?.location,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return searchableText.includes("qa test");
 }
 
 function formatRetainage(value) {

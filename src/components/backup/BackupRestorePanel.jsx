@@ -22,23 +22,23 @@ export function BackupRestorePanel({ canExportCurrent = false, message = "", onE
           <h4>Export</h4>
           <div className="backup-button-grid">
             {canExportCurrent ? (
-              <button type="button" onClick={() => onExport("current")}>
+              <button type="button" title="Export the currently open proposal as a JSON backup." onClick={() => onExport("current")}>
                 Export Current Proposal
               </button>
             ) : null}
-            <button type="button" onClick={() => onExport("all")}>
+            <button type="button" title="Export every saved proposal as a JSON backup." onClick={() => onExport("all")}>
               Export All Proposals
             </button>
-            <button type="button" onClick={() => onExport("settings")}>
+            <button type="button" title="Export company settings as a JSON backup." onClick={() => onExport("settings")}>
               Export Company Settings
             </button>
-            <button type="button" onClick={() => onExport("contacts")}>
+            <button type="button" title="Export saved contacts as a JSON backup." onClick={() => onExport("contacts")}>
               Export Contacts
             </button>
-            <button type="button" onClick={() => onExport("bids")}>
+            <button type="button" title="Export bid tracker records as a JSON backup." onClick={() => onExport("bids")}>
               Export Bids
             </button>
-            <button type="button" onClick={() => onExport("full")}>
+            <button type="button" title="Export proposals, settings, contacts, bids, and library data as one JSON backup." onClick={() => onExport("full")}>
               Export Full App Backup
             </button>
           </div>
@@ -71,7 +71,11 @@ export function BackupRestorePanel({ canExportCurrent = false, message = "", onE
               <span>JSON File</span>
               <input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] || null)} />
             </label>
-            <button type="button" onClick={() => onImport(importType, showMergeMode ? importMode : "merge", importFile)}>
+            <button
+              type="button"
+              title="Import the selected JSON backup. Replace mode asks for confirmation before changing saved data."
+              onClick={() => onImport(importType, showMergeMode ? importMode : "merge", importFile)}
+            >
               Import Selected Backup
             </button>
           </div>
