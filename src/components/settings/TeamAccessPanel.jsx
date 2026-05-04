@@ -19,7 +19,7 @@ export function TeamAccessPanel({
   const [inviteRole, setInviteRole] = useState("estimator");
   const canUseCloud = canUseCloudSync(authUser);
   const canManage = canUseCloud && canManageTeamAccess(cloudSync.currentRole);
-  const currentRole = authUser ? formatTeamRole(cloudSync.currentRole || "owner") : "Local user";
+  const currentRole = authUser ? formatTeamRole(cloudSync.currentRole || "owner") : "Local Owner/Admin";
 
   async function handleInvite(event) {
     event.preventDefault();

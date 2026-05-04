@@ -145,6 +145,12 @@ h4 {
   white-space: nowrap;
 }
 
+.app-auth-pill .app-role-label {
+  border-left: 1px solid rgba(255, 255, 255, 0.24);
+  padding-left: 7px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
 .app-nav button,
 .app-quick-actions button {
   border-radius: 10px;
@@ -174,6 +180,15 @@ h4 {
 .dashboard-actions .gold-action {
   background: var(--gold);
   color: white;
+}
+
+.app-nav button:disabled,
+.app-quick-actions button:disabled,
+.dashboard-actions button:disabled,
+.proposal-actions button:disabled,
+.table-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .local-mode-banner {
@@ -257,6 +272,7 @@ h4 {
 .company-settings-panel,
 .proposal-action-bar,
 .dashboard-panel,
+.activity-log-panel,
 .backup-page-panel,
 .contacts-panel,
 .bids-panel,
@@ -273,6 +289,7 @@ h4 {
 .proposal-list-panel,
 .company-settings-panel,
 .dashboard-panel,
+.activity-log-panel,
 .backup-page-panel,
 .contacts-panel,
 .bids-panel,
@@ -1117,6 +1134,28 @@ h4 {
   grid-column: 1 / -1;
 }
 
+.permission-message {
+  border: 1px solid rgba(201, 166, 74, 0.45);
+  border-radius: 9px;
+  background: #fff8e6;
+  color: var(--blue);
+  margin: 12px 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.editor-permission-fieldset {
+  min-width: 0;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.editor-permission-fieldset:disabled {
+  opacity: 0.88;
+}
+
 .contacts-layout {
   display: grid;
   grid-template-columns: minmax(420px, 0.8fr) minmax(0, 1.2fr);
@@ -1324,6 +1363,66 @@ h4 {
   display: grid;
   justify-items: end;
   gap: 4px;
+}
+
+.activity-filter-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+
+.activity-filter-row button {
+  border-radius: 999px;
+  background: #eef2f7;
+  color: var(--blue);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.activity-filter-row button.active {
+  background: var(--blue);
+  color: white;
+}
+
+.activity-log-list,
+.activity-preview-list {
+  display: grid;
+  gap: 10px;
+}
+
+.activity-log-row,
+.activity-preview-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  padding: 12px 14px;
+}
+
+.activity-log-row strong,
+.activity-preview-row strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.activity-log-row span,
+.activity-log-row small,
+.activity-preview-row span,
+.activity-preview-row small {
+  display: block;
+  color: #556171;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.activity-log-row > div:last-child,
+.activity-preview-row > small {
+  text-align: right;
 }
 
 .bid-form-grid {

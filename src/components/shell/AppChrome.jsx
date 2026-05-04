@@ -5,6 +5,8 @@ export function AppChrome({
   companyName,
   currentView,
   isCloudConfigured,
+  permissions = {},
+  roleLabel = "",
   onNavigate,
   onNewBid,
   onNewContact,
@@ -20,6 +22,7 @@ export function AppChrome({
     ["bids", "Bids", () => onNavigate("/bids")],
     ["contacts", "Contacts", () => onNavigate("/contacts")],
     ["priceLibrary", "Price Library", () => onNavigate("/price-library")],
+    ["activity", "Activity", () => onNavigate("/activity")],
     ["settings", "Company Settings", () => onNavigate("/settings")],
     ["backup", "Backup / Restore", () => onNavigate("/backup")],
   ];
@@ -43,6 +46,7 @@ export function AppChrome({
       <div className="app-quick-actions">
         <div className="app-auth-pill">
           <span>{authStatusLabel}</span>
+          {roleLabel ? <span className="app-role-label">{roleLabel}</span> : null}
           {isCloudConfigured ? (
             authUser ? (
               <button type="button" onClick={onSignOut} disabled={authLoading}>
@@ -55,16 +59,16 @@ export function AppChrome({
             )
           ) : null}
         </div>
-        <button type="button" onClick={onNewProposal}>
+        <button type="button" onClick={onNewProposal} disabled={!permissions.createProposal}>
           New Proposal
         </button>
-        <button type="button" onClick={onNewContact}>
+        <button type="button" onClick={onNewContact} disabled={!permissions.createContact}>
           New Contact
         </button>
-        <button type="button" onClick={onNewBid}>
+        <button type="button" onClick={onNewBid} disabled={!permissions.createBid}>
           New Bid
         </button>
-        <button className="gold-action" type="button" onClick={onNewGcPacket}>
+        <button className="gold-action" type="button" onClick={onNewGcPacket} disabled={!permissions.createProposal}>
           New GC Packet
         </button>
       </div>

@@ -1,4 +1,5 @@
 import { Component, useEffect, useState } from "react";
+import { ActivityLogView } from "./components/activity/ActivityLogView.jsx";
 import { LoginView } from "./components/auth/LoginView.jsx";
 import { BackupRestorePanel } from "./components/backup/BackupRestorePanel.jsx";
 import { BackupView } from "./components/backup/BackupView.jsx";
@@ -70,6 +71,21 @@ import {
 import { formatCloudSyncTime, formatDashboardDate, formatDisplayDate, formatOptionLabel } from "./utils/formatting/display.js";
 import { parseBidSmartPasteNotes } from "./utils/smartPaste/bidSmartPasteParser.js";
 import { parseSmartPasteNotes } from "./utils/smartPaste/smartPasteParser.js";
+import {
+  activityLogStorageKey,
+  createActivityRecord,
+  getActivityLogFromSettings,
+  loadActivityLogFromLocalStorage,
+  normalizeActivityLog,
+  saveActivityLogToLocalStorage,
+} from "./utils/activityLog.js";
+import {
+  getPermissionRoleLabel,
+  getRolePermissions,
+  hasRolePermission,
+  normalizePermissionRole,
+  permissionDeniedMessage,
+} from "./utils/permissions.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
 const storageKey = "last-yard-proposals-v1";
@@ -323,6 +339,7 @@ export default function App() {
   const [priceLibrary, setPriceLibrary] = useState(() => loadPriceLibrary());
   const [priceLibraryMessage, setPriceLibraryMessage] = useState("");
   const [savedBids, setSavedBids] = useState(() => loadSavedBids());
+  const [activityLog, setActivityLog] = useState(() => loadActivityLogFromLocalStorage());
   const [bidDraft, setBidDraft] = useState(() => createEmptyBid());
   const [bidEditorOpen, setBidEditorOpen] = useState(false);
   const [bidMessage, setBidMessage] = useState("");
@@ -367,7 +384,11 @@ export default function App() {
   const isLoginView = route.view === "login";
   const isPriceLibraryView = route.view === "priceLibrary";
   const isBidsView = route.view === "bids";
+  const isActivityView = route.view === "activity";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
+  const permissionRole = normalizePermissionRole(authUser ? cloudSync.currentRole : "local");
+  const permissions = getRolePermissions(permissionRole);
+  const permissionRoleLabel = getPermissionRoleLabel(permissionRole, { signedIn: Boolean(authUser) });
   const proposalValidation = getProposalValidationWithPacketPdfWarnings(proposalDraft);
 
   useEffect(() => {
@@ -385,6 +406,10 @@ export default function App() {
   useEffect(() => {
     saveStoredBids(savedBids);
   }, [savedBids]);
+
+  useEffect(() => {
+    saveActivityLogToLocalStorage(activityLog);
+  }, [activityLog]);
 
   useEffect(() => {
     saveCompanySettings(companySettings);
@@ -532,6 +557,7 @@ export default function App() {
         isBackupView ||
         isContactsView ||
         isLoginView ||
+        isActivityView ||
         isPriceLibraryView ||
         isBidsView
       ) {
@@ -548,7 +574,7 @@ export default function App() {
 
     window.addEventListener("keydown", handlePrintShortcut);
     return () => window.removeEventListener("keydown", handlePrintShortcut);
-  }, [isBackupView, isBidsView, isContactsView, isDashboardView, isListView, isLoginView, isPriceLibraryView, isSettingsView, proposalDraft]);
+  }, [isActivityView, isBackupView, isBidsView, isContactsView, isDashboardView, isListView, isLoginView, isPriceLibraryView, isSettingsView, proposalDraft]);
 
   useEffect(() => {
     if (validationNotice && proposalValidation.errors.length === 0) {
@@ -568,7 +594,77 @@ export default function App() {
     return true;
   }
 
+  function canPerform(action, setMessage = setSaveMessage) {
+    if (hasRolePermission(permissionRole, action)) {
+      return true;
+    }
+
+    setMessage(permissionDeniedMessage);
+    return false;
+  }
+
+  function recordActivity(event = {}) {
+    const record = createActivityRecord(event, authUser);
+    const baseSettings = event.settings || companySettings;
+    const baseLog = Array.isArray(event.activityLog) ? event.activityLog : activityLog;
+    const activityBids = Array.isArray(event.bids) ? event.bids : savedBids;
+    const activityPriceLibrary = Array.isArray(event.priceLibrary) ? event.priceLibrary : priceLibrary;
+    const nextLog = normalizeActivityLog([record, ...baseLog]);
+    const settingsWithActivity = getSettingsWithPriceLibraryAndBids(baseSettings, activityPriceLibrary, activityBids, nextLog);
+
+    setActivityLog(nextLog);
+    setCompanySettings(settingsWithActivity);
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, activityPriceLibrary, activityBids, nextLog));
+
+    if (canUseCloudSync(authUser)) {
+      syncActivityLogToCloud(settingsWithActivity);
+    }
+
+    return {
+      activityLog: nextLog,
+      record,
+      settings: settingsWithActivity,
+    };
+  }
+
+  async function syncActivityLogToCloud(settingsWithActivity) {
+    if (!canUseCloudSync(authUser)) {
+      return false;
+    }
+
+    try {
+      const companyRecord = await ensureCloudCompany(authUser, settingsWithActivity, companyCloudDeps);
+      await saveCloudCompanySettings(companyRecord.id, settingsWithActivity, "", companyCloudDeps);
+
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        companyId: companyRecord.id,
+        currentRole: companyRecord.role || currentSync.currentRole || "owner",
+        lastError: "",
+        lastSyncedAt: new Date().toISOString(),
+        settingsStatus: cloudSyncedLabel,
+      }));
+      return true;
+    } catch (error) {
+      setCloudSync((currentSync) => ({
+        ...currentSync,
+        lastError: error.message,
+        message: `Activity log sync failed: ${error.message}`,
+        settingsStatus: cloudSyncErrorLabel,
+      }));
+      return false;
+    }
+  }
+
   function updateProposalField(path, value) {
+    if (path === "status" && !canPerform("markProposalOutcome")) {
+      return;
+    }
+
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
     setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const nextProposal = updateNestedValue(currentProposal, path, value);
@@ -622,19 +718,44 @@ export default function App() {
   }
 
   function createNewProposal() {
+    if (!canPerform("createProposal")) {
+      return;
+    }
+
     const proposal = createNewProposalDraft(savedProposals, companySettings);
     navigate("/proposals/new", { proposal });
+    recordActivity({
+      action: "Proposal created",
+      entityType: "proposal",
+      entityId: proposal.id,
+      entityLabel: proposal.proposalNumber || proposal.project?.name || "New proposal",
+    });
   }
 
   function createBlankProposal() {
+    if (!canPerform("createProposal")) {
+      return;
+    }
+
     const proposal = createBlankProposalDraft(savedProposals, companySettings);
     navigate("/proposals/new", { proposal });
     setSaveMessage("Started a blank proposal draft. Add required fields before saving or printing.");
   }
 
   function createNewProposalFromTemplate(templateId) {
+    if (!canPerform("createProposal")) {
+      return;
+    }
+
     const proposal = createEditableProposal(applyTemplateToProposal(templateId, createNewProposalDraft(savedProposals, companySettings)));
     navigate("/proposals/new", { proposal });
+    recordActivity({
+      action: "Proposal created",
+      entityType: "proposal",
+      entityId: proposal.id,
+      entityLabel: proposal.proposalNumber || proposal.project?.name || "New proposal",
+      notes: `Template: ${templateId}`,
+    });
   }
 
   function createNewGcPacket() {
@@ -650,6 +771,10 @@ export default function App() {
   }
 
   function loadDemoData({ open = "" } = {}) {
+    if (!canPerform("createProposal")) {
+      return;
+    }
+
     if (authUser && !window.confirm("Load demo data locally? Demo records will not be pushed to cloud unless you sync them later.")) {
       return;
     }
@@ -680,6 +805,10 @@ export default function App() {
   }
 
   function resetDemoData() {
+    if (!canPerform("deleteProposal")) {
+      return;
+    }
+
     const demoProposalCount = savedProposals.filter(isDemoRecord).length;
     const demoContactCount = savedContacts.filter(isDemoRecord).length;
 
@@ -727,6 +856,10 @@ export default function App() {
   }
 
   function applyProposalTemplate(templateId) {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
     const template = PROPOSAL_TEMPLATES.find((item) => item.id === templateId);
 
     if (!template) {
@@ -745,12 +878,20 @@ export default function App() {
   }
 
   function startBlankProposalFromTemplatePicker() {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
     setProposalDraft(createBlankProposalDraft(savedProposals, companySettings));
     setProposalDirty(false);
     setSaveMessage("Started a blank proposal draft. Add required fields before saving or printing.");
   }
 
   function updateSettingsDraft(field, value) {
+    if (!canPerform("manageSettings", setSettingsMessage)) {
+      return;
+    }
+
     setSettingsDraft((currentSettings) => ({
       ...currentSettings,
       [field]: value,
@@ -758,14 +899,29 @@ export default function App() {
   }
 
   function saveSettings() {
-    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids);
+    if (!canPerform("manageSettings", setSettingsMessage)) {
+      return;
+    }
+
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     setSettingsMessage(getCloudReadyMessage(authUser, "Company settings saved locally. Syncing to cloud...", "Company settings saved locally."));
-    syncSettingsToCloud(normalizedSettings);
+    const activityResult = recordActivity({
+      action: "Company settings changed",
+      entityType: "settings",
+      entityId: "company-settings",
+      entityLabel: normalizedSettings.companyName || "Company settings",
+      settings: normalizedSettings,
+    });
+    syncSettingsToCloud(activityResult.settings);
   }
 
   function resetSettingsDraft() {
+    if (!canPerform("manageSettings", setSettingsMessage)) {
+      return;
+    }
+
     const defaults = getDefaultCompanySettings();
     setSettingsDraft(defaults);
     setSettingsMessage("Company settings reset to Last Yard defaults. Save to keep these defaults.");
@@ -779,7 +935,7 @@ export default function App() {
     }));
 
     try {
-      const companyRecord = await ensureCloudCompany(user, getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids), companyCloudDeps);
+      const companyRecord = await ensureCloudCompany(user, getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog), companyCloudDeps);
 
       if (isCancelled()) {
         return;
@@ -787,7 +943,7 @@ export default function App() {
 
       const settingsResult = await loadOrSeedCloudCompanySettings(
         companyRecord.id,
-        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids),
+        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog),
         companyCloudDeps,
       );
 
@@ -811,10 +967,12 @@ export default function App() {
 
       const syncedPriceLibrary = getPriceLibraryFromSettings(settingsResult.settings, priceLibrary);
       const syncedBids = getBidsFromSettings(settingsResult.settings, savedBids);
-      const syncedSettings = getSettingsWithPriceLibraryAndBids(settingsResult.settings, syncedPriceLibrary, syncedBids);
+      const syncedActivityLog = getActivityLogFromSettings(settingsResult.settings, activityLog);
+      const syncedSettings = getSettingsWithPriceLibraryAndBids(settingsResult.settings, syncedPriceLibrary, syncedBids, syncedActivityLog);
 
       setPriceLibrary(syncedPriceLibrary);
       setSavedBids(syncedBids);
+      setActivityLog(syncedActivityLog);
       setCompanySettings(syncedSettings);
       setSettingsDraft(syncedSettings);
       setSavedContacts(contactsResult.contacts);
@@ -863,7 +1021,8 @@ export default function App() {
   async function syncSettingsToCloud(settings = companySettings) {
     const libraryForSettings = Array.isArray(settings?.priceLibrary) ? settings.priceLibrary : priceLibrary;
     const bidsForSettings = Array.isArray(settings?.bidPipeline) ? settings.bidPipeline : savedBids;
-    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settings, libraryForSettings, bidsForSettings);
+    const activityForSettings = Array.isArray(settings?.activityLog) ? settings.activityLog : activityLog;
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settings, libraryForSettings, bidsForSettings, activityForSettings);
 
     if (!canUseCloudSync(authUser)) {
       setCloudSync((currentSync) => ({
@@ -1024,6 +1183,10 @@ export default function App() {
   }
 
   async function pullCloudData() {
+    if (!canPerform("cloudSync", setSettingsMessage)) {
+      return;
+    }
+
     if (!canUseCloudSync(authUser)) {
       setSettingsMessage(getCloudSignInMessage());
       setContactMessage(getCloudSignInMessage());
@@ -1034,7 +1197,11 @@ export default function App() {
   }
 
   async function pushLocalDataToCloud() {
-    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids);
+    if (!canPerform("cloudSync", setSettingsMessage)) {
+      return;
+    }
+
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     await syncSettingsToCloud(normalizedSettings);
@@ -1043,6 +1210,10 @@ export default function App() {
   }
 
   async function refreshTeamMembers() {
+    if (!canPerform("manageTeam", setTeamMessage)) {
+      return;
+    }
+
     if (!canUseCloudSync(authUser)) {
       setTeamMessage(getCloudSignInMessage());
       return;
@@ -1065,6 +1236,10 @@ export default function App() {
   }
 
   async function inviteTeamMember(inviteEmail, role) {
+    if (!canPerform("manageTeam", setTeamMessage)) {
+      return;
+    }
+
     if (!canUseCloudSync(authUser)) {
       setTeamMessage(getCloudSignInMessage());
       return;
@@ -1099,12 +1274,23 @@ export default function App() {
         currentRole: companyRecord.role || currentSync.currentRole || "owner",
       }));
       setTeamMessage(`Invited ${invitedMember.inviteEmail} as ${formatTeamRole(invitedMember.role)}.`);
+      recordActivity({
+        action: "Team member invited",
+        entityType: "team",
+        entityId: invitedMember.id,
+        entityLabel: invitedMember.inviteEmail,
+        notes: `Role: ${formatTeamRole(invitedMember.role)}`,
+      });
     } catch (error) {
       setTeamMessage(`Invite failed: ${error.message}`);
     }
   }
 
   async function deactivateTeamMember(memberId) {
+    if (!canPerform("manageTeam", setTeamMessage)) {
+      return;
+    }
+
     if (!canUseCloudSync(authUser)) {
       setTeamMessage(getCloudSignInMessage());
       return;
@@ -1112,6 +1298,13 @@ export default function App() {
 
     if (!canManageTeamAccess(cloudSync.currentRole)) {
       setTeamMessage("Only owner/admin users can manage team access.");
+      return;
+    }
+
+    const member = teamMembers.find((teamMember) => teamMember.id === memberId);
+
+    if (member?.role === "owner") {
+      setTeamMessage("The company owner cannot be deactivated from the app.");
       return;
     }
 
@@ -1131,6 +1324,12 @@ export default function App() {
         currentRole: companyRecord.role || currentSync.currentRole || "owner",
       }));
       setTeamMessage("Team member deactivated.");
+      recordActivity({
+        action: "Team member deactivated",
+        entityType: "team",
+        entityId: memberId,
+        entityLabel: "Team member",
+      });
     } catch (error) {
       setTeamMessage(`Deactivate failed: ${error.message}`);
     }
@@ -1243,6 +1442,10 @@ export default function App() {
   }
 
   async function pushLocalProposalsToCloud(proposals = savedProposals) {
+    if (!canPerform("cloudSync", setSaveMessage)) {
+      return false;
+    }
+
     const synced = await syncMultipleProposalsToCloud(proposals, `Pushed ${proposals.length} local proposal${proposals.length === 1 ? "" : "s"} to Supabase.`);
 
     if (synced) {
@@ -1251,6 +1454,10 @@ export default function App() {
   }
 
   async function pullCloudProposals() {
+    if (!canPerform("cloudSync", setSaveMessage)) {
+      return;
+    }
+
     if (!canUseCloudSync(authUser)) {
       setSaveMessage(getCloudSignInMessage());
       setCloudSync((currentSync) => ({
@@ -1297,6 +1504,10 @@ export default function App() {
   }
 
   async function syncProposalsNow() {
+    if (!canPerform("cloudSync", setSaveMessage)) {
+      return;
+    }
+
     if (!canUseCloudSync(authUser)) {
       setSaveMessage(getCloudSignInMessage());
       setCloudSync((currentSync) => ({
@@ -1355,6 +1566,10 @@ export default function App() {
   }
 
   function startNewContact() {
+    if (!canPerform("createContact", setContactMessage)) {
+      return;
+    }
+
     setContactDraft(createEmptyContact());
     setContactEditorOpen(true);
     setContactMessage("Ready for a new contact.");
@@ -1362,12 +1577,21 @@ export default function App() {
   }
 
   function editContact(contact) {
+    if (!hasRolePermission(permissionRole, "editContact")) {
+      setContactMessage("Viewing contact. You do not have permission to edit contacts.");
+    } else {
+      setContactMessage(`Editing ${formatContactName(contact)}.`);
+    }
+
     setContactDraft(normalizeContact(contact));
     setContactEditorOpen(true);
-    setContactMessage(`Editing ${formatContactName(contact)}.`);
   }
 
   function updateContactDraft(field, value) {
+    if (!canPerform("editContact", setContactMessage)) {
+      return;
+    }
+
     setContactDraft((currentContact) => ({
       ...currentContact,
       [field]: value,
@@ -1375,6 +1599,10 @@ export default function App() {
   }
 
   async function saveContact() {
+    if (!canPerform("editContact", setContactMessage)) {
+      return;
+    }
+
     if (!contactEditorOpen) {
       setContactMessage("Select a contact to edit, or create a new contact.");
       return;
@@ -1393,10 +1621,20 @@ export default function App() {
     setSavedContacts((currentContacts) => upsertContact(currentContacts, normalizedContact));
     setContactDraft(normalizedContact);
     setContactMessage(getCloudReadyMessage(authUser, `Saved ${formatContactName(normalizedContact)} locally. Syncing to cloud...`, `Saved ${formatContactName(normalizedContact)} locally.`));
+    recordActivity({
+      action: savedContacts.some((contact) => contact.id === normalizedContact.id) ? "Contact updated" : "Contact created",
+      entityType: "contact",
+      entityId: normalizedContact.id,
+      entityLabel: formatContactName(normalizedContact),
+    });
     await syncSingleContactToCloud(normalizedContact);
   }
 
   async function deleteContact(contactId) {
+    if (!canPerform("deleteContact", setContactMessage)) {
+      return;
+    }
+
     const contact = savedContacts.find((item) => item.id === contactId);
 
     if (!contact) {
@@ -1418,10 +1656,20 @@ export default function App() {
     }
 
     setContactMessage(`Deleted ${formatContactName(contact)} from contacts. Linked proposals were left untouched.`);
+    recordActivity({
+      action: "Contact deleted",
+      entityType: "contact",
+      entityId: contact.id,
+      entityLabel: formatContactName(contact),
+    });
     await deleteSingleCloudContact(contactId);
   }
 
   function startNewBid() {
+    if (!canPerform("createBid", setBidMessage)) {
+      return;
+    }
+
     setBidDraft(createEmptyBid());
     setBidEditorOpen(true);
     setBidMessage("Ready for a new bid opportunity.");
@@ -1431,14 +1679,23 @@ export default function App() {
   }
 
   function editBid(bid) {
+    if (!hasRolePermission(permissionRole, "editBid")) {
+      setBidMessage("Viewing bid. You do not have permission to edit bids.");
+    } else {
+      setBidMessage(`Editing ${bid.projectName || "bid opportunity"}.`);
+    }
+
     setBidDraft(normalizeBid(bid));
     setBidEditorOpen(true);
-    setBidMessage(`Editing ${bid.projectName || "bid opportunity"}.`);
     setBidSmartPasteNotes("");
     setBidSmartPasteResult(null);
   }
 
   function updateBidDraft(field, value) {
+    if (!canPerform("editBid", setBidMessage)) {
+      return;
+    }
+
     setBidDraft((currentBid) => {
       const nextBid = {
         ...currentBid,
@@ -1458,6 +1715,10 @@ export default function App() {
   }
 
   function fillBidFromNotes() {
+    if (!canPerform("editBid", setBidMessage)) {
+      return;
+    }
+
     const { bid: parsedBid, summary } = parseBidSmartPasteNotes(bidSmartPasteNotes, bidDraft);
     const hasUpdates =
       summary.fields.length > 0 ||
@@ -1487,11 +1748,11 @@ export default function App() {
 
   async function commitBids(nextBids, message = "Bid pipeline saved locally.") {
     const normalizedBids = normalizeBids(nextBids);
-    const settingsWithBids = getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, normalizedBids);
+    const settingsWithBids = getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, normalizedBids, activityLog);
 
     setSavedBids(normalizedBids);
     setCompanySettings(settingsWithBids);
-    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, normalizedBids));
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, normalizedBids, activityLog));
     setBidMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
     if (canUseCloudSync(authUser)) {
@@ -1501,6 +1762,10 @@ export default function App() {
   }
 
   async function saveBid() {
+    if (!canPerform("editBid", setBidMessage)) {
+      return;
+    }
+
     if (!bidEditorOpen) {
       setBidMessage("Select a bid to edit, or create a new bid.");
       return;
@@ -1522,12 +1787,25 @@ export default function App() {
         : "";
     const duplicateWarning = getBidDuplicateWarning(normalizedBid, savedBids);
     const duplicateMessage = duplicateWarning ? ` ${duplicateWarning}` : "";
+    const nextBids = upsertBid(savedBids, normalizedBid);
 
-    await commitBids(upsertBid(savedBids, normalizedBid), `Saved ${normalizedBid.projectName || "bid opportunity"} locally.${warningMessage}${duplicateMessage}`);
+    await commitBids(nextBids, `Saved ${normalizedBid.projectName || "bid opportunity"} locally.${warningMessage}${duplicateMessage}`);
     setBidDraft(normalizedBid);
+    recordActivity({
+      action: savedBids.some((bid) => bid.id === normalizedBid.id) ? "Bid updated" : "Bid created",
+      entityType: "bid",
+      entityId: normalizedBid.id,
+      entityLabel: normalizedBid.projectName || "Bid opportunity",
+      bids: nextBids,
+      notes: normalizedBid.bidStatus,
+    });
   }
 
   async function duplicateBid(bidId) {
+    if (!canPerform("createBid", setBidMessage)) {
+      return;
+    }
+
     const bid = savedBids.find((item) => item.id === bidId);
 
     if (!bid) {
@@ -1546,12 +1824,25 @@ export default function App() {
       updatedAt: now,
     });
 
-    await commitBids(upsertBid(savedBids, duplicate), `Duplicated ${bid.projectName || "bid opportunity"} locally.`);
+    const nextBids = upsertBid(savedBids, duplicate);
+    await commitBids(nextBids, `Duplicated ${bid.projectName || "bid opportunity"} locally.`);
     setBidDraft(duplicate);
     setBidEditorOpen(true);
+    recordActivity({
+      action: "Bid created",
+      entityType: "bid",
+      entityId: duplicate.id,
+      entityLabel: duplicate.projectName || "Bid opportunity",
+      bids: nextBids,
+      notes: "Duplicated from existing bid",
+    });
   }
 
   async function updateBidStatus(bidId, bidStatus) {
+    if (!canPerform("editBid", setBidMessage)) {
+      return;
+    }
+
     const bid = savedBids.find((item) => item.id === bidId);
 
     if (!bid) {
@@ -1564,7 +1855,16 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     });
 
-    await commitBids(upsertBid(savedBids, nextBid), `Marked ${nextBid.projectName || "bid"} as ${bidStatus}.`);
+    const nextBids = upsertBid(savedBids, nextBid);
+    await commitBids(nextBids, `Marked ${nextBid.projectName || "bid"} as ${bidStatus}.`);
+    recordActivity({
+      action: "Bid status changed",
+      entityType: "bid",
+      entityId: nextBid.id,
+      entityLabel: nextBid.projectName || "Bid opportunity",
+      bids: nextBids,
+      notes: bidStatus,
+    });
 
     if (bidDraft.id === bidId) {
       setBidDraft(nextBid);
@@ -1572,6 +1872,10 @@ export default function App() {
   }
 
   async function deleteBid(bidId) {
+    if (!canPerform("deleteBid", setBidMessage)) {
+      return;
+    }
+
     const bid = savedBids.find((item) => item.id === bidId);
 
     if (!bid) {
@@ -1584,6 +1888,13 @@ export default function App() {
 
     const nextBids = savedBids.filter((item) => item.id !== bidId);
     await commitBids(nextBids, `Deleted ${bid.projectName || "bid opportunity"} locally.`);
+    recordActivity({
+      action: "Bid deleted",
+      entityType: "bid",
+      entityId: bid.id,
+      entityLabel: bid.projectName || "Bid opportunity",
+      bids: nextBids,
+    });
 
     if (bidDraft.id === bidId) {
       setBidDraft(createEmptyBid());
@@ -1592,6 +1903,10 @@ export default function App() {
   }
 
   async function createProposalFromBid(bidId) {
+    if (!canPerform("createProposal", setBidMessage)) {
+      return;
+    }
+
     const bid = savedBids.find((item) => item.id === bidId);
 
     if (!bid) {
@@ -1640,15 +1955,28 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     });
     const nextProposals = upsertProposal(savedProposals, proposalFromBid);
+    const nextBids = upsertBid(savedBids, linkedBid);
 
     setSavedProposals(nextProposals);
-    await commitBids(upsertBid(savedBids, linkedBid), `Created proposal from ${bid.projectName || "bid"} locally.`);
+    await commitBids(nextBids, `Created proposal from ${bid.projectName || "bid"} locally.`);
     setBidDraft(linkedBid);
     navigate(`/proposals/${proposalFromBid.id}`, { proposal: proposalFromBid, skipUnsavedCheck: true });
+    recordActivity({
+      action: "Proposal created",
+      entityType: "proposal",
+      entityId: proposalFromBid.id,
+      entityLabel: proposalFromBid.proposalNumber || proposalFromBid.project?.name || "Proposal",
+      bids: nextBids,
+      notes: `Created from bid: ${bid.projectName || bid.id}`,
+    });
     await syncSingleProposalToCloud(proposalFromBid, "Proposal from bid synced to Supabase.");
   }
 
   async function linkBidToProposal(bidId, proposalId) {
+    if (!canPerform("editBid", setBidMessage)) {
+      return;
+    }
+
     const bid = savedBids.find((item) => item.id === bidId);
     const proposal = savedProposals.find((item) => item.id === proposalId || item.proposalNumber === proposalId);
 
@@ -1664,11 +1992,24 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     });
 
-    await commitBids(upsertBid(savedBids, linkedBid), `Linked ${bid.projectName || "bid"} to ${proposal.proposalNumber}.`);
+    const nextBids = upsertBid(savedBids, linkedBid);
+    await commitBids(nextBids, `Linked ${bid.projectName || "bid"} to ${proposal.proposalNumber}.`);
     setBidDraft(linkedBid);
+    recordActivity({
+      action: "Bid updated",
+      entityType: "bid",
+      entityId: linkedBid.id,
+      entityLabel: linkedBid.projectName || "Bid opportunity",
+      bids: nextBids,
+      notes: `Linked proposal ${proposal.proposalNumber}`,
+    });
   }
 
   async function markBidSubmitted(bidId) {
+    if (!canPerform("editBid", setBidMessage)) {
+      return;
+    }
+
     const bid = savedBids.find((item) => item.id === bidId);
 
     if (!bid) {
@@ -1684,8 +2025,17 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     });
 
-    await commitBids(upsertBid(savedBids, submittedBid), `Marked ${bid.projectName || "bid"} as submitted.`);
+    const nextBids = upsertBid(savedBids, submittedBid);
+    await commitBids(nextBids, `Marked ${bid.projectName || "bid"} as submitted.`);
     setBidDraft(submittedBid);
+    recordActivity({
+      action: "Bid status changed",
+      entityType: "bid",
+      entityId: submittedBid.id,
+      entityLabel: submittedBid.projectName || "Bid opportunity",
+      bids: nextBids,
+      notes: "Submitted",
+    });
   }
 
   function applyContactToCurrentProposal(contactId) {
@@ -1797,6 +2147,10 @@ export default function App() {
   }
 
   async function saveCurrentProposal() {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
     if (saveState.isSaving) {
       setSaveMessage("Saving...");
       return;
@@ -1874,9 +2228,21 @@ export default function App() {
     if (route.view === "new") {
       navigate(`/proposals/${proposalToSave.id}`, { proposal: proposalToSave, replace: true, skipUnsavedCheck: true });
     }
+
+    recordActivity({
+      action: "Proposal saved",
+      entityType: "proposal",
+      entityId: proposalToSave.id,
+      entityLabel: formatProposalNumberWithRevision(proposalToSave),
+      notes: proposalToSave.project?.name || "",
+    });
   }
 
   async function saveSubmittedPacketRecord() {
+    if (!canPerform("createPacketRecord")) {
+      return;
+    }
+
     if (!canCompleteProposal("saving a packet record")) {
       setSaveMessage("Fix required fields before saving a packet record.");
       return;
@@ -1897,9 +2263,20 @@ export default function App() {
       "Packet record saved locally.",
       "Packet record saved locally and synced to cloud.",
     );
+    recordActivity({
+      action: "Packet record created",
+      entityType: "proposal",
+      entityId: updatedProposal.id,
+      entityLabel: formatProposalNumberWithRevision(updatedProposal),
+      notes: packetRecord.packetTitle,
+    });
   }
 
   function updateSubmittedPacketRecord(recordId, field, value) {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
     setProposalDirty(true);
     setProposalDraft((currentProposal) =>
       createEditableProposal({
@@ -1912,6 +2289,10 @@ export default function App() {
   }
 
   async function markSubmittedPacketSent(recordId) {
+    if (!canPerform("markPacketSent")) {
+      return;
+    }
+
     const updatedProposal = createEditableProposal({
       ...proposalDraft,
       submittedPacketRecords: normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).map((record) =>
@@ -1934,9 +2315,20 @@ export default function App() {
       "Packet marked as sent locally.",
       "Packet marked as sent locally and synced to cloud.",
     );
+    recordActivity({
+      action: "Packet marked sent",
+      entityType: "proposal",
+      entityId: updatedProposal.id,
+      entityLabel: formatProposalNumberWithRevision(updatedProposal),
+      notes: recordId,
+    });
   }
 
   async function attachSubmittedPacketPdf(recordId, file) {
+    if (!canPerform("storageUpload")) {
+      return;
+    }
+
     if (!file) {
       return;
     }
@@ -1979,6 +2371,13 @@ export default function App() {
         "Submitted PDF attached and synced to cloud.",
       );
       setSaveMessage(`Submitted PDF uploaded: ${pdfAttachment.storagePath}`);
+      recordActivity({
+        action: "PDF attached",
+        entityType: "storage",
+        entityId: recordId,
+        entityLabel: pdfAttachment.fileName || "Submitted PDF",
+        notes: pdfAttachment.storagePath,
+      });
     } catch (error) {
       console.error("Submitted packet PDF upload failed:", error);
       setSaveMessage(`PDF upload failed: ${formatStorageUploadError(error)}`);
@@ -1986,6 +2385,10 @@ export default function App() {
   }
 
   async function removeSubmittedPacketPdf(recordId) {
+    if (!canPerform("storageUpload")) {
+      return;
+    }
+
     const record = normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).find((item) => item.id === recordId);
 
     if (!record?.pdfAttachment?.storagePath && !record?.pdfAttachment?.publicUrl) {
@@ -2007,9 +2410,19 @@ export default function App() {
       "Submitted PDF attachment removed locally.",
       "Submitted PDF attachment removed and synced to cloud.",
     );
+    recordActivity({
+      action: "PDF removed",
+      entityType: "storage",
+      entityId: recordId,
+      entityLabel: "Submitted PDF",
+    });
   }
 
   async function markSendPackageSent(sendDraft) {
+    if (!canPerform("sendWorkflow")) {
+      return;
+    }
+
     const packetRecord = normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).find((record) => record.id === sendDraft.packetRecordId);
 
     if (!packetRecord) {
@@ -2053,7 +2466,6 @@ export default function App() {
       "Send package marked as sent locally.",
       "Send package marked as sent and synced to cloud.",
     );
-
     const linkedBidUpdates = savedBids.map((bid) =>
       bid.proposalId === updatedProposal.id
         ? normalizeBid({
@@ -2070,6 +2482,15 @@ export default function App() {
     if (JSON.stringify(linkedBidUpdates) !== JSON.stringify(savedBids)) {
       await commitBids(linkedBidUpdates, `Updated linked bid after sending ${formatProposalNumberWithRevision(updatedProposal)} locally.`);
     }
+
+    recordActivity({
+      action: "Send package marked sent",
+      entityType: "proposal",
+      entityId: updatedProposal.id,
+      entityLabel: formatProposalNumberWithRevision(updatedProposal),
+      bids: linkedBidUpdates,
+      notes: sendRecord.sentToEmail || sendRecord.sentToName,
+    });
   }
 
   async function persistProposalAfterPacketChange(updatedProposal, localMessage, cloudMessage) {
@@ -2119,6 +2540,10 @@ export default function App() {
   }
 
   async function createRevision() {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
     if (!canCompleteProposal("creating a revision")) {
       return;
     }
@@ -2130,35 +2555,86 @@ export default function App() {
     navigate(`/proposals/${revision.id}`, { proposal: revision, skipUnsavedCheck: true });
     setProposalDirty(false);
     setSaveMessage(`Created ${revision.revisionLabel}.`);
+    recordActivity({
+      action: "Revision created",
+      entityType: "proposal",
+      entityId: revision.id,
+      entityLabel: formatProposalNumberWithRevision(revision),
+      notes: `Previous proposal: ${formatProposalNumberWithRevision(sourceProposal)}`,
+    });
     await syncMultipleProposalsToCloud([sourceProposal, revision], `Created ${revision.revisionLabel} and synced it to Supabase.`);
   }
 
   async function duplicateCurrentProposal(proposal = proposalDraft) {
+    if (!canPerform("createProposal")) {
+      return;
+    }
+
     const duplicate = duplicateProposalDraft(proposal, savedProposals);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, duplicate));
     navigate(`/proposals/${duplicate.id}`, { proposal: duplicate, skipUnsavedCheck: true });
     setSaveMessage(getCloudReadyMessage(authUser, "Duplicated locally. Syncing to cloud...", "Duplicated as a new draft."));
+    recordActivity({
+      action: "Proposal duplicated",
+      entityType: "proposal",
+      entityId: duplicate.id,
+      entityLabel: formatProposalNumberWithRevision(duplicate),
+      notes: `Copied from ${formatProposalNumberWithRevision(proposal)}`,
+    });
     await syncSingleProposalToCloud(duplicate, "Duplicate synced to Supabase.");
   }
 
   async function updateCurrentStatus(status) {
+    if (!canPerform("markProposalOutcome")) {
+      return;
+    }
+
     const updatedProposal = applyStatusTracking({ ...proposalDraft, updatedAt: new Date().toISOString() }, status);
     setProposalDraft(updatedProposal);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
     setSaveMessage(getCloudReadyMessage(authUser, `Marked as ${formatOptionLabel(status)} locally. Syncing to cloud...`, `Marked as ${formatOptionLabel(status)}.`));
+    recordActivity({
+      action: "Proposal status changed",
+      entityType: "proposal",
+      entityId: updatedProposal.id,
+      entityLabel: formatProposalNumberWithRevision(updatedProposal),
+      notes: formatOptionLabel(status),
+    });
     await syncSingleProposalToCloud(updatedProposal, `Status updated to ${formatOptionLabel(status)} in Supabase.`);
   }
 
   async function updateListProposalStatus(proposal, status) {
+    if (!canPerform("markProposalOutcome")) {
+      return;
+    }
+
     const updatedProposal = applyStatusTracking({ ...proposal, updatedAt: new Date().toISOString() }, status);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
+    recordActivity({
+      action: "Proposal status changed",
+      entityType: "proposal",
+      entityId: updatedProposal.id,
+      entityLabel: formatProposalNumberWithRevision(updatedProposal),
+      notes: formatOptionLabel(status),
+    });
     await syncSingleProposalToCloud(updatedProposal, `Status updated to ${formatOptionLabel(status)} in Supabase.`);
   }
 
   function exportProposalBackup(proposal = proposalDraft) {
+    if (!canPerform("backupExport", setBackupMessage)) {
+      return;
+    }
+
     try {
       downloadJsonFile(createProposalExport(proposal), getCurrentProposalBackupFileName(proposal));
       setBackupMessage(`Exported ${proposal.proposalNumber || "proposal"}.`);
+      recordActivity({
+        action: "Backup exported",
+        entityType: "backup",
+        entityId: proposal.id,
+        entityLabel: proposal.proposalNumber || "Proposal backup",
+        notes: "Current proposal",
+      });
     } catch (error) {
       setBackupMessage(`Export failed: ${error.message}`);
     }
@@ -2166,11 +2642,11 @@ export default function App() {
 
   async function commitPriceLibrary(nextLibrary, message = "Price library saved locally.") {
     const normalizedLibrary = normalizePriceLibrary(nextLibrary);
-    const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(companySettings, normalizedLibrary, savedBids);
+    const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(companySettings, normalizedLibrary, savedBids, activityLog);
 
     setPriceLibrary(normalizedLibrary);
     setCompanySettings(settingsWithLibrary);
-    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, normalizedLibrary, savedBids));
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, normalizedLibrary, savedBids, activityLog));
     setPriceLibraryMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
     if (canUseCloudSync(authUser)) {
@@ -2180,6 +2656,10 @@ export default function App() {
   }
 
   async function savePriceLibraryItem(item) {
+    if (!canPerform("editPriceLibrary", setPriceLibraryMessage)) {
+      return;
+    }
+
     const now = new Date().toISOString();
     const normalizedItem = normalizePriceLibraryItem({
       ...item,
@@ -2194,9 +2674,23 @@ export default function App() {
       nextLibrary,
       `Saved ${normalizedItem.name} to the price library.${duplicateWarning ? ` ${duplicateWarning}` : ""}`,
     );
+    recordActivity({
+      action: priceLibrary.some((libraryItem) => libraryItem.id === normalizedItem.id)
+        ? "Price library item updated"
+        : "Price library item created",
+      entityType: "settings",
+      entityId: normalizedItem.id,
+      entityLabel: normalizedItem.name,
+      notes: normalizedItem.category,
+      priceLibrary: nextLibrary,
+    });
   }
 
   async function togglePriceLibraryItem(itemId, active) {
+    if (!canPerform("editPriceLibrary", setPriceLibraryMessage)) {
+      return;
+    }
+
     const nextLibrary = priceLibrary.map((item) =>
       item.id === itemId
         ? normalizePriceLibraryItem({
@@ -2208,9 +2702,22 @@ export default function App() {
     );
 
     await commitPriceLibrary(nextLibrary, "Updated price library item status locally.");
+    const item = nextLibrary.find((libraryItem) => libraryItem.id === itemId);
+    recordActivity({
+      action: "Price library item updated",
+      entityType: "settings",
+      entityId: itemId,
+      entityLabel: item?.name || "Price library item",
+      notes: active ? "Active" : "Inactive",
+      priceLibrary: nextLibrary,
+    });
   }
 
   async function deletePriceLibraryItem(itemId) {
+    if (!canPerform("deletePriceLibrary", setPriceLibraryMessage)) {
+      return;
+    }
+
     const item = priceLibrary.find((libraryItem) => libraryItem.id === itemId);
 
     if (!item) {
@@ -2221,13 +2728,23 @@ export default function App() {
       return;
     }
 
-    await commitPriceLibrary(
-      priceLibrary.filter((libraryItem) => libraryItem.id !== itemId),
-      `Deleted ${item.name} from the price library.`,
-    );
+    const nextLibrary = priceLibrary.filter((libraryItem) => libraryItem.id !== itemId);
+    await commitPriceLibrary(nextLibrary, `Deleted ${item.name} from the price library.`);
+    recordActivity({
+      action: "Price library item deleted",
+      entityType: "settings",
+      entityId: item.id,
+      entityLabel: item.name,
+      notes: item.category,
+      priceLibrary: nextLibrary,
+    });
   }
 
   async function duplicatePriceLibraryItem(itemId) {
+    if (!canPerform("editPriceLibrary", setPriceLibraryMessage)) {
+      return;
+    }
+
     const item = priceLibrary.find((libraryItem) => libraryItem.id === itemId);
 
     if (!item) {
@@ -2243,19 +2760,43 @@ export default function App() {
       updatedAt: now,
     });
 
-    await commitPriceLibrary([...priceLibrary, duplicate], `Duplicated ${item.name}.`);
+    const nextLibrary = [...priceLibrary, duplicate];
+    await commitPriceLibrary(nextLibrary, `Duplicated ${item.name}.`);
+    recordActivity({
+      action: "Price library item created",
+      entityType: "settings",
+      entityId: duplicate.id,
+      entityLabel: duplicate.name,
+      notes: "Duplicated price library item",
+      priceLibrary: nextLibrary,
+    });
   }
 
   function exportPriceLibraryBackup() {
+    if (!canPerform("backupExport", setPriceLibraryMessage)) {
+      return;
+    }
+
     try {
       downloadJsonFile(createPriceLibraryExport(priceLibrary), getPriceLibraryBackupFileName());
       setPriceLibraryMessage(`Exported ${priceLibrary.length} price library items.`);
+      recordActivity({
+        action: "Backup exported",
+        entityType: "backup",
+        entityId: "price-library",
+        entityLabel: "Price library backup",
+        notes: `${priceLibrary.length} items`,
+      });
     } catch (error) {
       setPriceLibraryMessage(`Price library export failed: ${error.message}`);
     }
   }
 
   async function importPriceLibraryBackup(file, mode = "merge") {
+    if (!canPerform("backupImport", setPriceLibraryMessage)) {
+      return;
+    }
+
     if (!file) {
       setPriceLibraryMessage("Choose a price library JSON file before importing.");
       return;
@@ -2275,6 +2816,14 @@ export default function App() {
         nextLibrary,
         `${mode === "replace" ? "Replaced" : "Merged"} ${importedLibrary.length} price library items locally.`,
       );
+      recordActivity({
+        action: "Backup imported",
+        entityType: "backup",
+        entityId: "price-library",
+        entityLabel: "Price library backup",
+        notes: `${mode}: ${importedLibrary.length} items`,
+        priceLibrary: nextLibrary,
+      });
     } catch (error) {
       setPriceLibraryMessage(`Price library import failed: ${error.message}`);
     }
@@ -2492,6 +3041,10 @@ export default function App() {
   }
 
   function updateProjectPhoto(index, updates) {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
     setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const projectPhotos = normalizeProjectPhotos(currentProposal.projectPhotos).map((photo, photoIndex) =>
@@ -2503,6 +3056,10 @@ export default function App() {
   }
 
   async function uploadProjectPhoto(index, file) {
+    if (!canPerform("storageUpload")) {
+      return;
+    }
+
     if (!file) {
       return;
     }
@@ -2573,6 +3130,13 @@ export default function App() {
           lastUploadType: uploadType,
         }));
         setAssetUploadMessage(`Image uploaded to Supabase Storage: ${asset.storagePath}`);
+        recordActivity({
+          action: "Storage upload succeeded",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: asset.storagePath,
+        });
       } else {
         setStorageDiagnostics((currentDiagnostics) => ({
           ...currentDiagnostics,
@@ -2590,6 +3154,13 @@ export default function App() {
             ? `Saved locally only. Reason: ${localReason}`
             : `Saved locally only. Reason: ${localReason}`,
         );
+        recordActivity({
+          action: "Storage upload failed",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: localReason,
+        });
       }
     } catch (error) {
       console.error("Cloud image upload failed:", error);
@@ -2627,6 +3198,13 @@ export default function App() {
           lastUploadType: uploadType,
         }));
         setAssetUploadMessage(`Cloud upload failed: ${errorMessage}. Saved locally only. Reason: cloud upload failed.`);
+        recordActivity({
+          action: "Storage upload failed",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: errorMessage,
+        });
       } catch (localError) {
         console.error("Local image fallback failed:", localError);
         const localErrorMessage = formatStorageUploadError(localError);
@@ -2647,6 +3225,10 @@ export default function App() {
   }
 
   function updatePlanSheet(index, field, value) {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
     setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const planSheets = normalizePlanSheets(currentProposal.planSheets).map((sheet, sheetIndex) =>
@@ -2660,6 +3242,10 @@ export default function App() {
   }
 
   async function uploadPlanSheetImage(index, file) {
+    if (!canPerform("storageUpload")) {
+      return;
+    }
+
     if (!file) {
       return;
     }
@@ -2735,6 +3321,13 @@ export default function App() {
           lastUploadType: uploadType,
         }));
         setAssetUploadMessage(`Image uploaded to Supabase Storage: ${asset.storagePath}`);
+        recordActivity({
+          action: "Storage upload succeeded",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: asset.storagePath,
+        });
       } else {
         setStorageDiagnostics((currentDiagnostics) => ({
           ...currentDiagnostics,
@@ -2752,6 +3345,13 @@ export default function App() {
             ? `Saved locally only. Reason: ${localReason}`
             : `Saved locally only. Reason: ${localReason}`,
         );
+        recordActivity({
+          action: "Storage upload failed",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: localReason,
+        });
       }
     } catch (error) {
       console.error("Cloud image upload failed:", error);
@@ -2788,6 +3388,13 @@ export default function App() {
           lastUploadType: uploadType,
         }));
         setAssetUploadMessage(`Cloud upload failed: ${errorMessage}. Saved locally only. Reason: cloud upload failed.`);
+        recordActivity({
+          action: "Storage upload failed",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: errorMessage,
+        });
       } catch (localError) {
         console.error("Local image fallback failed:", localError);
         const localErrorMessage = formatStorageUploadError(localError);
@@ -2808,6 +3415,10 @@ export default function App() {
   }
 
   async function testStorageUpload() {
+    if (!canPerform("storageUpload", setSettingsMessage)) {
+      return;
+    }
+
     const attemptedAt = new Date().toISOString();
     const timestamp = Date.now();
     const fileName = `test-upload-${timestamp}.txt`;
@@ -2894,6 +3505,13 @@ export default function App() {
         companyId: companyRecord.id,
       }));
       setSettingsMessage(`Test Storage Upload succeeded: ${uploadedPath}`);
+      recordActivity({
+        action: "Storage upload succeeded",
+        entityType: "storage",
+        entityId: companyRecord.id,
+        entityLabel: "Storage diagnostic",
+        notes: uploadedPath,
+      });
     } catch (error) {
       console.error("Supabase Storage diagnostic upload failed:", error);
       const errorMessage = formatStorageUploadError(error);
@@ -2903,6 +3521,13 @@ export default function App() {
         lastStatus: "failed",
       }));
       setSettingsMessage(`Test Storage Upload failed: ${errorMessage}`);
+      recordActivity({
+        action: "Storage upload failed",
+        entityType: "storage",
+        entityId: cloudSync.companyId || "",
+        entityLabel: "Storage diagnostic",
+        notes: errorMessage,
+      });
     }
   }
 
@@ -3087,6 +3712,10 @@ export default function App() {
   }
 
   function exportBackup(type) {
+    if (!canPerform("backupExport", setBackupMessage)) {
+      return;
+    }
+
     try {
       if (type === "current") {
         exportProposalBackup(proposalDraft);
@@ -3096,32 +3725,66 @@ export default function App() {
       if (type === "all") {
         downloadJsonFile(createAllProposalsExport(savedProposals), getAllProposalsBackupFileName());
         setBackupMessage(`Exported ${savedProposals.length} proposals.`);
+        recordActivity({
+          action: "Backup exported",
+          entityType: "backup",
+          entityId: "all-proposals",
+          entityLabel: "All proposals backup",
+          notes: `${savedProposals.length} proposals`,
+        });
         return;
       }
 
       if (type === "settings") {
-        downloadJsonFile(createCompanySettingsExport(getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids)), getCompanySettingsBackupFileName());
+        downloadJsonFile(createCompanySettingsExport(getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog)), getCompanySettingsBackupFileName());
         setBackupMessage("Exported company settings.");
+        recordActivity({
+          action: "Backup exported",
+          entityType: "backup",
+          entityId: "company-settings",
+          entityLabel: "Company settings backup",
+        });
         return;
       }
 
       if (type === "contacts") {
         downloadJsonFile(createContactsExport(savedContacts), getContactsBackupFileName());
         setBackupMessage(`Exported ${savedContacts.length} contacts.`);
+        recordActivity({
+          action: "Backup exported",
+          entityType: "backup",
+          entityId: "contacts",
+          entityLabel: "Contacts backup",
+          notes: `${savedContacts.length} contacts`,
+        });
         return;
       }
 
       if (type === "bids") {
         downloadJsonFile(createBidsExport(savedBids), getBidsBackupFileName());
         setBackupMessage(`Exported ${savedBids.length} bids.`);
+        recordActivity({
+          action: "Backup exported",
+          entityType: "backup",
+          entityId: "bids",
+          entityLabel: "Bids backup",
+          notes: `${savedBids.length} bids`,
+        });
         return;
       }
 
       if (type === "full") {
-        downloadJsonFile(createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary, savedBids), getFullBackupFileName());
+        downloadJsonFile(createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary, savedBids, activityLog), getFullBackupFileName());
         setBackupMessage(
-          `Exported full app backup with ${savedProposals.length} proposals, ${savedContacts.length} contacts, ${savedBids.length} bids, ${priceLibrary.length} price items, and company settings.`,
+          `Exported full app backup with ${savedProposals.length} proposals, ${savedContacts.length} contacts, ${savedBids.length} bids, ${priceLibrary.length} price items, ${activityLog.length} activity records, and company settings.`,
         );
+        recordActivity({
+          action: "Backup exported",
+          entityType: "backup",
+          entityId: "full-app",
+          entityLabel: "Full app backup",
+          notes: `${savedProposals.length} proposals, ${savedBids.length} bids, ${activityLog.length} activity records`,
+        });
       }
     } catch (error) {
       setBackupMessage(`Export failed: ${error.message}`);
@@ -3129,6 +3792,10 @@ export default function App() {
   }
 
   async function importBackup(type, mode, file) {
+    if (!canPerform("backupImport", setBackupMessage)) {
+      return;
+    }
+
     if (!file) {
       setBackupMessage("Choose a JSON backup file before importing.");
       return;
@@ -3145,6 +3812,13 @@ export default function App() {
         setProposalDraft(importedProposal);
         markProposalsNeedCloudSync("Imported proposal locally. Use Sync Proposals or Push Local Data to Cloud when ready.");
         setBackupMessage(`Imported proposal ${importedProposal.proposalNumber || importedProposal.id}.`);
+        recordActivity({
+          action: "Backup imported",
+          entityType: "backup",
+          entityId: importedProposal.id,
+          entityLabel: importedProposal.proposalNumber || "Proposal import",
+          notes: "Single proposal",
+        });
         return;
       }
 
@@ -3161,6 +3835,13 @@ export default function App() {
         syncDraftAfterProposalRestore(nextProposals);
         markProposalsNeedCloudSync("Imported proposals locally. Use Sync Proposals or Push Local Data to Cloud when ready.");
         setBackupMessage(`${mode === "replace" ? "Replaced" : "Merged"} ${importedProposals.length} imported proposals.`);
+        recordActivity({
+          action: "Backup imported",
+          entityType: "backup",
+          entityId: "all-proposals",
+          entityLabel: "All proposals import",
+          notes: `${mode}: ${importedProposals.length} proposals`,
+        });
         return;
       }
 
@@ -3168,13 +3849,25 @@ export default function App() {
         const importedSettings = parseCompanySettingsImport(importedJson);
         const importedPriceLibrary = getPriceLibraryFromSettings(importedSettings, priceLibrary);
         const importedBids = getBidsFromSettings(importedSettings, savedBids);
-        const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids);
+        const importedActivityLog = getActivityLogFromSettings(importedSettings, activityLog);
+        const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog);
 
         setPriceLibrary(importedPriceLibrary);
         setSavedBids(importedBids);
+        setActivityLog(importedActivityLog);
         setCompanySettings(settingsWithLibrary);
         setSettingsDraft(settingsWithLibrary);
         setBackupMessage("Imported company settings. New proposals will use the restored defaults.");
+        recordActivity({
+          action: "Backup imported",
+          entityType: "backup",
+          entityId: "company-settings",
+          entityLabel: "Company settings import",
+          activityLog: importedActivityLog,
+          bids: importedBids,
+          priceLibrary: importedPriceLibrary,
+          settings: settingsWithLibrary,
+        });
         return;
       }
 
@@ -3191,6 +3884,13 @@ export default function App() {
         setContactDraft(createEmptyContact());
         setContactEditorOpen(false);
         setBackupMessage(`${mode === "replace" ? "Replaced" : "Merged"} ${importedContacts.length} imported contacts.`);
+        recordActivity({
+          action: "Backup imported",
+          entityType: "backup",
+          entityId: "contacts",
+          entityLabel: "Contacts import",
+          notes: `${mode}: ${importedContacts.length} contacts`,
+        });
         return;
       }
 
@@ -3207,6 +3907,14 @@ export default function App() {
         setBidDraft(createEmptyBid());
         setBidEditorOpen(false);
         setBackupMessage(`${mode === "replace" ? "Replaced" : "Merged"} ${importedBids.length} imported bids.`);
+        recordActivity({
+          action: "Backup imported",
+          entityType: "backup",
+          entityId: "bids",
+          entityLabel: "Bids import",
+          bids: nextBids,
+          notes: `${mode}: ${importedBids.length} bids`,
+        });
         return;
       }
 
@@ -3236,10 +3944,13 @@ export default function App() {
             : mergeImportedBids(importedBackup.bids, savedBids);
         const importedPriceLibrary =
           importedBackup.priceLibrary.length > 0 ? normalizePriceLibrary(importedBackup.priceLibrary) : priceLibrary;
-        const importedSettings = getSettingsWithPriceLibraryAndBids(importedBackup.companySettings, importedPriceLibrary, nextBids);
+        const nextActivityLog =
+          mode === "replace" ? normalizeActivityLog(importedBackup.activityLog) : normalizeActivityLog([...importedBackup.activityLog, ...activityLog]);
+        const importedSettings = getSettingsWithPriceLibraryAndBids(importedBackup.companySettings, importedPriceLibrary, nextBids, nextActivityLog);
 
         setPriceLibrary(importedPriceLibrary);
         setSavedBids(nextBids);
+        setActivityLog(nextActivityLog);
         setCompanySettings(importedSettings);
         setSettingsDraft(importedSettings);
         setContactDraft(createEmptyContact());
@@ -3249,8 +3960,19 @@ export default function App() {
         syncDraftAfterProposalRestore(nextProposals);
         markProposalsNeedCloudSync("Imported full backup locally. Use Sync Proposals or Push Local Data to Cloud when ready.");
         setBackupMessage(
-          `${mode === "replace" ? "Restored" : "Merged"} full backup with ${importedBackup.proposals.length} proposals, ${importedBackup.contacts.length} contacts, ${nextBids.length} bids, ${importedPriceLibrary.length} price items, and company settings.`,
+          `${mode === "replace" ? "Restored" : "Merged"} full backup with ${importedBackup.proposals.length} proposals, ${importedBackup.contacts.length} contacts, ${nextBids.length} bids, ${importedPriceLibrary.length} price items, ${nextActivityLog.length} activity records, and company settings.`,
         );
+        recordActivity({
+          action: "Backup imported",
+          entityType: "backup",
+          entityId: "full-app",
+          entityLabel: "Full app backup",
+          notes: `${mode}: ${importedBackup.proposals.length} proposals, ${nextActivityLog.length} activity records`,
+          activityLog: nextActivityLog,
+          bids: nextBids,
+          priceLibrary: importedPriceLibrary,
+          settings: importedSettings,
+        });
       }
     } catch (error) {
       setBackupMessage(`Import failed: ${error.message}`);
@@ -3272,7 +3994,9 @@ export default function App() {
 
   const backupTools = (
     <BackupRestorePanel
+      canExport={permissions.backupExport}
       canExportCurrent={isProposalDraftView}
+      canImport={permissions.backupImport}
       message={backupMessage}
       onExport={exportBackup}
       onImport={importBackup}
@@ -3295,6 +4019,8 @@ export default function App() {
           companyName={company.name}
           currentView={route.view}
           isCloudConfigured={isSupabaseConfigured}
+          permissions={permissions}
+          roleLabel={permissionRoleLabel}
           onNavigate={navigate}
           onOpenLogin={() => navigate("/login")}
           onSignOut={signOut}
@@ -3309,10 +4035,12 @@ export default function App() {
       <div className={isPrintView ? "" : "app-content"}>
       {isDashboardView ? (
         <DashboardView
+          activityLog={activityLog}
           authUser={authUser}
           bids={savedBids}
           cloudSync={cloudSync}
           contacts={savedContacts}
+          permissions={permissions}
           proposals={savedProposals}
           onCreateBid={startNewBid}
           onCreateCommercialProposal={createNewCommercialProposal}
@@ -3330,6 +4058,7 @@ export default function App() {
           onOpenSampleProposal={openSampleProposal}
           onOpenPriceLibrary={() => navigate("/price-library")}
           onOpenSettings={() => navigate("/settings")}
+          onOpenActivity={() => navigate("/activity")}
           onPrintSamplePacket={printSamplePacket}
           onPullCloudProposals={pullCloudProposals}
           onPushLocalProposals={pushLocalProposalsToCloud}
@@ -3349,8 +4078,13 @@ export default function App() {
           onSignOut={signOut}
           onSignUp={signUpWithEmail}
         />
+      ) : isActivityView ? (
+        <ActivityLogView records={activityLog} onBackToDashboard={() => navigate("/dashboard")} />
       ) : isPriceLibraryView ? (
         <PriceLibraryView
+          canExport={permissions.backupExport}
+          canImport={permissions.backupImport}
+          canManage={permissions.editPriceLibrary}
           items={priceLibrary}
           message={priceLibraryMessage}
           onBackToDashboard={() => navigate("/dashboard")}
@@ -3371,6 +4105,7 @@ export default function App() {
             contacts={normalizeContacts(savedContacts)}
             isEditorOpen={bidEditorOpen}
             message={bidMessage}
+            permissions={permissions}
             priorityFilter={bidPriorityFilter}
             proposals={normalizeProposals(savedProposals, companySettings)}
             searchQuery={bidSearchQuery}
@@ -3422,6 +4157,7 @@ export default function App() {
           onSyncSettings={syncSettingsToCloud}
           onTestStorageUpload={testStorageUpload}
           onBackToList={() => navigate("/proposals")}
+          permissions={permissions}
           onChange={updateSettingsDraft}
           onReset={resetSettingsDraft}
           onSave={saveSettings}
@@ -3432,6 +4168,7 @@ export default function App() {
           isEditorOpen={contactEditorOpen}
           contacts={savedContacts}
           message={contactMessage}
+          permissions={permissions}
           proposals={savedProposals}
           searchQuery={contactSearchQuery}
           typeFilter={contactTypeFilter}
@@ -3451,6 +4188,7 @@ export default function App() {
           backupTools={backupTools}
           cloudSync={cloudSync}
           contacts={savedContacts}
+          permissions={permissions}
           proposals={savedProposals}
           searchQuery={searchQuery}
           statusFilter={statusFilter}
@@ -3472,6 +4210,7 @@ export default function App() {
           {isPrintView ? (
             <>
               <ProposalPrintToolbar
+                canSavePacketRecord={permissions.createPacketRecord}
                 onBackToList={() => navigate("/proposals")}
                 onPrint={printCurrentProposal}
                 onSavePacketRecord={saveSubmittedPacketRecord}
@@ -3491,6 +4230,7 @@ export default function App() {
                 saveMessage={saveMessage}
                 saveState={saveState}
                 showStartBlank={route.view === "new"}
+                permissions={permissions}
                 onBackToList={() => navigate("/proposals")}
                 onCreateRevision={createRevision}
                 onCreatePacketRecord={saveSubmittedPacketRecord}
@@ -3512,6 +4252,7 @@ export default function App() {
             {isPrintView ? null : (
               <ProposalEditor
                 proposal={proposalDraft}
+                readOnly={!permissions.editProposal}
                 contacts={savedContacts}
                 assetUploadMessage={assetUploadMessage}
                 showTemplatePicker={route.view === "new"}
@@ -3569,10 +4310,12 @@ export default function App() {
 }
 
 function DashboardView({
+  activityLog = [],
   authUser,
   bids = [],
   cloudSync,
   contacts = [],
+  permissions = {},
   proposals,
   onCreateBid,
   onCreateCommercialProposal,
@@ -3588,6 +4331,7 @@ function DashboardView({
   onOpenList,
   onOpenPrint,
   onOpenPriceLibrary,
+  onOpenActivity,
   onOpenSampleProposal,
   onOpenSettings,
   onPrintSamplePacket,
@@ -3601,6 +4345,7 @@ function DashboardView({
   const followUpProposals = getFollowUpDueProposals(proposals);
   const upcomingBids = getUpcomingBids(bids);
   const demoStatus = getDemoStatus(proposals, contacts);
+  const recentActivity = normalizeActivityLog(activityLog).slice(0, 6);
 
   return (
     <section className="dashboard-panel no-print">
@@ -3611,22 +4356,22 @@ function DashboardView({
           <p>Track local proposals, GC packets, backup status, and print-ready concrete proposal packets.</p>
         </div>
         <div className="dashboard-actions">
-          <button type="button" onClick={onCreateProposal}>
+          <button type="button" onClick={onCreateProposal} disabled={!permissions.createProposal}>
             New Proposal
           </button>
-          <button className="gold-action" type="button" onClick={onCreateGcPacket}>
+          <button className="gold-action" type="button" onClick={onCreateGcPacket} disabled={!permissions.createProposal}>
             New GC Packet
           </button>
-          <button type="button" onClick={onCreateCommercialProposal}>
+          <button type="button" onClick={onCreateCommercialProposal} disabled={!permissions.createProposal}>
             New Commercial Proposal
           </button>
-          <button type="button" onClick={onCreateResidentialProposal}>
+          <button type="button" onClick={onCreateResidentialProposal} disabled={!permissions.createProposal}>
             New Residential Proposal
           </button>
-          <button type="button" onClick={onCreateContact}>
+          <button type="button" onClick={onCreateContact} disabled={!permissions.createContact}>
             New Contact
           </button>
-          <button type="button" onClick={onCreateBid}>
+          <button type="button" onClick={onCreateBid} disabled={!permissions.createBid}>
             Add Bid
           </button>
           <button type="button" onClick={onOpenList}>
@@ -3641,6 +4386,9 @@ function DashboardView({
           <button type="button" onClick={onOpenPriceLibrary}>
             Price Library
           </button>
+          <button type="button" onClick={onOpenActivity}>
+            Activity Log
+          </button>
           <button type="button" onClick={onOpenSettings}>
             Company Settings
           </button>
@@ -3653,6 +4401,7 @@ function DashboardView({
       <ProposalSyncPanel
         authUser={authUser}
         cloudSync={cloudSync}
+        canUseCloudActions={permissions.cloudSync}
         onPullCloudProposals={onPullCloudProposals}
         onPushLocalProposals={onPushLocalProposals}
         onSyncProposals={onSyncProposals}
@@ -3660,6 +4409,7 @@ function DashboardView({
 
       <DemoOnboardingPanel
         demoStatus={demoStatus}
+        permissions={permissions}
         onLoadDemoData={onLoadDemoData}
         onOpenSampleProposal={onOpenSampleProposal}
         onPrintSamplePacket={onPrintSamplePacket}
@@ -3699,6 +4449,36 @@ function DashboardView({
             </small>
           ) : null}
         </div>
+      </div>
+
+      <div className="recent-proposals-card">
+        <div className="recent-heading">
+          <div>
+            <p className="list-kicker">Audit trail</p>
+            <h3>Recent Activity</h3>
+          </div>
+          <button type="button" onClick={onOpenActivity}>
+            View Activity
+          </button>
+        </div>
+
+        {recentActivity.length > 0 ? (
+          <div className="activity-preview-list">
+            {recentActivity.map((record) => (
+              <div className="activity-preview-row" key={record.id}>
+                <div>
+                  <strong>{record.action}</strong>
+                  <span>{record.entityLabel || record.entityId || record.entityType}</span>
+                </div>
+                <small>
+                  {record.userEmail} | {formatCloudSyncTime(record.createdAt)}
+                </small>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-list-message">No activity recorded yet.</p>
+        )}
       </div>
 
       <div className="recent-proposals-card">
@@ -3848,6 +4628,7 @@ function BidsView({
   contacts = [],
   isEditorOpen,
   message,
+  permissions = {},
   priorityFilter,
   proposals = [],
   searchQuery,
@@ -3892,7 +4673,7 @@ function BidsView({
           <button type="button" onClick={onBackToDashboard}>
             Back to Dashboard
           </button>
-          <button className="gold-action" type="button" onClick={onNew}>
+          <button className="gold-action" type="button" onClick={onNew} disabled={!permissions.createBid}>
             Add Bid
           </button>
         </div>
@@ -3982,7 +4763,7 @@ function BidsView({
                       <button type="button" onClick={() => onEdit(bid)}>
                         Edit
                       </button>
-                      <button type="button" title="Create a GC proposal draft from this bid opportunity." onClick={() => onCreateProposal(bid.id)}>
+                      <button type="button" title="Create a GC proposal draft from this bid opportunity." onClick={() => onCreateProposal(bid.id)} disabled={!permissions.createProposal}>
                         Create Proposal
                       </button>
                       {bidProposal ? (
@@ -3992,6 +4773,7 @@ function BidsView({
                       ) : (
                         <button
                           type="button"
+                          disabled={!permissions.editBid}
                           onClick={() => {
                             const proposalKey = window.prompt("Enter proposal number or ID to link:");
                             if (proposalKey) {
@@ -4002,22 +4784,22 @@ function BidsView({
                           Link Existing
                         </button>
                       )}
-                      <button type="button" onClick={() => onStatusChange(bid.id, "No-Bid")}>
+                      <button type="button" onClick={() => onStatusChange(bid.id, "No-Bid")} disabled={!permissions.editBid}>
                         Mark No-Bid
                       </button>
-                      <button type="button" onClick={() => onMarkSubmitted(bid.id)}>
+                      <button type="button" onClick={() => onMarkSubmitted(bid.id)} disabled={!permissions.editBid}>
                         Mark Submitted
                       </button>
-                      <button type="button" onClick={() => onStatusChange(bid.id, "Awarded")}>
+                      <button type="button" onClick={() => onStatusChange(bid.id, "Awarded")} disabled={!permissions.editBid}>
                         Awarded
                       </button>
-                      <button type="button" onClick={() => onStatusChange(bid.id, "Lost")}>
+                      <button type="button" onClick={() => onStatusChange(bid.id, "Lost")} disabled={!permissions.editBid}>
                         Lost
                       </button>
-                      <button type="button" title="Copy this bid opportunity as a new record." onClick={() => onDuplicate(bid.id)}>
+                      <button type="button" title="Copy this bid opportunity as a new record." onClick={() => onDuplicate(bid.id)} disabled={!permissions.createBid}>
                         Duplicate
                       </button>
-                      <button type="button" onClick={() => onDelete(bid.id)}>
+                      <button type="button" onClick={() => onDelete(bid.id)} disabled={!permissions.deleteBid}>
                         Delete
                       </button>
                     </div>
@@ -4039,6 +4821,8 @@ function BidsView({
                 <p>Save project pursuit details, due dates, GC contacts, and proposal links.</p>
               </div>
 
+              {!permissions.editBid ? <p className="permission-message">Bid details are read-only for your current role.</p> : null}
+              <fieldset className="editor-permission-fieldset" disabled={!permissions.editBid}>
               <BidSmartPastePanel
                 notes={bidSmartPasteNotes}
                 result={bidSmartPasteResult}
@@ -4113,18 +4897,19 @@ function BidsView({
                   type="button"
                   title="Create a proposal from this saved bid opportunity."
                   onClick={() => onCreateProposal(bidDraft.id)}
-                  disabled={!isSavedBid}
+                  disabled={!isSavedBid || !permissions.createProposal}
                 >
                   Create Proposal from Bid
                 </button>
               </div>
+              </fieldset>
             </>
           ) : (
             <div className="contact-empty-state">
               <p className="list-kicker">No bid selected</p>
               <h3>Select a bid to edit, or create a new opportunity.</h3>
               <p>Use the bid tracker for due dates, GC pursuit notes, no-bid decisions, and proposal links.</p>
-              <button type="button" onClick={onNew}>
+              <button type="button" onClick={onNew} disabled={!permissions.createBid}>
                 Add Bid
               </button>
             </div>
@@ -4212,6 +4997,7 @@ function ContactsView({
   contacts,
   isEditorOpen,
   message,
+  permissions = {},
   proposals,
   searchQuery,
   typeFilter,
@@ -4251,10 +5037,10 @@ function ContactsView({
           <button type="button" onClick={onBackToDashboard}>
             Back to Dashboard
           </button>
-          <button type="button" onClick={onNew}>
+          <button type="button" onClick={onNew} disabled={!permissions.createContact}>
             New Contact
           </button>
-          <button type="button" onClick={onSave} disabled={!isEditorOpen}>
+          <button type="button" onClick={onSave} disabled={!isEditorOpen || !permissions.editContact}>
             Save Contact
           </button>
         </div>
@@ -4268,6 +5054,8 @@ function ContactsView({
                 <p className="list-kicker">{editingExistingContact ? "Edit contact" : "New contact"}</p>
                 <h3>{contactHeading}</h3>
               </div>
+              {!permissions.editContact ? <p className="permission-message">Contact details are read-only for your current role.</p> : null}
+              <fieldset className="editor-permission-fieldset" disabled={!permissions.editContact}>
               <div className="contact-form-grid">
                 <EditorField
                   label="Company Name"
@@ -4344,13 +5132,14 @@ function ContactsView({
                   Save Contact
                 </button>
               </div>
+              </fieldset>
             </>
           ) : (
             <div className="contact-empty-state">
               <p className="list-kicker">Contact details</p>
               <h3>Select a contact to edit, or create a new contact.</h3>
               <p>Saved contacts can fill client and GC information on new proposals without retyping.</p>
-              <button type="button" onClick={onNew}>
+              <button type="button" onClick={onNew} disabled={!permissions.createContact}>
                 New Contact
               </button>
             </div>
@@ -4397,7 +5186,7 @@ function ContactsView({
                     <button type="button" onClick={() => onEdit(contact)}>
                       Edit
                     </button>
-                    <button type="button" onClick={() => onDelete(contact.id)}>
+                    <button type="button" onClick={() => onDelete(contact.id)} disabled={!permissions.deleteContact}>
                       Delete
                     </button>
                   </div>
@@ -4414,6 +5203,9 @@ function ContactsView({
 }
 
 function PriceLibraryView({
+  canExport = true,
+  canImport = true,
+  canManage = true,
   items = [],
   message = "",
   onBackToDashboard,
@@ -4433,6 +5225,10 @@ function PriceLibraryView({
   const activeCount = items.filter((item) => item.active !== false).length;
 
   function updateDraft(field, value) {
+    if (!canManage) {
+      return;
+    }
+
     setDraft((currentDraft) => ({
       ...currentDraft,
       [field]: value,
@@ -4440,6 +5236,10 @@ function PriceLibraryView({
   }
 
   function editItem(item) {
+    if (!canManage) {
+      return;
+    }
+
     setDraft({
       ...normalizePriceLibraryItem(item),
       defaultScopeBullets: formatPriceLibraryListInput(item.defaultScopeBullets),
@@ -4467,10 +5267,10 @@ function PriceLibraryView({
           <button type="button" onClick={onBackToDashboard}>
             Back to Dashboard
           </button>
-          <button type="button" onClick={() => setDraft(createEmptyPriceLibraryDraft())}>
+          <button type="button" onClick={() => setDraft(createEmptyPriceLibraryDraft())} disabled={!canManage}>
             New Item
           </button>
-          <button type="button" title="Export the unit price library as a JSON backup file." onClick={onExport}>
+          <button type="button" title="Export the unit price library as a JSON backup file." onClick={onExport} disabled={!canExport}>
             Export Library
           </button>
         </div>
@@ -4531,6 +5331,7 @@ function PriceLibraryView({
                         <input
                           checked={item.active !== false}
                           type="checkbox"
+                          disabled={!canManage}
                           onChange={(event) => onToggleActive(item.id, event.target.checked)}
                         />
                         <span>{item.active === false ? "Inactive" : "Active"}</span>
@@ -4538,13 +5339,13 @@ function PriceLibraryView({
                     </td>
                     <td>
                       <div className="table-actions">
-                        <button type="button" onClick={() => editItem(item)}>
+                        <button type="button" onClick={() => editItem(item)} disabled={!canManage}>
                           Edit
                         </button>
-                        <button type="button" title="Create a copy of this price item." onClick={() => onDuplicate(item.id)}>
+                        <button type="button" title="Create a copy of this price item." onClick={() => onDuplicate(item.id)} disabled={!canManage}>
                           Duplicate
                         </button>
-                        <button type="button" onClick={() => onDelete(item.id)}>
+                        <button type="button" onClick={() => onDelete(item.id)} disabled={!canManage}>
                           Delete
                         </button>
                       </div>
@@ -4568,16 +5369,16 @@ function PriceLibraryView({
             <div className="backup-import-grid">
               <label>
                 <span>Import Mode</span>
-                <select value={importMode} onChange={(event) => setImportMode(event.target.value)}>
+                <select value={importMode} onChange={(event) => setImportMode(event.target.value)} disabled={!canImport}>
                   <option value="merge">Merge with Existing</option>
                   <option value="replace">Replace Existing</option>
                 </select>
               </label>
               <label className="backup-file-field">
                 <span>JSON File</span>
-                <input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] || null)} />
+                <input type="file" accept="application/json,.json" onChange={(event) => setImportFile(event.target.files?.[0] || null)} disabled={!canImport} />
               </label>
-              <button type="button" title="Import price library items from a JSON backup file." onClick={() => onImport(importFile, importMode)}>
+              <button type="button" title="Import price library items from a JSON backup file." onClick={() => onImport(importFile, importMode)} disabled={!canImport}>
                 Import Price Library
               </button>
             </div>
@@ -4586,6 +5387,8 @@ function PriceLibraryView({
 
         <div className="price-library-form-card">
           <h3>{draft.id ? "Edit Price Item" : "Add Price Item"}</h3>
+          {!canManage ? <p className="permission-message">Price library management is read-only for your current role.</p> : null}
+          <fieldset className="editor-permission-fieldset" disabled={!canManage}>
           <div className="price-library-form-grid">
             <EditorField label="Name" path="priceLibrary.name" value={draft.name} onChange={(_, value) => updateDraft("name", value)} />
             <EditorField
@@ -4682,6 +5485,7 @@ function PriceLibraryView({
               Clear Form
             </button>
           </div>
+          </fieldset>
         </div>
       </div>
     </section>
@@ -4772,8 +5576,8 @@ function FollowUpRow({ onOpen, proposal }) {
   );
 }
 
-function ProposalSyncPanel({ authUser, cloudSync, onPullCloudProposals, onPushLocalProposals, onSyncProposals }) {
-  const actionsDisabled = cloudSync.loading || !canUseCloudSync(authUser);
+function ProposalSyncPanel({ authUser, canUseCloudActions = true, cloudSync, onPullCloudProposals, onPushLocalProposals, onSyncProposals }) {
+  const actionsDisabled = cloudSync.loading || !canUseCloudSync(authUser) || !canUseCloudActions;
 
   return (
     <div className="proposal-sync-panel no-print">
@@ -4806,6 +5610,7 @@ function ProposalSyncPanel({ authUser, cloudSync, onPullCloudProposals, onPushLo
 
 function DemoOnboardingPanel({
   demoStatus,
+  permissions = {},
   onLoadDemoData,
   onOpenSampleProposal,
   onPrintSamplePacket,
@@ -4838,13 +5643,13 @@ function DemoOnboardingPanel({
           <span>{demoStatus.contactCount} demo contact(s)</span>
         </div>
         <div className="demo-actions">
-          <button type="button" onClick={() => onLoadDemoData()}>
+          <button type="button" onClick={() => onLoadDemoData()} disabled={!permissions.createProposal}>
             Load Demo Data
           </button>
-          <button type="button" onClick={onResetDemoData}>
+          <button type="button" onClick={onResetDemoData} disabled={!permissions.deleteProposal}>
             Reset Demo Data
           </button>
-          <button className="gold-action" type="button" onClick={onStartGcPacket}>
+          <button className="gold-action" type="button" onClick={onStartGcPacket} disabled={!permissions.createProposal}>
             Start New GC Packet
           </button>
           <button type="button" onClick={onOpenSampleProposal}>
@@ -4877,6 +5682,7 @@ function ProposalListView({
   backupTools,
   cloudSync,
   contacts = [],
+  permissions = {},
   proposals,
   searchQuery,
   statusFilter,
@@ -4929,7 +5735,7 @@ function ProposalListView({
           <p className="list-kicker">Local proposals</p>
           <h2>Saved Proposals</h2>
         </div>
-        <button type="button" onClick={onCreateNew}>
+        <button type="button" onClick={onCreateNew} disabled={!permissions.createProposal}>
           New Proposal
         </button>
         <button type="button" onClick={onOpenSettings}>
@@ -4974,6 +5780,7 @@ function ProposalListView({
 
       <ProposalSyncPanel
         authUser={authUser}
+        canUseCloudActions={permissions.cloudSync}
         cloudSync={cloudSync}
         onPullCloudProposals={onPullCloudProposals}
         onPushLocalProposals={onPushLocalProposals}
@@ -5043,7 +5850,7 @@ function ProposalListView({
                   </td>
                   <td onClick={(event) => event.stopPropagation()}>
                     <StatusBadge status={proposal.status} />
-                    <select value={proposal.status} onChange={(event) => onStatusChange(proposal, event.target.value)}>
+                    <select value={proposal.status} onChange={(event) => onStatusChange(proposal, event.target.value)} disabled={!permissions.markProposalOutcome}>
                       {PROPOSAL_STATUSES.map((status) => (
                         <option key={status} value={status}>
                           {formatOptionLabel(status)}
@@ -5071,10 +5878,10 @@ function ProposalListView({
                       <button type="button" title="Open the print/PDF view for this proposal." onClick={() => onPrint(proposal)}>
                         Print
                       </button>
-                      <button type="button" title="Create a separate copy of this proposal as a new draft." onClick={() => onDuplicate(proposal)}>
+                      <button type="button" title="Create a separate copy of this proposal as a new draft." onClick={() => onDuplicate(proposal)} disabled={!permissions.createProposal}>
                         Duplicate
                       </button>
-                      <button type="button" title="Export this proposal as a JSON backup file." onClick={() => onExportProposal(proposal)}>
+                      <button type="button" title="Export this proposal as a JSON backup file." onClick={() => onExportProposal(proposal)} disabled={!permissions.backupExport}>
                         Export
                       </button>
                     </div>
@@ -5098,6 +5905,7 @@ function CompanySettingsView({
   backupTools,
   cloudSync,
   message,
+  permissions = {},
   saveState,
   settings,
   storageDiagnostics,
@@ -5144,10 +5952,10 @@ function CompanySettingsView({
           <button type="button" onClick={onBackToList}>
             Back to Proposals
           </button>
-          <button type="button" onClick={onReset}>
+          <button type="button" onClick={onReset} disabled={!permissions.manageSettings}>
             Reset Defaults
           </button>
-          <button type="button" onClick={onSave}>
+          <button type="button" onClick={onSave} disabled={!permissions.manageSettings}>
             Save Settings
           </button>
         </div>
@@ -5160,6 +5968,7 @@ function CompanySettingsView({
         authMessage={authMessage}
         authUser={authUser}
         bucketName={proposalAssetsBucket}
+        canUseCloudActions={permissions.cloudSync}
         cloudSync={cloudSync}
         saveState={saveState}
         storageDiagnostics={storageDiagnostics}
@@ -5188,6 +5997,11 @@ function CompanySettingsView({
         onRefreshMembers={onRefreshTeamMembers}
       />
 
+      {!permissions.manageSettings ? (
+        <p className="permission-message">Company settings are read-only for your current role.</p>
+      ) : null}
+
+      <fieldset className="editor-permission-fieldset" disabled={!permissions.manageSettings}>
       <div className="settings-grid">
         <EditorField label="Company Name" path="settings.companyName" value={settings.companyName} onChange={(_, value) => onChange("companyName", value)} />
         <EditorField label="Phone" path="settings.phone" value={settings.phone} onChange={(_, value) => onChange("phone", value)} />
@@ -5251,6 +6065,7 @@ function CompanySettingsView({
           />
         </div>
       </div>
+      </fieldset>
     </section>
   );
 }
@@ -5258,6 +6073,7 @@ function CompanySettingsView({
 function ProposalActionBar({
   contacts = [],
   isPrintView,
+  permissions = {},
   proposal,
   revisionHistory = [],
   saveMessage,
@@ -5301,7 +6117,7 @@ function ProposalActionBar({
       <div className="proposal-actions">
         <label>
           <span>Status</span>
-          <select value={proposal.status} onChange={(event) => onStatusChange(event.target.value)}>
+          <select value={proposal.status} onChange={(event) => onStatusChange(event.target.value)} disabled={!permissions.markProposalOutcome}>
             {PROPOSAL_STATUSES.map((status) => (
               <option key={status} value={status}>
                 {formatOptionLabel(status)}
@@ -5313,25 +6129,25 @@ function ProposalActionBar({
           Back to List
         </button>
         {!isPrintView ? (
-          <button type="button" title="Save the current proposal draft locally and sync to cloud when available." onClick={onSave} disabled={saveState.isSaving}>
+          <button type="button" title="Save the current proposal draft locally and sync to cloud when available." onClick={onSave} disabled={saveState.isSaving || !permissions.editProposal}>
             {saveState.isSaving ? "Saving..." : "Save Draft"}
           </button>
         ) : null}
-        {showStartBlank ? (
+        {showStartBlank && permissions.createProposal ? (
           <a className="proposal-action-link" href="/proposals/new/blank" title="Clear starter template data for a fresh proposal draft.">
             Start Blank Proposal
           </a>
         ) : null}
-        <button type="button" title="Create a separate copy with a new proposal ID and draft status." onClick={onDuplicate}>
+        <button type="button" title="Create a separate copy with a new proposal ID and draft status." onClick={onDuplicate} disabled={!permissions.createProposal}>
           Duplicate
         </button>
         {!isPrintView ? (
-          <button type="button" title="Create the next revision while preserving the current proposal." onClick={onCreateRevision}>
+          <button type="button" title="Create the next revision while preserving the current proposal." onClick={onCreateRevision} disabled={!permissions.editProposal}>
             Create Revision
           </button>
         ) : null}
         {!isPrintView ? (
-          <button type="button" title="Save a historical record of the current proposal packet version." onClick={onCreatePacketRecord}>
+          <button type="button" title="Save a historical record of the current proposal packet version." onClick={onCreatePacketRecord} disabled={!permissions.createPacketRecord}>
             Create Packet Record
           </button>
         ) : null}
@@ -5343,6 +6159,7 @@ function ProposalActionBar({
       </div>
       <RevisionHistory revisions={revisionHistory} currentProposalId={proposal.id} />
       <SubmittedPacketHistory
+        permissions={permissions}
         records={packetRecords}
         onAttachPdf={onAttachPacketPdf}
         onMarkSent={onMarkPacketSent}
@@ -5353,6 +6170,7 @@ function ProposalActionBar({
       <SendSubmissionPanel
         contacts={contacts}
         packetRecords={packetRecords}
+        permissions={permissions}
         proposal={proposal}
         selectedPacketId={selectedSendPacketId}
         onMarkSent={onMarkSendPackageSent}
@@ -5386,7 +6204,7 @@ function RevisionHistory({ currentProposalId, revisions = [] }) {
   );
 }
 
-function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onPrepareSend, onRemovePdf, onUpdateRecord }) {
+function SubmittedPacketHistory({ permissions = {}, records = [], onAttachPdf, onMarkSent, onPrepareSend, onRemovePdf, onUpdateRecord }) {
   const visibleRecords = normalizeSubmittedPacketRecords(records);
 
   return (
@@ -5438,11 +6256,11 @@ function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onPrepa
                 </div>
                 <div className="submitted-packet-actions">
                   {record.status !== "sent" ? (
-                    <button type="button" title="Mark this saved packet record as sent." onClick={() => onMarkSent(record.id)}>
+                    <button type="button" title="Mark this saved packet record as sent." onClick={() => onMarkSent(record.id)} disabled={!permissions.markPacketSent}>
                       Mark Packet as Sent
                     </button>
                   ) : null}
-                  <button type="button" title="Prepare a copy-and-paste email package for this packet record." onClick={() => onPrepareSend(record.id)}>
+                  <button type="button" title="Prepare a copy-and-paste email package for this packet record." onClick={() => onPrepareSend(record.id)} disabled={!permissions.sendWorkflow}>
                     Prepare Send
                   </button>
                   <label className="submitted-packet-upload-button" title="Attach the final saved PDF to this submitted packet record.">
@@ -5450,6 +6268,7 @@ function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onPrepa
                     <input
                       accept="application/pdf,.pdf"
                       type="file"
+                      disabled={!permissions.storageUpload}
                       onChange={(event) => {
                         const [file] = event.target.files || [];
                         onAttachPdf(record.id, file);
@@ -5468,7 +6287,7 @@ function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onPrepa
                     </>
                   ) : null}
                   {hasPdf ? (
-                    <button type="button" onClick={() => onRemovePdf(record.id)}>
+                    <button type="button" onClick={() => onRemovePdf(record.id)} disabled={!permissions.storageUpload}>
                       Remove PDF
                     </button>
                   ) : null}
@@ -5482,6 +6301,7 @@ function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onPrepa
                 <textarea
                   value={record.internalNotes || ""}
                   rows={2}
+                  disabled={!permissions.editProposal}
                   onChange={(event) => onUpdateRecord(record.id, "internalNotes", event.target.value)}
                 />
               </label>
@@ -5493,7 +6313,7 @@ function SubmittedPacketHistory({ records = [], onAttachPdf, onMarkSent, onPrepa
   );
 }
 
-function SendSubmissionPanel({ contacts = [], packetRecords = [], proposal, selectedPacketId, onMarkSent }) {
+function SendSubmissionPanel({ contacts = [], packetRecords = [], permissions = {}, proposal, selectedPacketId, onMarkSent }) {
   const firstPacketId = selectedPacketId || packetRecords[0]?.id || "";
   const [templateId, setTemplateId] = useState("gc_prime_submission");
   const [packetRecordId, setPacketRecordId] = useState(firstPacketId);
@@ -5571,6 +6391,8 @@ function SendSubmissionPanel({ contacts = [], packetRecords = [], proposal, sele
         </div>
         {copyMessage ? <em>{copyMessage}</em> : null}
       </div>
+      {!permissions.sendWorkflow ? <p className="permission-message">Send workflow is read-only for your current role.</p> : null}
+      <fieldset className="editor-permission-fieldset" disabled={!permissions.sendWorkflow}>
       <div className="send-submission-grid">
         <label>
           <span>Packet record / PDF</span>
@@ -5646,6 +6468,7 @@ function SendSubmissionPanel({ contacts = [], packetRecords = [], proposal, sele
           Mark as Sent
         </button>
       </div>
+      </fieldset>
     </div>
   );
 }
@@ -5728,6 +6551,7 @@ function ProposalEditor({
   onSmartPasteNotesChange,
   onSelectContact,
   priceLibrary = [],
+  readOnly = false,
   validation,
   validationNotice,
   smartPasteNotes,
@@ -5740,6 +6564,11 @@ function ProposalEditor({
     <aside className="editor-panel no-print" aria-label="Proposal editor">
       <ValidationPanel notice={validationNotice} validation={validation} />
 
+      {readOnly ? (
+        <p className="permission-message">Viewer mode: proposal fields are read-only for your current role.</p>
+      ) : null}
+
+      <fieldset className="editor-permission-fieldset" disabled={readOnly}>
       {showTemplatePicker ? (
         <TemplatePicker
           currentTemplateId={proposal.templateId}
@@ -6044,6 +6873,7 @@ function ProposalEditor({
 
         <PricingSummary totals={proposalTotals} />
       </EditorSection>
+      </fieldset>
     </aside>
   );
 }
@@ -7437,6 +8267,10 @@ function parseRoute(pathname) {
     return { view: "backup", path: "/backup" };
   }
 
+  if (segments[0] === "activity") {
+    return { view: "activity", path: "/activity" };
+  }
+
   if (segments[0] === "login") {
     return { view: "login", path: "/login" };
   }
@@ -7738,9 +8572,10 @@ function getSettingsWithPriceLibrary(settings = {}, priceLibrary = []) {
   });
 }
 
-function getSettingsWithPriceLibraryAndBids(settings = {}, priceLibrary = [], bids = []) {
+function getSettingsWithPriceLibraryAndBids(settings = {}, priceLibrary = [], bids = [], activityLog = []) {
   return normalizeCompanySettings({
     ...(settings || {}),
+    activityLog: normalizeActivityLog(Array.isArray(activityLog) && activityLog.length > 0 ? activityLog : settings?.activityLog),
     bidPipeline: normalizeBids(bids),
     priceLibrary: normalizePriceLibrary(priceLibrary),
   });
@@ -7831,9 +8666,10 @@ function createPriceLibraryExport(priceLibrary = []) {
   };
 }
 
-function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = [], bids = []) {
+function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = [], bids = [], activityLog = []) {
   const normalizedPriceLibrary = normalizePriceLibrary(priceLibrary);
   const normalizedBids = normalizeBids(bids);
+  const normalizedActivityLog = normalizeActivityLog(activityLog);
 
   return {
     backupVersion,
@@ -7846,12 +8682,14 @@ function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = 
       contacts: contactsStorageKey,
       bids: bidsStorageKey,
       priceLibrary: priceLibraryStorageKey,
+      activityLog: activityLogStorageKey,
     },
     proposals: cloneObject(proposals),
-    companySettings: cloneObject(getSettingsWithPriceLibraryAndBids(settings, normalizedPriceLibrary, normalizedBids)),
+    companySettings: cloneObject(getSettingsWithPriceLibraryAndBids(settings, normalizedPriceLibrary, normalizedBids, normalizedActivityLog)),
     contacts: cloneObject(contacts),
     bids: cloneObject(normalizedBids),
     priceLibrary: cloneObject(normalizedPriceLibrary),
+    activityLog: cloneObject(normalizedActivityLog),
   };
 }
 
@@ -7962,13 +8800,17 @@ function parseFullAppBackupImport(importedJson) {
   const importedBids = Array.isArray(importedJson.bids) || Array.isArray(importedSettings.bidPipeline)
     ? parseBidCollectionImport(importedJson)
     : [];
+  const importedActivityLog = Array.isArray(importedJson.activityLog) || Array.isArray(importedSettings.activityLog)
+    ? getActivityLogFromSettings(importedSettings, importedJson.activityLog)
+    : [];
 
   return {
     proposals: parseProposalCollectionImport(importedJson),
-    companySettings: getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids),
+    companySettings: getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog),
     contacts: Array.isArray(importedJson.contacts) ? parseContactCollectionImport(importedJson) : [],
     bids: importedBids,
     priceLibrary: importedPriceLibrary,
+    activityLog: importedActivityLog,
   };
 }
 

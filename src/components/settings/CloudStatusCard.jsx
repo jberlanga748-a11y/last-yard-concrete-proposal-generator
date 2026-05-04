@@ -10,6 +10,7 @@ export function CloudStatusCard({
   authUser,
   bucketName,
   cloudSync,
+  canUseCloudActions = true,
   saveState,
   storageDiagnostics,
   onClearCloudSyncMessage,
@@ -24,7 +25,7 @@ export function CloudStatusCard({
   onSyncSettings,
   onTestStorageUpload,
 }) {
-  const cloudActionsDisabled = authLoading || cloudSync.loading || !canUseCloudSync(authUser);
+  const cloudActionsDisabled = authLoading || cloudSync.loading || !canUseCloudSync(authUser) || !canUseCloudActions;
   const lastSyncError = cloudSync.lastError || (isCloudSyncErrorState(cloudSync) ? cloudSync.message : "");
 
   return (
@@ -76,10 +77,11 @@ export function CloudStatusCard({
         </div>
         <div>
           <span>Current role</span>
-          <strong>{authUser ? formatTeamRole(cloudSync.currentRole || "owner") : "Local user"}</strong>
+          <strong>{authUser ? formatTeamRole(cloudSync.currentRole || "owner") : "Local Owner/Admin"}</strong>
         </div>
       </div>
       <p>Cloud sync is enabled for proposals, company settings, contacts, and uploaded proposal assets. Legacy data URL images still render and can remain in backups.</p>
+      {!canUseCloudActions ? <p>You do not have permission to use cloud push/pull/sync controls.</p> : null}
       {authUser ? <p>Current user: {authUser.email}</p> : null}
       {authMessage ? <p>{authMessage}</p> : null}
       {cloudSync.message ? <p>{cloudSync.message}</p> : null}
@@ -90,6 +92,7 @@ export function CloudStatusCard({
         cloudSync={cloudSync}
         diagnostics={storageDiagnostics}
         onTestStorageUpload={onTestStorageUpload}
+        canTestStorage={canUseCloudActions}
       />
       {isSupabaseConfigured ? (
         <div className="cloud-status-actions">
@@ -137,7 +140,7 @@ export function CloudStatusCard({
   );
 }
 
-function StorageDiagnosticsPanel({ authLoading, authUser, bucketName, cloudSync, diagnostics, onTestStorageUpload }) {
+function StorageDiagnosticsPanel({ authLoading, authUser, bucketName, canTestStorage = true, cloudSync, diagnostics, onTestStorageUpload }) {
   const assetStorageMode = canUseCloudSync(authUser) ? "cloud" : "local";
   const companyId = diagnostics.companyId || cloudSync.companyId || "";
 
@@ -148,7 +151,7 @@ function StorageDiagnosticsPanel({ authLoading, authUser, bucketName, cloudSync,
           <p className="list-kicker">Asset storage</p>
           <h4>Storage Diagnostics</h4>
         </div>
-        <button type="button" onClick={onTestStorageUpload} disabled={authLoading}>
+        <button type="button" onClick={onTestStorageUpload} disabled={authLoading || !canTestStorage}>
           Test Storage Upload
         </button>
       </div>
