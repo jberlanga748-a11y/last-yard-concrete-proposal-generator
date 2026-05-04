@@ -1842,6 +1842,13 @@ export default function App() {
         : "";
     const duplicateWarning = getBidDuplicateWarning(normalizedBid, savedBids);
     const duplicateMessage = duplicateWarning ? ` ${duplicateWarning}` : "";
+    const existingBid = savedBids.find((bid) => bid.id === normalizedBid.id);
+
+    if (existingBid && areBidsEquivalentForSave(existingBid, normalizedBid)) {
+      setBidMessage("No changes to save.");
+      return;
+    }
+
     const nextBids = upsertBid(savedBids, normalizedBid);
 
     await commitBids(nextBids, `Saved ${normalizedBid.projectName || "bid opportunity"} locally.${warningMessage}${duplicateMessage}`);
@@ -4436,7 +4443,6 @@ export default function App() {
           ) : (
               <ProposalActionBar
                 key={`action-${route.path}-${proposalDraft.id}`}
-                contacts={savedContacts}
                 draftLabel={getDraftRouteLabel(route)}
                 isPrintView={isPrintView}
                 proposal={proposalDraft}
@@ -4449,15 +4455,10 @@ export default function App() {
                 onCreateRevision={createRevision}
                 onCreatePacketRecord={saveSubmittedPacketRecord}
                 onDuplicate={() => duplicateCurrentProposal(proposalDraft)}
-                onAttachPacketPdf={attachSubmittedPacketPdf}
-                onMarkPacketSent={markSubmittedPacketSent}
-                onMarkSendPackageSent={markSendPackageSent}
                 onOpenPrintView={openPrintView}
-                onRemovePacketPdf={removeSubmittedPacketPdf}
                 onSave={saveCurrentProposal}
                 onStartBlankProposal={startBlankProposalFromTemplatePicker}
                 onStatusChange={updateCurrentStatus}
-                onUpdatePacketRecord={updateSubmittedPacketRecord}
               />
           )}
           {!isPrintView ? backupShortcut : null}
@@ -4472,6 +4473,7 @@ export default function App() {
                 assetUploadMessage={assetUploadMessage}
                 draftLabel={getDraftRouteLabel(route)}
                 showTemplatePicker={route.view === "new"}
+                permissions={permissions}
                 onAddLineItem={addLineItem}
                 onAddLineItemFromLibrary={addLineItemFromPriceLibrary}
                 onAddPricingSection={addPricingSection}
@@ -4500,14 +4502,20 @@ export default function App() {
                 onGcPacketTableChange={updateGcPacketTable}
                 onGcPacketTableRowChange={updateGcPacketTableRow}
                 onRemoveGcPacketTableRow={removeGcPacketTableRow}
+                onAttachPacketPdf={attachSubmittedPacketPdf}
+                onMarkPacketSent={markSubmittedPacketSent}
+                onMarkSendPackageSent={markSendPackageSent}
                 onMovePacketBuilderSection={movePacketBuilderSection}
+                onCreatePacketRecord={saveSubmittedPacketRecord}
                 onPacketBuilderChange={updatePacketBuilderSection}
+                onRemovePacketPdf={removeSubmittedPacketPdf}
                 onResetPacketBuilder={resetPacketBuilderOrder}
                 onRefreshTermsFromDefaults={refreshProposalTermsFromCompanyDefaults}
                 onStartBlankProposal={startBlankProposalFromTemplatePicker}
                 onSmartPasteFill={fillProposalFromNotes}
                 onSmartPasteNotesChange={setSmartPasteNotes}
                 onSelectContact={applyContactToCurrentProposal}
+                onUpdatePacketRecord={updateSubmittedPacketRecord}
                 priceLibrary={priceLibrary}
                 smartPasteNotes={smartPasteNotes}
                 smartPasteResult={smartPasteResult}
@@ -4876,6 +4884,8 @@ function BidsView({
     statusFilter,
   });
   const linkedProposal = proposals.find((proposal) => proposal.id === bidDraft.proposalId);
+  const linkedPacketRecord = getBidLinkedPacketRecord(bidDraft, linkedProposal);
+  const linkedPacketHasPdf = hasPacketPdfAttachment(linkedPacketRecord);
   const isSavedBid = bids.some((bid) => bid.id === bidDraft.id);
 
   return (
@@ -4950,6 +4960,7 @@ function BidsView({
                 const bidProposal = proposals.find((proposal) => proposal.id === bid.proposalId);
                 const bidPacketRecord = getBidLinkedPacketRecord(bid, bidProposal);
                 const bidPacketHasPdf = hasPacketPdfAttachment(bidPacketRecord);
+                const deadlineClass = getBidDeadlineClass(bid);
 
                 return (
                   <article className="bid-card" key={bid.id}>
@@ -4965,14 +4976,23 @@ function BidsView({
                             </Badge>
                           ) : null}
                         </div>
-                        <p>{[bid.gcCompany, bid.projectLocation].filter(Boolean).join(" | ") || "No GC/location entered"}</p>
-                        <small>
-                          {bid.bidDueDate ? `Due ${formatDisplayDate(bid.bidDueDate)}` : "No due date"} |{" "}
-                          {bid.nextStep || "No next step"}
-                        </small>
+                        <p>{[bid.gcCompany, bid.ownerOrClient, bid.projectLocation].filter(Boolean).join(" | ") || "No GC/owner/location entered"}</p>
+                        <div className="bid-card-deadlines">
+                          <span className={`bid-deadline-pill ${deadlineClass}`}>{formatBidDueLabel(bid)}</span>
+                          {bid.preBidMeetingDate ? <span>Pre-bid {formatDisplayDate(bid.preBidMeetingDate)}</span> : null}
+                          {bid.rfiDeadline ? <span>RFI {formatDisplayDate(bid.rfiDeadline)}</span> : null}
+                        </div>
+                        <small>{bid.nextStep || "No next step"}</small>
                       </div>
                       <div className="bid-card-meta">
-                        <span>{bidProposal ? `Linked: ${bidProposal.proposalNumber}` : "No proposal linked"}</span>
+                        <span className={bidProposal ? "bid-linked-proposal" : "bid-no-proposal"}>
+                          {bidProposal ? `Linked proposal: ${bidProposal.proposalNumber}` : "No proposal yet"}
+                        </span>
+                        {bidPacketRecord ? (
+                          <span>{`Packet: ${formatOptionLabel(bidPacketRecord.status)}${bidPacketHasPdf ? " with PDF" : " without PDF"}`}</span>
+                        ) : (
+                          <span>No submitted packet linked</span>
+                        )}
                         {bid.followUpDate ? <span>Follow-up {formatDisplayDate(bid.followUpDate)}</span> : null}
                       </div>
                     </div>
@@ -5047,62 +5067,104 @@ function BidsView({
                 onNotesChange={onUpdateBidSmartPasteNotes}
               />
 
-              <div className="bid-form-grid">
-                <EditorField label="Project Name" path="projectName" value={bidDraft.projectName} onChange={(_, value) => onUpdateDraft("projectName", value)} />
-                <EditorField label="Project Location" path="projectLocation" value={bidDraft.projectLocation} onChange={(_, value) => onUpdateDraft("projectLocation", value)} />
-                <EditorField label="Owner / Client" path="ownerOrClient" value={bidDraft.ownerOrClient} onChange={(_, value) => onUpdateDraft("ownerOrClient", value)} />
-                <EditorField label="GC Company" path="gcCompany" value={bidDraft.gcCompany} onChange={(_, value) => onUpdateDraft("gcCompany", value)} />
-                <EditorField label="Bid Status" path="bidStatus" value={bidDraft.bidStatus} onChange={(_, value) => onUpdateDraft("bidStatus", value)} options={BID_STATUSES} />
-                <EditorField label="Priority" path="priority" value={bidDraft.priority} onChange={(_, value) => onUpdateDraft("priority", value)} options={BID_PRIORITIES} />
-                <EditorField label="Estimator Assigned" path="estimatorAssigned" value={bidDraft.estimatorAssigned} onChange={(_, value) => onUpdateDraft("estimatorAssigned", value)} />
-                <EditorField label="Bid Source" path="bidSource" value={bidDraft.bidSource} onChange={(_, value) => onUpdateDraft("bidSource", value)} />
-                <EditorField label="Bid URL" path="bidUrl" value={bidDraft.bidUrl} onChange={(_, value) => onUpdateDraft("bidUrl", value)} />
-                <EditorField label="Plan Link" path="planLink" value={bidDraft.planLink} onChange={(_, value) => onUpdateDraft("planLink", value)} />
-                <EditorField label="Bid Due Date" path="bidDueDate" type="date" value={bidDraft.bidDueDate} onChange={(_, value) => onUpdateDraft("bidDueDate", value)} />
-                <EditorField label="Bid Due Time" path="bidDueTime" type="time" value={bidDraft.bidDueTime} onChange={(_, value) => onUpdateDraft("bidDueTime", value)} />
-                <EditorField label="Pre-Bid Meeting" path="preBidMeetingDate" type="date" value={bidDraft.preBidMeetingDate} onChange={(_, value) => onUpdateDraft("preBidMeetingDate", value)} />
-                <EditorField label="RFI Deadline" path="rfiDeadline" type="date" value={bidDraft.rfiDeadline} onChange={(_, value) => onUpdateDraft("rfiDeadline", value)} />
-                <EditorField label="Addendum Deadline" path="addendumDeadline" type="date" value={bidDraft.addendumDeadline} onChange={(_, value) => onUpdateDraft("addendumDeadline", value)} />
-                <EditorField label="Expected Award Date" path="expectedAwardDate" type="date" value={bidDraft.expectedAwardDate} onChange={(_, value) => onUpdateDraft("expectedAwardDate", value)} />
+              <div className="bid-form-sections">
+                <BidFormSection title="Project / Opportunity Info" helper="Start with the pursuit name, location, and source links.">
+                  <div className="bid-form-grid">
+                    <EditorField label="Project Name" path="projectName" value={bidDraft.projectName} onChange={(_, value) => onUpdateDraft("projectName", value)} />
+                    <EditorField label="Project Location" path="projectLocation" value={bidDraft.projectLocation} onChange={(_, value) => onUpdateDraft("projectLocation", value)} />
+                    <EditorField label="Bid Source" path="bidSource" value={bidDraft.bidSource} onChange={(_, value) => onUpdateDraft("bidSource", value)} />
+                    <EditorField label="Bid URL" path="bidUrl" value={bidDraft.bidUrl} onChange={(_, value) => onUpdateDraft("bidUrl", value)} />
+                    <div className="bid-form-wide">
+                      <EditorField label="Plan Link" path="planLink" value={bidDraft.planLink} onChange={(_, value) => onUpdateDraft("planLink", value)} />
+                    </div>
+                  </div>
+                </BidFormSection>
 
-                <label className="contact-select-field">
-                  <span>Select Saved Contact / GC</span>
-                  <select value={bidDraft.contactId} onChange={(event) => onUpdateDraft("contactId", event.target.value)}>
-                    <option value="">No saved contact linked</option>
-                    {contacts.map((contact) => (
-                      <option key={contact.id} value={contact.id}>
-                        {formatContactName(contact)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <BidFormSection title="GC / Owner / Contact" helper="Link a saved GC/client contact or enter bid-specific contact details.">
+                  <div className="bid-form-grid">
+                    <EditorField label="Owner / Client" path="ownerOrClient" value={bidDraft.ownerOrClient} onChange={(_, value) => onUpdateDraft("ownerOrClient", value)} />
+                    <EditorField label="GC Company" path="gcCompany" value={bidDraft.gcCompany} onChange={(_, value) => onUpdateDraft("gcCompany", value)} />
+                    <label className="contact-select-field bid-form-wide">
+                      <span>Select Saved Contact / GC</span>
+                      <select value={bidDraft.contactId} onChange={(event) => onUpdateDraft("contactId", event.target.value)}>
+                        <option value="">No saved contact linked</option>
+                        {contacts.map((contact) => (
+                          <option key={contact.id} value={contact.id}>
+                            {formatContactName(contact)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <EditorField label="Contact Name" path="contactName" value={bidDraft.contactName} onChange={(_, value) => onUpdateDraft("contactName", value)} />
+                    <EditorField label="Contact Email" path="contactEmail" value={bidDraft.contactEmail} onChange={(_, value) => onUpdateDraft("contactEmail", value)} />
+                    <EditorField label="Contact Phone" path="contactPhone" value={bidDraft.contactPhone} onChange={(_, value) => onUpdateDraft("contactPhone", value)} />
+                  </div>
+                </BidFormSection>
 
-                <EditorField label="Contact Name" path="contactName" value={bidDraft.contactName} onChange={(_, value) => onUpdateDraft("contactName", value)} />
-                <EditorField label="Contact Email" path="contactEmail" value={bidDraft.contactEmail} onChange={(_, value) => onUpdateDraft("contactEmail", value)} />
-                <EditorField label="Contact Phone" path="contactPhone" value={bidDraft.contactPhone} onChange={(_, value) => onUpdateDraft("contactPhone", value)} />
+                <BidFormSection title="Bid Dates / Deadlines" helper="Keep hard dates visible for pursuit planning.">
+                  <div className="bid-form-grid">
+                    <EditorField label="Bid Due Date" path="bidDueDate" type="date" value={bidDraft.bidDueDate} onChange={(_, value) => onUpdateDraft("bidDueDate", value)} />
+                    <EditorField label="Bid Due Time" path="bidDueTime" type="time" value={bidDraft.bidDueTime} onChange={(_, value) => onUpdateDraft("bidDueTime", value)} />
+                    <EditorField label="Pre-Bid Meeting" path="preBidMeetingDate" type="date" value={bidDraft.preBidMeetingDate} onChange={(_, value) => onUpdateDraft("preBidMeetingDate", value)} />
+                    <EditorField label="RFI Deadline" path="rfiDeadline" type="date" value={bidDraft.rfiDeadline} onChange={(_, value) => onUpdateDraft("rfiDeadline", value)} />
+                    <EditorField label="Addendum Deadline" path="addendumDeadline" type="date" value={bidDraft.addendumDeadline} onChange={(_, value) => onUpdateDraft("addendumDeadline", value)} />
+                    <EditorField label="Expected Award Date" path="expectedAwardDate" type="date" value={bidDraft.expectedAwardDate} onChange={(_, value) => onUpdateDraft("expectedAwardDate", value)} />
+                  </div>
+                </BidFormSection>
 
-                <label className="contact-select-field">
-                  <span>Linked Proposal</span>
-                  <select value={bidDraft.proposalId} onChange={(event) => onUpdateDraft("proposalId", event.target.value)}>
-                    <option value="">No proposal linked</option>
-                    {proposals.map((proposal) => (
-                      <option key={proposal.id} value={proposal.id}>
-                        {proposal.proposalNumber} - {proposal.project?.name || "Untitled"}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {linkedProposal ? (
-                  <p className="contact-selector-note">Linked to {linkedProposal.proposalNumber}. Save this bid to keep the link.</p>
-                ) : null}
+                <BidFormSection title="Scope / Concrete Work" helper="Capture enough detail to decide whether to estimate or create a proposal.">
+                  <div className="bid-form-grid">
+                    <EditorField label="Scope Summary" path="scopeSummary" value={bidDraft.scopeSummary} onChange={(_, value) => onUpdateDraft("scopeSummary", value)} multiline />
+                    <EditorField label="Concrete Scope" path="concreteScope" value={bidDraft.concreteScope} onChange={(_, value) => onUpdateDraft("concreteScope", value)} multiline />
+                  </div>
+                </BidFormSection>
 
-                <EditorField label="Scope Summary" path="scopeSummary" value={bidDraft.scopeSummary} onChange={(_, value) => onUpdateDraft("scopeSummary", value)} multiline />
-                <EditorField label="Concrete Scope" path="concreteScope" value={bidDraft.concreteScope} onChange={(_, value) => onUpdateDraft("concreteScope", value)} multiline />
-                <EditorField label="Red Flags" path="redFlags" value={bidDraft.redFlags} onChange={(_, value) => onUpdateDraft("redFlags", value)} multiline />
-                <EditorField label="Missing Info" path="missingInfo" value={bidDraft.missingInfo} onChange={(_, value) => onUpdateDraft("missingInfo", value)} multiline />
-                <EditorField label="Next Step" path="nextStep" value={bidDraft.nextStep} onChange={(_, value) => onUpdateDraft("nextStep", value)} multiline />
-                <EditorField label="Follow-Up Date" path="followUpDate" type="date" value={bidDraft.followUpDate} onChange={(_, value) => onUpdateDraft("followUpDate", value)} />
-                <EditorField label="Notes" path="notes" value={bidDraft.notes} onChange={(_, value) => onUpdateDraft("notes", value)} multiline />
+                <BidFormSection title="Risk / Missing Info" helper="Warnings are for review later. Incomplete bids can still be saved.">
+                  <div className="bid-form-grid">
+                    <EditorField label="Red Flags" path="redFlags" value={bidDraft.redFlags} onChange={(_, value) => onUpdateDraft("redFlags", value)} multiline />
+                    <EditorField label="Missing Info" path="missingInfo" value={bidDraft.missingInfo} onChange={(_, value) => onUpdateDraft("missingInfo", value)} multiline />
+                    <div className="bid-form-wide">
+                      <EditorField label="Notes" path="notes" value={bidDraft.notes} onChange={(_, value) => onUpdateDraft("notes", value)} multiline />
+                    </div>
+                  </div>
+                </BidFormSection>
+
+                <BidFormSection title="Status / Priority / Next Step" helper="Set where this opportunity sits in the bid pipeline.">
+                  <div className="bid-form-grid">
+                    <EditorField label="Bid Status" path="bidStatus" value={bidDraft.bidStatus} onChange={(_, value) => onUpdateDraft("bidStatus", value)} options={BID_STATUSES} />
+                    <EditorField label="Priority" path="priority" value={bidDraft.priority} onChange={(_, value) => onUpdateDraft("priority", value)} options={BID_PRIORITIES} />
+                    <EditorField label="Estimator Assigned" path="estimatorAssigned" value={bidDraft.estimatorAssigned} onChange={(_, value) => onUpdateDraft("estimatorAssigned", value)} />
+                    <EditorField label="Follow-Up Date" path="followUpDate" type="date" value={bidDraft.followUpDate} onChange={(_, value) => onUpdateDraft("followUpDate", value)} />
+                    <div className="bid-form-wide">
+                      <EditorField label="Next Step" path="nextStep" value={bidDraft.nextStep} onChange={(_, value) => onUpdateDraft("nextStep", value)} multiline />
+                    </div>
+                  </div>
+                </BidFormSection>
+
+                <BidFormSection title="Linked Proposal / Submitted Packet" helper="Connect the bid to the proposal and submitted packet record when ready.">
+                  <div className="bid-form-grid">
+                    <label className="contact-select-field bid-form-wide">
+                      <span>Linked Proposal</span>
+                      <select value={bidDraft.proposalId} onChange={(event) => onUpdateDraft("proposalId", event.target.value)}>
+                        <option value="">No proposal linked</option>
+                        {proposals.map((proposal) => (
+                          <option key={proposal.id} value={proposal.id}>
+                            {proposal.proposalNumber} - {proposal.project?.name || "Untitled"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="bid-link-summary bid-form-wide">
+                      <strong>{linkedProposal ? `Linked proposal: ${linkedProposal.proposalNumber}` : "No proposal yet"}</strong>
+                      <span>{linkedProposal?.project?.name || "Create or link a proposal when this bid is ready."}</span>
+                      <span>
+                        {linkedPacketRecord
+                          ? `Submitted packet: ${formatOptionLabel(linkedPacketRecord.status)}${linkedPacketHasPdf ? " with PDF attached" : " without PDF"}`
+                          : "No submitted packet linked"}
+                      </span>
+                    </div>
+                  </div>
+                </BidFormSection>
               </div>
 
               <div className="contact-form-actions">
@@ -5133,6 +5195,18 @@ function BidsView({
           )}
         </div>
       </div>
+    </section>
+  );
+}
+
+function BidFormSection({ children, helper = "", title }) {
+  return (
+    <section className="bid-form-section">
+      <div className="bid-form-section-heading">
+        <strong>{title}</strong>
+        {helper ? <span>{helper}</span> : null}
+      </div>
+      {children}
     </section>
   );
 }
@@ -5174,7 +5248,7 @@ function BidSmartPasteSummary({ result }) {
   const warnings = result.warnings || [];
 
   return (
-    <div className="smart-paste-summary" aria-live="polite">
+    <div className="smart-paste-summary bid-smart-paste-summary" aria-live="polite">
       <strong>Bid Smart Paste Summary</strong>
       <ul>
         <li>{fields.length} fields updated</li>
@@ -5185,7 +5259,7 @@ function BidSmartPasteSummary({ result }) {
         {contactInfo.length > 0 ? <li>Contact info: {contactInfo.join(", ")}</li> : null}
       </ul>
       {unclearItems.length > 0 ? (
-        <div className="smart-paste-warnings">
+        <div className="smart-paste-warnings bid-smart-paste-review">
           <span>Unclear items</span>
           <ul>
             {unclearItems.map((item) => (
@@ -5195,7 +5269,7 @@ function BidSmartPasteSummary({ result }) {
         </div>
       ) : null}
       {warnings.length > 0 ? (
-        <div className="smart-paste-warnings">
+        <div className="smart-paste-warnings bid-smart-paste-review">
           <span>Missing Info / Review Later</span>
           <p>These are not errors. You can save the bid now and complete these fields later.</p>
           <ul>
@@ -6473,7 +6547,6 @@ function SettingsAccordionSection({ children, defaultOpen = false, helper = "", 
 }
 
 function ProposalActionBar({
-  contacts = [],
   draftLabel = "",
   isPrintView,
   permissions = {},
@@ -6483,23 +6556,16 @@ function ProposalActionBar({
   saveState,
   showStartBlank = false,
   onBackToList,
-  onAttachPacketPdf,
   onCreatePacketRecord,
   onCreateRevision,
   onDuplicate,
-  onMarkPacketSent,
-  onMarkSendPackageSent,
   onOpenPrintView,
-  onRemovePacketPdf,
   onSave,
   onStartBlankProposal,
   onStatusChange,
-  onUpdatePacketRecord,
 }) {
   const revisedTotal = calculateProposalTotals(proposal).total;
   const previousTotal = toEditableNumber(proposal.previousTotal);
-  const packetRecords = normalizeSubmittedPacketRecords(proposal.submittedPacketRecords);
-  const [selectedSendPacketId, setSelectedSendPacketId] = useState(packetRecords[0]?.id || "");
 
   return (
     <section className="proposal-action-bar no-print">
@@ -6562,23 +6628,6 @@ function ProposalActionBar({
         ) : null}
       </div>
       <RevisionHistory revisions={revisionHistory} currentProposalId={proposal.id} />
-      <SubmittedPacketHistory
-        permissions={permissions}
-        records={packetRecords}
-        onAttachPdf={onAttachPacketPdf}
-        onMarkSent={onMarkPacketSent}
-        onPrepareSend={setSelectedSendPacketId}
-        onRemovePdf={onRemovePacketPdf}
-        onUpdateRecord={onUpdatePacketRecord}
-      />
-      <SendSubmissionPanel
-        contacts={contacts}
-        packetRecords={packetRecords}
-        permissions={permissions}
-        proposal={proposal}
-        selectedPacketId={selectedSendPacketId}
-        onMarkSent={onMarkSendPackageSent}
-      />
     </section>
   );
 }
@@ -6878,6 +6927,48 @@ function SendSubmissionPanel({ contacts = [], packetRecords = [], permissions = 
   );
 }
 
+function PdfArchiveSummary({ records = [] }) {
+  const visibleRecords = normalizeSubmittedPacketRecords(records);
+  const pdfRecords = visibleRecords.filter(hasPacketPdfAttachment);
+
+  return (
+    <div className="pdf-archive-summary">
+      <div className="pdf-archive-heading">
+        <strong>{pdfRecords.length > 0 ? `${pdfRecords.length} archived PDF${pdfRecords.length === 1 ? "" : "s"}` : "No PDF attached yet"}</strong>
+        <span>Attach, replace, or remove final submitted PDFs from Submitted Packet History.</span>
+      </div>
+      {pdfRecords.length > 0 ? (
+        <div className="pdf-archive-list">
+          {pdfRecords.map((record) => {
+            const pdfUrl = getSubmittedPacketPdfUrl(record);
+
+            return (
+              <div className="pdf-archive-row" key={record.id}>
+                <div>
+                  <strong>{record.pdfAttachment?.fileName || "Submitted packet PDF"}</strong>
+                  <span>
+                    {record.revisionLabel || formatRevisionLabel(record.revisionNumber)} | {formatAssetFileSize(record.pdfAttachment?.fileSize)} |{" "}
+                    {formatCloudSyncTime(record.pdfAttachment?.uploadedAt)}
+                  </span>
+                </div>
+                {pdfUrl ? (
+                  <a href={pdfUrl} target="_blank" rel="noreferrer">
+                    Open PDF
+                  </a>
+                ) : (
+                  <span>Storage path saved</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="submitted-packet-empty">Create or open a packet record, then attach the final saved PDF.</p>
+      )}
+    </div>
+  );
+}
+
 function ValidationPanel({ className = "", notice = "", validation }) {
   const errors = validation?.errors || [];
   const warnings = validation?.warnings || [];
@@ -6948,8 +7039,13 @@ function ProposalEditor({
   onAddGcPacketTableRow,
   onGcPacketTableChange,
   onGcPacketTableRowChange,
+  onAttachPacketPdf,
+  onCreatePacketRecord,
+  onMarkPacketSent,
+  onMarkSendPackageSent,
   onMovePacketBuilderSection,
   onPacketBuilderChange,
+  onRemovePacketPdf,
   onRemoveGcPacketTableRow,
   onRefreshTermsFromDefaults,
   onResetPacketBuilder,
@@ -6957,6 +7053,8 @@ function ProposalEditor({
   onSmartPasteFill,
   onSmartPasteNotesChange,
   onSelectContact,
+  onUpdatePacketRecord,
+  permissions = {},
   priceLibrary = [],
   readOnly = false,
   validation,
@@ -6966,6 +7064,8 @@ function ProposalEditor({
 }) {
   const proposalTotals = calculateProposalTotals(proposal);
   const isGcPrime = proposal.proposalType === "gc_prime";
+  const packetRecords = normalizeSubmittedPacketRecords(proposal.submittedPacketRecords);
+  const [selectedSendPacketId, setSelectedSendPacketId] = useState(packetRecords[0]?.id || "");
 
   return (
     <aside className="editor-panel no-print" aria-label="Proposal editor">
@@ -6997,7 +7097,7 @@ function ProposalEditor({
 
       <ContactSelector contacts={contacts} proposal={proposal} onSelectContact={onSelectContact} />
 
-      <EditorSection id="proposal-info-section" title="Proposal Info">
+      <EditorSection defaultOpen id="proposal-info-section" title="Proposal Info">
         <EditorField
           label="Proposal Type"
           path="proposalType"
@@ -7214,7 +7314,7 @@ function ProposalEditor({
       </EditorSection>
 
       {isGcPrime ? (
-        <EditorSection id="gc-prime-section" title="GC / Prime Contractor">
+        <EditorSection id="gc-prime-section" title="GC / Prime Notes">
           <GcPrimeEditor gcPrime={proposal.gcPrime} onChange={onGcPrimeChange} />
         </EditorSection>
       ) : null}
@@ -7230,7 +7330,7 @@ function ProposalEditor({
         </EditorSection>
       ) : null}
 
-      <EditorSection id="legal-terms-section" title="Legal / Terms Blocks">
+      <EditorSection id="legal-terms-section" title="Addenda / RFIs / Legal Terms">
         <div className="editor-section-actions">
           <button
             type="button"
@@ -7243,12 +7343,12 @@ function ProposalEditor({
         <LegalTermsEditor terms={proposal.terms} onChange={onChange} />
       </EditorSection>
 
-      <EditorSection id="pricing-section" title="Pricing">
+      <EditorSection id="pricing-section" title="Pricing / Line Items">
         <nav className="pricing-mini-toolbar" aria-label="Pricing editor shortcuts">
-          <a href="#pricing-line-items">Line Items</a>
-          <a href="#pricing-library-picker">Add from Price Library</a>
-          <a href="#pricing-alternates">Alternates / Allowances</a>
-          <a href="#pricing-summary">Pricing Summary</a>
+          <a href="#pricing-line-items" onClick={(event) => openEditorAccordionSection(event, "pricing-section")}>Line Items</a>
+          <a href="#pricing-library-picker" onClick={(event) => openEditorAccordionSection(event, "pricing-section")}>Add from Price Library</a>
+          <a href="#pricing-alternates-section" onClick={(event) => openEditorAccordionSection(event, "pricing-alternates-section")}>Alternates / Allowances</a>
+          <a href="#pricing-summary" onClick={(event) => openEditorAccordionSection(event, "pricing-section")}>Pricing Summary</a>
         </nav>
         <LineItemEditor
           lineItems={proposal.lineItems}
@@ -7257,13 +7357,6 @@ function ProposalEditor({
           onAddLineItem={onAddLineItem}
           onLineItemChange={onLineItemChange}
           onRemoveLineItem={onRemoveLineItem}
-        />
-
-        <PricingSectionsEditor
-          pricingSections={proposal.pricingSections}
-          onAddPricingSection={onAddPricingSection}
-          onPricingSectionChange={onPricingSectionChange}
-          onRemovePricingSection={onRemovePricingSection}
         />
 
         <div className="editor-pricing-settings">
@@ -7292,6 +7385,55 @@ function ProposalEditor({
 
         <PricingSummary totals={proposalTotals} />
       </EditorSection>
+
+      <EditorSection id="pricing-alternates-section" title="Alternates / Allowances">
+        <PricingSectionsEditor
+          pricingSections={proposal.pricingSections}
+          onAddPricingSection={onAddPricingSection}
+          onPricingSectionChange={onPricingSectionChange}
+          onRemovePricingSection={onRemovePricingSection}
+        />
+      </EditorSection>
+
+      <EditorSection id="submitted-packet-section" title="Submitted Packet History">
+        <div className="editor-section-actions">
+          <button
+            type="button"
+            title="Save a historical record of the current proposal packet version."
+            onClick={onCreatePacketRecord}
+            disabled={!permissions.createPacketRecord}
+          >
+            Create Packet Record
+          </button>
+        </div>
+        <SubmittedPacketHistory
+          permissions={permissions}
+          records={packetRecords}
+          onAttachPdf={onAttachPacketPdf}
+          onMarkSent={onMarkPacketSent}
+          onPrepareSend={(packetId) => {
+            setSelectedSendPacketId(packetId);
+            openEditorAccordionSection(null, "send-submission-section");
+          }}
+          onRemovePdf={onRemovePacketPdf}
+          onUpdateRecord={onUpdatePacketRecord}
+        />
+      </EditorSection>
+
+      <EditorSection id="pdf-archive-section" title="PDF Archive">
+        <PdfArchiveSummary records={packetRecords} />
+      </EditorSection>
+
+      <EditorSection id="send-submission-section" title="Send / Submission">
+        <SendSubmissionPanel
+          contacts={contacts}
+          packetRecords={packetRecords}
+          permissions={permissions}
+          proposal={proposal}
+          selectedPacketId={selectedSendPacketId}
+          onMarkSent={onMarkSendPackageSent}
+        />
+      </EditorSection>
       </fieldset>
     </aside>
   );
@@ -7304,7 +7446,7 @@ function TemplatePicker({ currentTemplateId, draftLabel = "New Draft", onApplyTe
   }
 
   return (
-    <EditorSection id="proposal-template-section" title="Proposal Template">
+    <EditorSection defaultOpen id="proposal-template-section" title="Proposal Template">
       <p className="template-picker-help">
         Choose a starter template to prefill common scope, specs, exclusions, terms, pricing rows, and packet defaults.
       </p>
@@ -7361,20 +7503,23 @@ function TemplatePicker({ currentTemplateId, draftLabel = "New Draft", onApplyTe
 function EditorNavigation({ proposal, showTemplatePicker = false }) {
   const links = [
     showTemplatePicker ? ["Proposal Template", "proposal-template-section"] : null,
+    ["Smart Paste", "smart-paste-section"],
     ["Proposal Info", "proposal-info-section"],
     ["Client / Contact", "saved-contact-section"],
     ["Project Summary", "project-summary-section"],
     ["Photos", "project-photos-section"],
-    ["Smart Paste", "smart-paste-section"],
     ["Scope", "scope-section"],
     ["Concrete Specs", "concrete-specs-section"],
     ["Pricing", "pricing-section"],
-    ["Alternates / Allowances", "pricing-alternates"],
+    ["Alternates / Allowances", "pricing-alternates-section"],
+    proposal?.proposalType === "gc_prime" ? ["GC / Prime Notes", "gc-prime-section"] : null,
     proposal?.packetMode === "full_gc_packet" ? ["GC Packet Tables", "gc-packet-tables-section"] : null,
     proposal?.packetMode === "full_gc_packet" ? ["Packet Builder", "packet-builder-section"] : null,
     proposal?.packetMode === "full_gc_packet" ? ["Plan Sheets", "plan-sheets-section"] : null,
-    ["Submitted Packet History", "submitted-packet-history"],
-    ["Send / Submission", "send-submission"],
+    ["Addenda / RFIs / Legal Terms", "legal-terms-section"],
+    ["Submitted Packet History", "submitted-packet-section"],
+    ["PDF Archive", "pdf-archive-section"],
+    ["Send / Submission", "send-submission-section"],
   ].filter(Boolean);
 
   return (
@@ -7385,7 +7530,7 @@ function EditorNavigation({ proposal, showTemplatePicker = false }) {
       </div>
       <div className="editor-navigation-links">
         {links.map(([label, targetId]) => (
-          <a href={`#${targetId}`} key={targetId}>
+          <a href={`#${targetId}`} key={targetId} onClick={(event) => openEditorAccordionSection(event, targetId)}>
             {label}
           </a>
         ))}
@@ -7394,9 +7539,21 @@ function EditorNavigation({ proposal, showTemplatePicker = false }) {
   );
 }
 
+function openEditorAccordionSection(event, targetId) {
+  const target = document.getElementById(targetId);
+
+  if (target instanceof HTMLDetailsElement) {
+    target.open = true;
+  }
+
+  if (target) {
+    window.setTimeout(() => target.scrollIntoView({ block: "start", behavior: "smooth" }), 0);
+  }
+}
+
 function SmartPastePanel({ notes, result, onFill, onNotesChange }) {
   return (
-    <EditorSection id="smart-paste-section" title="Paste Project Notes">
+    <EditorSection defaultOpen id="smart-paste-section" title="Smart Paste">
       <p className="smart-paste-help">
         Paste rough bid notes, takeoff notes, or GC scope notes. Review all fields before sending.
       </p>
@@ -8719,12 +8876,14 @@ function ContactSelector({ contacts = [], proposal, onSelectContact }) {
   );
 }
 
-function EditorSection({ id, title, children }) {
+function EditorSection({ children, defaultOpen = false, id, title }) {
   return (
-    <section className="editor-section" id={id}>
-      <h2>{title}</h2>
+    <details className="editor-section" id={id} open={defaultOpen}>
+      <summary>
+        <h2>{title}</h2>
+      </summary>
       <div className="editor-fields">{children}</div>
-    </section>
+    </details>
   );
 }
 
@@ -10102,6 +10261,39 @@ function getBidStatusClass(status = "") {
 
 function getBidPriorityClass(priority = "") {
   return `bid-priority-${String(priority || "medium").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+}
+
+function getBidDeadlineClass(bid = {}) {
+  if (isBidOverdue(bid)) {
+    return "bid-deadline-overdue";
+  }
+
+  if (isBidDueThisWeek(bid)) {
+    return "bid-deadline-soon";
+  }
+
+  return "bid-deadline-normal";
+}
+
+function formatBidDueLabel(bid = {}) {
+  if (!hasTextValue(bid.bidDueDate)) {
+    return "No due date";
+  }
+
+  const dueTime = hasTextValue(bid.bidDueTime) ? ` at ${bid.bidDueTime}` : "";
+  return `Due ${formatDisplayDate(bid.bidDueDate)}${dueTime}`;
+}
+
+function areBidsEquivalentForSave(savedBid = {}, draftBid = {}) {
+  const normalizeComparableBid = (bid) => {
+    const normalizedBid = normalizeBid(bid);
+    return {
+      ...normalizedBid,
+      updatedAt: "",
+    };
+  };
+
+  return JSON.stringify(normalizeComparableBid(savedBid)) === JSON.stringify(normalizeComparableBid(draftBid));
 }
 
 function createEmptyPriceLibraryDraft() {

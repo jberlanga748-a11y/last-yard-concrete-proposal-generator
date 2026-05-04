@@ -30,7 +30,17 @@ export function AppChrome({
   return (
     <header className="app-chrome no-print">
       <div className="app-brand">
-        <div className="app-brand-mark">LY</div>
+        <div className="app-brand-mark" aria-label="Last Yard Concrete">
+          <img
+            src="/assets/last-yard-logo.jpg"
+            alt=""
+            onError={(event) => {
+              event.currentTarget.style.display = "none";
+              event.currentTarget.nextElementSibling?.removeAttribute("hidden");
+            }}
+          />
+          <span hidden>LY</span>
+        </div>
         <div>
           <p>{companyName}</p>
           <h1>Proposal Generator</h1>
