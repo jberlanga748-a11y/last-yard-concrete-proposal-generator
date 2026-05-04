@@ -81,6 +81,7 @@ export function CloudStatusCard({
         </div>
       </div>
       <p>Cloud sync is enabled for proposals, company settings, contacts, and uploaded proposal assets. Legacy data URL images still render and can remain in backups.</p>
+      <p>Replacing a file updates the proposal record, but old cloud files may remain in storage until cleanup tools are added.</p>
       {!canUseCloudActions ? <p>You do not have permission to use cloud push/pull/sync controls.</p> : null}
       {authUser ? <p>Current user: {authUser.email}</p> : null}
       {authMessage ? <p>{authMessage}</p> : null}
@@ -197,8 +198,20 @@ function StorageDiagnosticsPanel({ authLoading, authUser, bucketName, canTestSto
           <strong>{formatAssetFileSize(diagnostics.lastFileSize)}</strong>
         </div>
         <div>
+          <span>Last processed file size</span>
+          <strong>{formatAssetFileSize(diagnostics.lastProcessedFileSize)}</strong>
+        </div>
+        <div>
           <span>Last upload storage path</span>
           <strong>{diagnostics.lastStoragePath || "-"}</strong>
+        </div>
+        <div>
+          <span>Last successful image path</span>
+          <strong>{diagnostics.lastSuccessfulImageUploadPath || "-"}</strong>
+        </div>
+        <div>
+          <span>Last successful PDF path</span>
+          <strong>{diagnostics.lastSuccessfulPdfUploadPath || "-"}</strong>
         </div>
         <div>
           <span>Last upload public URL</span>
@@ -211,6 +224,10 @@ function StorageDiagnosticsPanel({ authLoading, authUser, bucketName, canTestSto
         <div className="storage-diagnostics-wide">
           <span>Last upload error message</span>
           <strong>{diagnostics.errorMessage || "-"}</strong>
+        </div>
+        <div className="storage-diagnostics-wide">
+          <span>Last failed upload error</span>
+          <strong>{diagnostics.lastFailedUploadError || "-"}</strong>
         </div>
       </div>
     </div>

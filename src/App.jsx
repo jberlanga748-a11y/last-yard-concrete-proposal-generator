@@ -63,12 +63,14 @@ import {
   getImageAssetSource,
   getStoragePublicUrl,
   isDataUrl,
+  prepareImageFileForUpload,
   proposalAssetsBucket,
   sanitizeStoragePathSegment,
   uploadProposalAssetToCloud,
   uploadSubmittedPacketPdfToCloud,
+  validatePdfUploadFile,
 } from "./utils/cloud/storageCloud.js";
-import { formatCloudSyncTime, formatDashboardDate, formatDisplayDate, formatOptionLabel } from "./utils/formatting/display.js";
+import { formatAssetFileSize, formatCloudSyncTime, formatDashboardDate, formatDisplayDate, formatOptionLabel } from "./utils/formatting/display.js";
 import { parseBidSmartPasteNotes } from "./utils/smartPaste/bidSmartPasteParser.js";
 import { parseSmartPasteNotes } from "./utils/smartPaste/smartPasteParser.js";
 import {
@@ -2358,8 +2360,34 @@ export default function App() {
       return;
     }
 
-    if (file.type !== "application/pdf" && !String(file.name || "").toLowerCase().endsWith(".pdf")) {
-      setSaveMessage("Choose a PDF file to attach.");
+    let pdfValidation;
+
+    try {
+      pdfValidation = validatePdfUploadFile(file);
+    } catch (error) {
+      const errorMessage = formatStorageUploadError(error);
+      setSaveMessage(`Upload failed: ${errorMessage}`);
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        companyId: cloudSync.companyId || currentDiagnostics.companyId,
+        errorMessage,
+        lastAttemptedAt: new Date().toISOString(),
+        lastFailedUploadError: errorMessage,
+        lastFileName: file.name || "submitted-packet",
+        lastFileSize: file.size || 0,
+        lastProcessedFileSize: "",
+        lastPublicUrl: "",
+        lastStatus: "failed",
+        lastStoragePath: "",
+        lastUploadType: "Submitted packet PDF",
+      }));
+      recordActivity({
+        action: "PDF upload failed",
+        entityType: "storage",
+        entityId: recordId,
+        entityLabel: file.name || "Submitted PDF",
+        notes: errorMessage,
+      });
       return;
     }
 
@@ -2370,7 +2398,23 @@ export default function App() {
       return;
     }
 
-    setSaveMessage(`Uploading ${file.name || "submitted packet PDF"} to Supabase Storage...`);
+    const attemptedAt = new Date().toISOString();
+    const pdfWarningMessage = pdfValidation.warnings.length > 0 ? ` ${pdfValidation.warnings.join(" ")}` : "";
+
+    setStorageDiagnostics((currentDiagnostics) => ({
+      ...currentDiagnostics,
+      companyId: cloudSync.companyId || currentDiagnostics.companyId,
+      errorMessage: "",
+      lastAttemptedAt: attemptedAt,
+      lastFileName: file.name || "submitted-packet.pdf",
+      lastFileSize: file.size || 0,
+      lastProcessedFileSize: file.size || 0,
+      lastPublicUrl: "",
+      lastStatus: "uploading",
+      lastStoragePath: "",
+      lastUploadType: "Submitted packet PDF",
+    }));
+    setSaveMessage(`Uploading to cloud... ${formatSelectedFileLabel(file)}${pdfWarningMessage}`);
 
     try {
       const pdfAttachment = await uploadSubmittedPacketPdfToCloud(file, {
@@ -2390,9 +2434,23 @@ export default function App() {
         "Submitted PDF attached locally.",
         "Submitted PDF attached and synced to cloud.",
       );
-      setSaveMessage(`Submitted PDF uploaded: ${pdfAttachment.storagePath}`);
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        companyId: cloudSync.companyId || currentDiagnostics.companyId,
+        errorMessage: "",
+        lastAttemptedAt: attemptedAt,
+        lastFileName: pdfAttachment.fileName || file.name || "submitted-packet.pdf",
+        lastFileSize: file.size || pdfAttachment.fileSize || 0,
+        lastProcessedFileSize: pdfAttachment.fileSize || file.size || 0,
+        lastPublicUrl: pdfAttachment.publicUrl || "",
+        lastStatus: "success",
+        lastStoragePath: pdfAttachment.storagePath || "",
+        lastSuccessfulPdfUploadPath: pdfAttachment.storagePath || currentDiagnostics.lastSuccessfulPdfUploadPath,
+        lastUploadType: "Submitted packet PDF",
+      }));
+      setSaveMessage(`Uploaded to Supabase Storage: ${pdfAttachment.storagePath}. ${formatSelectedFileLabel(file)}${pdfWarningMessage}`);
       recordActivity({
-        action: "PDF attached",
+        action: "PDF upload succeeded",
         entityType: "storage",
         entityId: recordId,
         entityLabel: pdfAttachment.fileName || "Submitted PDF",
@@ -2401,6 +2459,27 @@ export default function App() {
     } catch (error) {
       console.error("Submitted packet PDF upload failed:", error);
       setSaveMessage(`PDF upload failed: ${formatStorageUploadError(error)}`);
+      const errorMessage = formatStorageUploadError(error);
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        errorMessage,
+        lastAttemptedAt: attemptedAt,
+        lastFailedUploadError: errorMessage,
+        lastFileName: file.name || "submitted-packet.pdf",
+        lastFileSize: file.size || 0,
+        lastProcessedFileSize: file.size || 0,
+        lastPublicUrl: "",
+        lastStatus: "failed",
+        lastStoragePath: "",
+        lastUploadType: "Submitted packet PDF",
+      }));
+      recordActivity({
+        action: "PDF upload failed",
+        entityType: "storage",
+        entityId: recordId,
+        entityLabel: file.name || "Submitted PDF",
+        notes: errorMessage,
+      });
     }
   }
 
@@ -3087,6 +3166,39 @@ export default function App() {
     const attemptedAt = new Date().toISOString();
     const uploadType = `Featured photo ${index + 1}`;
     const localReason = getAssetLocalStorageReason(authUser);
+    let preparedImage;
+
+    try {
+      preparedImage = await prepareImageFileForUpload(file, { kind: "featured" });
+    } catch (error) {
+      const errorMessage = formatStorageUploadError(error);
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        companyId: cloudSync.companyId || currentDiagnostics.companyId,
+        errorMessage,
+        lastAttemptedAt: attemptedAt,
+        lastFailedUploadError: errorMessage,
+        lastFileName: file.name || `photo-${index + 1}`,
+        lastFileSize: file.size || 0,
+        lastProcessedFileSize: "",
+        lastPublicUrl: "",
+        lastStatus: "failed",
+        lastStoragePath: "",
+        lastUploadType: uploadType,
+      }));
+      setAssetUploadMessage(`Upload failed: ${errorMessage}`);
+      recordActivity({
+        action: "Image upload failed",
+        entityType: "storage",
+        entityId: proposalDraft.id,
+        entityLabel: uploadType,
+        notes: errorMessage,
+      });
+      return;
+    }
+
+    const uploadFile = preparedImage.file;
+    const preparationMessage = formatImagePreparationMessage(preparedImage);
     setStorageDiagnostics((currentDiagnostics) => ({
       ...currentDiagnostics,
       companyId: cloudSync.companyId || currentDiagnostics.companyId,
@@ -3094,18 +3206,21 @@ export default function App() {
       lastAttemptedAt: attemptedAt,
       lastFileName: file.name || `photo-${index + 1}`,
       lastFileSize: file.size || 0,
+      lastProcessedFileSize: uploadFile.size || file.size || 0,
       lastPublicUrl: "",
       lastStatus: canUseCloudSync(authUser) ? "uploading" : "local fallback",
       lastStoragePath: "",
       lastUploadType: uploadType,
     }));
     setAssetUploadMessage(
-      canUseCloudSync(authUser) ? `Uploading image to cloud: featured/photo-${index + 1}-...` : `Saved locally only. Reason: ${localReason}`,
+      canUseCloudSync(authUser)
+        ? `Uploading to cloud... ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
+        : `Saved locally only. Reason: ${localReason} ${formatSelectedFileLabel(uploadFile)}${preparationMessage ? ` ${preparationMessage}` : ""}`,
     );
 
     try {
       const asset = canUseCloudSync(authUser)
-        ? await uploadProposalAssetToCloud(file, {
+        ? await uploadProposalAssetToCloud(uploadFile, {
             area: "featured",
             companySettings,
             companyUser: authUser,
@@ -3113,13 +3228,14 @@ export default function App() {
             fileStem: `photo-${index + 1}`,
             proposalId: proposalDraft.id,
           })
-        : await createLocalImageAsset(file);
+        : await createLocalImageAsset(uploadFile);
+      const safeAsset = withImageSafetyMetadata(asset, file, preparedImage);
 
       const projectPhotos = normalizeProjectPhotos(proposalDraft.projectPhotos).map((photo, photoIndex) =>
         photoIndex === index
           ? normalizeProjectPhoto({
               ...photo,
-              ...asset,
+              ...safeAsset,
               caption: photo.caption || photo.label,
               label: photo.label,
             }, photoIndex)
@@ -3142,51 +3258,50 @@ export default function App() {
           companyId: asset.companyId || currentDiagnostics.companyId,
           errorMessage: "",
           lastAttemptedAt: attemptedAt,
-          lastFileName: file.name || asset.fileName || `photo-${index + 1}`,
+          lastFileName: file.name || safeAsset.fileName || `photo-${index + 1}`,
           lastFileSize: file.size || 0,
-          lastPublicUrl: asset.publicUrl || "",
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
+          lastPublicUrl: safeAsset.publicUrl || "",
           lastStatus: "success",
-          lastStoragePath: asset.storagePath || "",
+          lastStoragePath: safeAsset.storagePath || "",
+          lastSuccessfulImageUploadPath: safeAsset.storagePath || currentDiagnostics.lastSuccessfulImageUploadPath,
           lastUploadType: uploadType,
         }));
-        setAssetUploadMessage(`Image uploaded to Supabase Storage: ${asset.storagePath}`);
+        setAssetUploadMessage(formatUploadResultMessage(`Uploaded to Supabase Storage: ${safeAsset.storagePath}.`, safeAsset, preparedImage));
         recordActivity({
-          action: "Storage upload succeeded",
+          action: "Image upload succeeded",
           entityType: "storage",
           entityId: proposalDraft.id,
           entityLabel: uploadType,
-          notes: asset.storagePath,
+          notes: safeAsset.storagePath,
         });
       } else {
         setStorageDiagnostics((currentDiagnostics) => ({
           ...currentDiagnostics,
           errorMessage: `Saved locally only. Reason: ${localReason}`,
           lastAttemptedAt: attemptedAt,
-          lastFileName: file.name || asset.fileName || `photo-${index + 1}`,
+          lastFileName: file.name || safeAsset.fileName || `photo-${index + 1}`,
           lastFileSize: file.size || 0,
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
           lastPublicUrl: "",
           lastStatus: "local fallback",
           lastStoragePath: "",
           lastUploadType: uploadType,
         }));
-        setAssetUploadMessage(
-          isSupabaseConfigured
-            ? `Saved locally only. Reason: ${localReason}`
-            : `Saved locally only. Reason: ${localReason}`,
-        );
+        setAssetUploadMessage(formatUploadResultMessage(`Saved locally only. Reason: ${localReason}`, safeAsset, preparedImage));
         recordActivity({
-          action: "Storage upload failed",
+          action: "Image upload succeeded",
           entityType: "storage",
           entityId: proposalDraft.id,
           entityLabel: uploadType,
-          notes: localReason,
+          notes: `Saved locally only. Reason: ${localReason}`,
         });
       }
     } catch (error) {
       console.error("Cloud image upload failed:", error);
       const errorMessage = formatStorageUploadError(error);
       try {
-        const localAsset = await createLocalImageAsset(file);
+        const localAsset = withImageSafetyMetadata(await createLocalImageAsset(uploadFile), file, preparedImage);
         const projectPhotos = normalizeProjectPhotos(proposalDraft.projectPhotos).map((photo, photoIndex) =>
           photoIndex === index
             ? normalizeProjectPhoto({
@@ -3212,14 +3327,16 @@ export default function App() {
           lastAttemptedAt: attemptedAt,
           lastFileName: file.name || localAsset.fileName || `photo-${index + 1}`,
           lastFileSize: file.size || 0,
+          lastFailedUploadError: errorMessage,
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
           lastPublicUrl: "",
           lastStatus: "local fallback",
           lastStoragePath: "",
           lastUploadType: uploadType,
         }));
-        setAssetUploadMessage(`Cloud upload failed: ${errorMessage}. Saved locally only. Reason: cloud upload failed.`);
+        setAssetUploadMessage(formatUploadResultMessage(`Cloud upload failed: ${errorMessage}. Saved locally only. Reason: cloud upload failed.`, localAsset, preparedImage));
         recordActivity({
-          action: "Storage upload failed",
+          action: "Image upload failed",
           entityType: "storage",
           entityId: proposalDraft.id,
           entityLabel: uploadType,
@@ -3234,6 +3351,8 @@ export default function App() {
           lastAttemptedAt: attemptedAt,
           lastFileName: file.name || `photo-${index + 1}`,
           lastFileSize: file.size || 0,
+          lastFailedUploadError: `${errorMessage} Local fallback failed: ${localErrorMessage}`,
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
           lastPublicUrl: "",
           lastStatus: "failed",
           lastStoragePath: "",
@@ -3276,6 +3395,39 @@ export default function App() {
     const uploadType = "Plan sheet image";
     const localReason = getAssetLocalStorageReason(authUser);
     const planFileStem = sanitizeStoragePathSegment(sheet.id || sheet.matchKey || `plan-${index + 1}`);
+    let preparedImage;
+
+    try {
+      preparedImage = await prepareImageFileForUpload(file, { kind: "plan" });
+    } catch (error) {
+      const errorMessage = formatStorageUploadError(error);
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        companyId: cloudSync.companyId || currentDiagnostics.companyId,
+        errorMessage,
+        lastAttemptedAt: attemptedAt,
+        lastFailedUploadError: errorMessage,
+        lastFileName: file.name || planFileStem,
+        lastFileSize: file.size || 0,
+        lastProcessedFileSize: "",
+        lastPublicUrl: "",
+        lastStatus: "failed",
+        lastStoragePath: "",
+        lastUploadType: uploadType,
+      }));
+      setAssetUploadMessage(`Upload failed: ${errorMessage}`);
+      recordActivity({
+        action: "Image upload failed",
+        entityType: "storage",
+        entityId: proposalDraft.id,
+        entityLabel: uploadType,
+        notes: errorMessage,
+      });
+      return;
+    }
+
+    const uploadFile = preparedImage.file;
+    const preparationMessage = formatImagePreparationMessage(preparedImage);
 
     setStorageDiagnostics((currentDiagnostics) => ({
       ...currentDiagnostics,
@@ -3284,6 +3436,7 @@ export default function App() {
       lastAttemptedAt: attemptedAt,
       lastFileName: file.name || planFileStem,
       lastFileSize: file.size || 0,
+      lastProcessedFileSize: uploadFile.size || file.size || 0,
       lastPublicUrl: "",
       lastStatus: canUseCloudSync(authUser) ? "uploading" : "local fallback",
       lastStoragePath: "",
@@ -3291,13 +3444,13 @@ export default function App() {
     }));
     setAssetUploadMessage(
       canUseCloudSync(authUser)
-        ? `Uploading image to cloud: plans/${planFileStem}-...`
-        : `Saved locally only. Reason: ${localReason}`,
+        ? `Uploading to cloud... ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
+        : `Saved locally only. Reason: ${localReason} ${formatSelectedFileLabel(uploadFile)}${preparationMessage ? ` ${preparationMessage}` : ""}`,
     );
 
     try {
       const asset = canUseCloudSync(authUser)
-        ? await uploadProposalAssetToCloud(file, {
+        ? await uploadProposalAssetToCloud(uploadFile, {
             area: "plans",
             companySettings,
             companyUser: authUser,
@@ -3305,14 +3458,15 @@ export default function App() {
             fileStem: sheet.id || sheet.matchKey || `plan-${index + 1}`,
             proposalId: proposalDraft.id,
           })
-        : await createLocalImageAsset(file);
+        : await createLocalImageAsset(uploadFile);
+      const safeAsset = withImageSafetyMetadata(asset, file, preparedImage);
 
       const planSheets = sheets.map((currentSheet, sheetIndex) =>
         sheetIndex === index
           ? normalizePlanSheet({
               ...currentSheet,
-              ...asset,
-              imageSrc: asset.src,
+              ...safeAsset,
+              imageSrc: safeAsset.src,
             }, sheetIndex)
           : currentSheet,
       );
@@ -3330,43 +3484,43 @@ export default function App() {
         await syncSingleProposalToCloud(nextProposal, "Plan image uploaded to Supabase Storage and proposal synced.");
         setStorageDiagnostics((currentDiagnostics) => ({
           ...currentDiagnostics,
-          companyId: asset.companyId || currentDiagnostics.companyId,
+          companyId: safeAsset.companyId || currentDiagnostics.companyId,
           errorMessage: "",
           lastAttemptedAt: attemptedAt,
-          lastFileName: file.name || asset.fileName || planFileStem,
+          lastFailedUploadError: currentDiagnostics.lastFailedUploadError,
+          lastFileName: file.name || safeAsset.fileName || planFileStem,
           lastFileSize: file.size || 0,
-          lastPublicUrl: asset.publicUrl || "",
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
+          lastPublicUrl: safeAsset.publicUrl || "",
           lastStatus: "success",
-          lastStoragePath: asset.storagePath || "",
+          lastStoragePath: safeAsset.storagePath || "",
+          lastSuccessfulImageUploadPath: safeAsset.storagePath || currentDiagnostics.lastSuccessfulImageUploadPath,
           lastUploadType: uploadType,
         }));
-        setAssetUploadMessage(`Image uploaded to Supabase Storage: ${asset.storagePath}`);
+        setAssetUploadMessage(formatUploadResultMessage(`Uploaded to Supabase Storage: ${safeAsset.storagePath}.`, safeAsset, preparedImage));
         recordActivity({
-          action: "Storage upload succeeded",
+          action: "Image upload succeeded",
           entityType: "storage",
           entityId: proposalDraft.id,
           entityLabel: uploadType,
-          notes: asset.storagePath,
+          notes: safeAsset.storagePath,
         });
       } else {
         setStorageDiagnostics((currentDiagnostics) => ({
           ...currentDiagnostics,
           errorMessage: `Saved locally only. Reason: ${localReason}`,
           lastAttemptedAt: attemptedAt,
-          lastFileName: file.name || asset.fileName || planFileStem,
+          lastFileName: file.name || safeAsset.fileName || planFileStem,
           lastFileSize: file.size || 0,
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
           lastPublicUrl: "",
           lastStatus: "local fallback",
           lastStoragePath: "",
           lastUploadType: uploadType,
         }));
-        setAssetUploadMessage(
-          isSupabaseConfigured
-            ? `Saved locally only. Reason: ${localReason}`
-            : `Saved locally only. Reason: ${localReason}`,
-        );
+        setAssetUploadMessage(formatUploadResultMessage(`Saved locally only. Reason: ${localReason}`, safeAsset, preparedImage));
         recordActivity({
-          action: "Storage upload failed",
+          action: "Image upload succeeded",
           entityType: "storage",
           entityId: proposalDraft.id,
           entityLabel: uploadType,
@@ -3377,7 +3531,7 @@ export default function App() {
       console.error("Cloud image upload failed:", error);
       const errorMessage = formatStorageUploadError(error);
       try {
-        const localAsset = await createLocalImageAsset(file);
+        const localAsset = withImageSafetyMetadata(await createLocalImageAsset(uploadFile), file, preparedImage);
         const planSheets = sheets.map((currentSheet, sheetIndex) =>
           sheetIndex === index
             ? normalizePlanSheet({
@@ -3402,14 +3556,16 @@ export default function App() {
           lastAttemptedAt: attemptedAt,
           lastFileName: file.name || localAsset.fileName || planFileStem,
           lastFileSize: file.size || 0,
+          lastFailedUploadError: errorMessage,
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
           lastPublicUrl: "",
           lastStatus: "local fallback",
           lastStoragePath: "",
           lastUploadType: uploadType,
         }));
-        setAssetUploadMessage(`Cloud upload failed: ${errorMessage}. Saved locally only. Reason: cloud upload failed.`);
+        setAssetUploadMessage(formatUploadResultMessage(`Cloud upload failed: ${errorMessage}. Saved locally only. Reason: cloud upload failed.`, localAsset, preparedImage));
         recordActivity({
-          action: "Storage upload failed",
+          action: "Image upload failed",
           entityType: "storage",
           entityId: proposalDraft.id,
           entityLabel: uploadType,
@@ -3424,6 +3580,8 @@ export default function App() {
           lastAttemptedAt: attemptedAt,
           lastFileName: file.name || planFileStem,
           lastFileSize: file.size || 0,
+          lastFailedUploadError: `${errorMessage} Local fallback failed: ${localErrorMessage}`,
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
           lastPublicUrl: "",
           lastStatus: "failed",
           lastStoragePath: "",
@@ -6399,6 +6557,7 @@ function SubmittedPacketHistory({ permissions = {}, records = [], onAttachPdf, o
                     {hasPdf ? (
                       <>
                         <span>{record.pdfAttachment.fileName}</span>
+                        {record.pdfAttachment.fileSize ? <span>{formatAssetFileSize(record.pdfAttachment.fileSize)}</span> : null}
                         <span>Uploaded {formatCloudSyncTime(record.pdfAttachment.uploadedAt)}</span>
                         {record.pdfAttachment.uploadedByEmail ? <span>By {record.pdfAttachment.uploadedByEmail}</span> : null}
                       </>
@@ -7469,6 +7628,11 @@ function ProjectPhotoEditor({ message = "", photos, onPhotoChange, onPhotoUpload
             )}
           </div>
           <span className="asset-source-badge">{getImageAssetLabel(photo)}</span>
+          {photo.fileName ? (
+            <span className="asset-upload-detail">
+              {photo.fileName} {photo.fileSize ? `| ${formatAssetFileSize(photo.fileSize)}` : ""}
+            </span>
+          ) : null}
           <EditorField
             label={`Photo ${index + 1} Caption`}
             path={`projectPhotos.${index}.label`}
@@ -7587,6 +7751,11 @@ function PlanSheetEditor({ message = "", planSheets, onAddPlanSheet, onPlanSheet
             </div>
             <div className="plan-sheet-upload-controls">
               <span className="asset-source-badge">{getImageAssetLabel(sheet)}</span>
+              {sheet.fileName ? (
+                <span className="asset-upload-detail">
+                  {sheet.fileName} {sheet.fileSize ? `| ${formatAssetFileSize(sheet.fileSize)}` : ""}
+                </span>
+              ) : null}
               <label className="editor-field">
                 <span>Plan Image Upload</span>
                 <input type="file" accept="image/*" onChange={(event) => handleUpload(index, event.target.files?.[0])} />
@@ -8516,19 +8685,86 @@ function createStorageDiagnosticsState() {
     lastAttemptedAt: "",
     lastFileName: "",
     lastFileSize: "",
+    lastProcessedFileSize: "",
+    lastSuccessfulImageUploadPath: "",
+    lastSuccessfulPdfUploadPath: "",
+    lastFailedUploadError: "",
     lastPublicUrl: "",
     lastStatus: "not tested",
     lastStoragePath: "",
     lastUploadType: "",
   };
 }
+
+function formatSelectedFileLabel(file) {
+  if (!file) {
+    return "No file selected";
+  }
+
+  return `${file.name || "Selected file"} (${formatAssetFileSize(file.size)})`;
+}
+
+function formatImagePreparationMessage(preparedImage = {}) {
+  const compression = preparedImage.compression || {};
+  const messages = [];
+
+  if (compression.wasCompressed) {
+    messages.push(compression.message || `Compressed to ${formatAssetFileSize(compression.outputSize)}.`);
+  } else if (compression.failed) {
+    messages.push(compression.message || "Image compression failed; using the original file.");
+  }
+
+  if (Array.isArray(preparedImage.warnings) && preparedImage.warnings.length > 0) {
+    messages.push(preparedImage.warnings.join(" "));
+  }
+
+  return messages.filter(Boolean).join(" ");
+}
+
+function withImageSafetyMetadata(asset = {}, originalFile = {}, preparedImage = {}) {
+  const compression = preparedImage.compression || {};
+
+  return {
+    ...asset,
+    compressionMessage: compression.message || "",
+    compressed: Boolean(compression.wasCompressed),
+    fileSize: preparedImage.file?.size || asset.fileSize || originalFile.size || 0,
+    originalFileName: originalFile.name || asset.originalFileName || asset.fileName || "",
+    originalFileSize: originalFile.size || asset.originalFileSize || asset.fileSize || 0,
+  };
+}
+
+function formatUploadResultMessage(prefix, asset = {}, preparedImage = {}) {
+  const pieces = [prefix];
+  const fileLabel = formatSelectedFileLabel({
+    name: asset.fileName || preparedImage.file?.name,
+    size: asset.fileSize || preparedImage.file?.size,
+  });
+  const preparationMessage = formatImagePreparationMessage(preparedImage);
+
+  if (fileLabel !== "No file selected") {
+    pieces.push(fileLabel);
+  }
+
+  if (preparationMessage) {
+    pieces.push(preparationMessage);
+  }
+
+  return pieces.join(" ");
+}
+
 function clearImageAssetFields(asset = {}) {
   return {
     ...asset,
+    compressed: false,
+    compressionMessage: "",
     dataUrl: "",
     fileName: "",
+    fileSize: "",
     fileType: "",
     imageSrc: "",
+    originalFileName: "",
+    originalFileSize: "",
     publicUrl: "",
     signedUrl: "",
     src: "",
@@ -10587,10 +10823,15 @@ function normalizeProjectPhoto(photo = {}, index = 0, defaultPhoto = defaultProj
   const label = hasTextValue(photo.label) ? photo.label : hasTextValue(photo.caption) ? photo.caption : defaultPhoto.label;
   const normalizedPhoto = {
     caption: label,
+    compressed: Boolean(photo.compressed),
+    compressionMessage: photo.compressionMessage || "",
     dataUrl,
     fileName: photo.fileName || "",
+    fileSize: Number.parseInt(photo.fileSize, 10) || 0,
     fileType: photo.fileType || "",
     label,
+    originalFileName: photo.originalFileName || "",
+    originalFileSize: Number.parseInt(photo.originalFileSize, 10) || 0,
     publicUrl,
     signedUrl: photo.signedUrl || "",
     storagePath: photo.storagePath || "",
@@ -10633,8 +10874,13 @@ function normalizePlanSheet(sheet = {}, index = 0) {
     subtitle: sheet.subtitle ?? fallback.subtitle ?? "",
     dataUrl: getPlanSheetDataUrl(sheet),
     fileName: sheet.fileName || "",
+    fileSize: Number.parseInt(sheet.fileSize, 10) || 0,
     fileType: sheet.fileType || "",
     imageSrc: getPlanSheetImageSource(sheet),
+    compressed: Boolean(sheet.compressed),
+    compressionMessage: sheet.compressionMessage || "",
+    originalFileName: sheet.originalFileName || "",
+    originalFileSize: Number.parseInt(sheet.originalFileSize, 10) || 0,
     publicUrl: getPlanSheetPublicUrl(sheet),
     signedUrl: sheet.signedUrl || "",
     storagePath: sheet.storagePath || "",
@@ -10672,9 +10918,14 @@ function preserveExistingImageAsset(existingAsset = {}, incomingAsset = {}) {
 
   return {
     dataUrl: existingAsset.dataUrl || "",
+    compressed: Boolean(existingAsset.compressed),
+    compressionMessage: existingAsset.compressionMessage || "",
     fileName: existingAsset.fileName || "",
+    fileSize: Number.parseInt(existingAsset.fileSize, 10) || 0,
     fileType: existingAsset.fileType || "",
     imageSrc: existingAsset.imageSrc || existingAsset.src || "",
+    originalFileName: existingAsset.originalFileName || "",
+    originalFileSize: Number.parseInt(existingAsset.originalFileSize, 10) || 0,
     publicUrl: existingAsset.publicUrl || "",
     signedUrl: existingAsset.signedUrl || "",
     src: existingAsset.src || existingAsset.imageSrc || "",

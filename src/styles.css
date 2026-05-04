@@ -2755,6 +2755,15 @@ h4 {
   text-transform: uppercase;
 }
 
+.asset-upload-detail {
+  display: block;
+  color: #556171;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .project-photo-preview {
   display: grid;
   min-height: 96px;
