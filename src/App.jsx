@@ -4213,6 +4213,7 @@ export default function App() {
       onImport={importBackup}
     />
   );
+  const backupShortcut = <BackupShortcutCard onOpenBackup={() => navigate("/backup")} />;
 
   return (
     <main className={`app-shell ${isPrintView ? "print-route-shell" : ""}`}>
@@ -4345,7 +4346,7 @@ export default function App() {
           authLoading={authLoading}
           authMessage={authMessage}
           authUser={authUser}
-          backupTools={backupTools}
+          backupShortcut={backupShortcut}
           cloudSync={cloudSync}
           message={settingsMessage}
           saveState={saveState}
@@ -4396,7 +4397,7 @@ export default function App() {
       ) : isListView ? (
         <ProposalListView
           authUser={authUser}
-          backupTools={backupTools}
+          backupShortcut={backupShortcut}
           cloudSync={cloudSync}
           contacts={savedContacts}
           permissions={permissions}
@@ -4459,7 +4460,7 @@ export default function App() {
                 onUpdatePacketRecord={updateSubmittedPacketRecord}
               />
           )}
-          {!isPrintView ? backupTools : null}
+          {!isPrintView ? backupShortcut : null}
 
           <div className={`proposal-workbench ${isPrintView ? "print-route-view" : ""}`}>
             {isPrintView ? null : (
@@ -5893,9 +5894,24 @@ function DemoOnboardingPanel({
   );
 }
 
+function BackupShortcutCard({ onOpenBackup }) {
+  return (
+    <section className="backup-shortcut-card no-print">
+      <div>
+        <p className="list-kicker">Backup / Restore</p>
+        <h3>Backup tools live on one page</h3>
+        <p>Export JSON backups, import files, or replace local data from the dedicated Backup / Restore page.</p>
+      </div>
+      <button type="button" title="Open the full Backup / Restore page." onClick={onOpenBackup}>
+        Open Backup / Restore
+      </button>
+    </section>
+  );
+}
+
 function ProposalListView({
   authUser,
-  backupTools,
+  backupShortcut,
   cloudSync,
   contacts = [],
   permissions = {},
@@ -5992,7 +6008,7 @@ function ProposalListView({
         </label>
       </div>
 
-      {backupTools}
+      {backupShortcut}
 
       <ProposalSyncPanel
         authUser={authUser}
@@ -6118,7 +6134,7 @@ function CompanySettingsView({
   authLoading,
   authMessage,
   authUser,
-  backupTools,
+  backupShortcut,
   cloudSync,
   message,
   permissions = {},
@@ -6177,47 +6193,59 @@ function CompanySettingsView({
         </div>
       </div>
 
-      {backupTools}
+      {backupShortcut}
 
-      <CloudStatusCard
-        authLoading={authLoading}
-        authMessage={authMessage}
-        authUser={authUser}
-        bucketName={proposalAssetsBucket}
-        canUseCloudActions={permissions.cloudSync}
-        cloudSync={cloudSync}
-        saveState={saveState}
-        storageDiagnostics={storageDiagnostics}
-        onClearCloudSyncMessage={onClearCloudSyncMessage}
-        onOpenLogin={onOpenLogin}
-        onPullCloudData={onPullCloudData}
-        onPullCloudProposals={onPullCloudProposals}
-        onPushLocalDataToCloud={onPushLocalDataToCloud}
-        onPushLocalProposals={onPushLocalProposals}
-        onSignOut={onSignOut}
-        onSyncContacts={onSyncContacts}
-        onSyncProposals={onSyncProposals}
-        onSyncSettings={() => onSyncSettings(settings)}
-        onTestStorageUpload={onTestStorageUpload}
-      />
+      <div className="settings-accordion-stack">
+        <SettingsAccordionSection defaultOpen title="Cloud Status" helper="Sync status, cloud actions, and local/cloud save state.">
+          <CloudStatusCard
+            authLoading={authLoading}
+            authMessage={authMessage}
+            authUser={authUser}
+            bucketName={proposalAssetsBucket}
+            canUseCloudActions={permissions.cloudSync}
+            cloudSync={cloudSync}
+            saveState={saveState}
+            storageDiagnostics={storageDiagnostics}
+            onClearCloudSyncMessage={onClearCloudSyncMessage}
+            onOpenLogin={onOpenLogin}
+            onPullCloudData={onPullCloudData}
+            onPullCloudProposals={onPullCloudProposals}
+            onPushLocalDataToCloud={onPushLocalDataToCloud}
+            onPushLocalProposals={onPushLocalProposals}
+            onSignOut={onSignOut}
+            onSyncContacts={onSyncContacts}
+            onSyncProposals={onSyncProposals}
+            onSyncSettings={() => onSyncSettings(settings)}
+            onTestStorageUpload={onTestStorageUpload}
+          />
+        </SettingsAccordionSection>
 
-      <TeamAccessPanel
-        authUser={authUser}
-        cloudSync={cloudSync}
-        members={teamMembers}
-        message={teamMessage}
-        settings={settings}
-        onDeactivateMember={onDeactivateTeamMember}
-        onInviteMember={onInviteTeamMember}
-        onOpenLogin={onOpenLogin}
-        onRefreshMembers={onRefreshTeamMembers}
-      />
+        <SettingsAccordionSection title="Team / Access" helper="Invite and review company users. Owner/Admin controls remain protected.">
+          <TeamAccessPanel
+            authUser={authUser}
+            cloudSync={cloudSync}
+            members={teamMembers}
+            message={teamMessage}
+            settings={settings}
+            onDeactivateMember={onDeactivateTeamMember}
+            onInviteMember={onInviteTeamMember}
+            onOpenLogin={onOpenLogin}
+            onRefreshMembers={onRefreshTeamMembers}
+          />
+        </SettingsAccordionSection>
+      </div>
 
       {!permissions.manageSettings ? (
         <p className="permission-message">Company settings are read-only for your current role.</p>
       ) : null}
 
       <fieldset className="editor-permission-fieldset" disabled={!permissions.manageSettings}>
+      <div className="settings-accordion-stack">
+        <SettingsAccordionSection
+          defaultOpen
+          title="Company Info"
+          helper="Core Last Yard identity and contact details used by new proposals."
+        >
       <div className="settings-grid">
         <EditorField label="Company Name" path="settings.companyName" value={settings.companyName} onChange={(_, value) => onChange("companyName", value)} />
         <EditorField label="Phone" path="settings.phone" value={settings.phone} onChange={(_, value) => onChange("phone", value)} />
@@ -6240,6 +6268,14 @@ function CompanySettingsView({
           <span>Logo Upload</span>
           <input type="file" accept="image/*" onChange={(event) => handleLogoUpload(event.target.files?.[0])} />
         </label>
+      </div>
+        </SettingsAccordionSection>
+
+        <SettingsAccordionSection
+          title="Proposal Defaults"
+          helper="Default expiration, payment terms, exclusions, warranty note, and signature block for new proposal drafts."
+        >
+      <div className="settings-grid">
         <EditorField
           label="Default Proposal Expiration Days"
           path="settings.defaultProposalExpirationDays"
@@ -6280,10 +6316,14 @@ function CompanySettingsView({
             multiline
           />
         </div>
-        <div className="settings-wide-field settings-subsection">
-          <h3>Legal / Scope Protection</h3>
-          <p>Editable default wording for proposal terms, warranty limitations, exclusions, and GC / Prime scope-control language.</p>
-        </div>
+      </div>
+        </SettingsAccordionSection>
+
+        <SettingsAccordionSection
+          title="Legal / Scope Protection"
+          helper="These defaults protect Last Yard's scope. New proposals use these terms unless edited."
+        >
+      <div className="settings-grid legal-settings-grid">
         <div className="settings-wide-field">
           <EditorField
             label="Proposal Expiration Clause"
@@ -6411,8 +6451,24 @@ function CompanySettingsView({
           />
         </div>
       </div>
+        </SettingsAccordionSection>
+      </div>
       </fieldset>
     </section>
+  );
+}
+
+function SettingsAccordionSection({ children, defaultOpen = false, helper = "", title }) {
+  return (
+    <details className="settings-accordion-section no-print" open={defaultOpen}>
+      <summary>
+        <span>
+          <strong>{title}</strong>
+          {helper ? <small>{helper}</small> : null}
+        </span>
+      </summary>
+      <div className="settings-accordion-content">{children}</div>
+    </details>
   );
 }
 

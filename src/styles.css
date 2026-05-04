@@ -1043,6 +1043,47 @@ h4 {
   margin: -8px auto 24px;
 }
 
+.backup-shortcut-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  margin-top: 18px;
+  border: 1px solid rgba(6, 43, 69, 0.12);
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 14px 16px;
+  box-shadow: 0 8px 18px rgba(4, 29, 47, 0.04);
+}
+
+.proposal-action-bar + .backup-shortcut-card {
+  max-width: 1500px;
+  margin: -8px auto 24px;
+}
+
+.backup-shortcut-card h3 {
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 950;
+}
+
+.backup-shortcut-card p:last-child {
+  margin-top: 4px;
+  color: #556171;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.backup-shortcut-card button {
+  border-radius: 8px;
+  background: var(--blue);
+  color: white;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
 .backup-panel h3 {
   color: var(--ink);
   font-size: 18px;
@@ -1128,6 +1169,97 @@ h4 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
   margin-top: 20px;
+}
+
+.settings-accordion-stack {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.settings-accordion-section {
+  border: 1px solid rgba(6, 43, 69, 0.14);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(4, 29, 47, 0.04);
+  overflow: hidden;
+}
+
+.settings-accordion-section[open] {
+  border-color: rgba(201, 166, 74, 0.42);
+}
+
+.settings-accordion-section summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 58px;
+  padding: 13px 16px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.settings-accordion-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-accordion-section summary::after {
+  content: "+";
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(6, 43, 69, 0.08);
+  color: var(--blue);
+  font-size: 16px;
+  font-weight: 950;
+}
+
+.settings-accordion-section[open] summary::after {
+  content: "-";
+  background: rgba(201, 166, 74, 0.18);
+  color: var(--gold);
+}
+
+.settings-accordion-section summary span {
+  display: grid;
+  gap: 3px;
+}
+
+.settings-accordion-section summary strong {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.settings-accordion-section summary small {
+  color: #556171;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.settings-accordion-content {
+  border-top: 1px solid var(--line);
+  padding: 16px;
+}
+
+.settings-accordion-content .settings-grid,
+.settings-accordion-content .cloud-status-card,
+.settings-accordion-content .team-access-card {
+  margin-top: 0;
+}
+
+.legal-settings-grid textarea {
+  min-height: 94px;
+}
+
+.storage-diagnostics-details {
+  margin-top: 4px;
+  box-shadow: none;
 }
 
 .settings-wide-field {
@@ -4867,7 +4999,8 @@ h4 {
 
   .list-filters,
     .settings-grid,
-    .backup-grid {
+    .backup-grid,
+    .backup-shortcut-card {
       grid-template-columns: 1fr;
     }
 

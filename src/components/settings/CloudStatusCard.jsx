@@ -86,15 +86,25 @@ export function CloudStatusCard({
       {authUser ? <p>Current user: {authUser.email}</p> : null}
       {authMessage ? <p>{authMessage}</p> : null}
       {cloudSync.message ? <p>{cloudSync.message}</p> : null}
-      <StorageDiagnosticsPanel
-        authLoading={authLoading}
-        authUser={authUser}
-        bucketName={bucketName}
-        cloudSync={cloudSync}
-        diagnostics={storageDiagnostics}
-        onTestStorageUpload={onTestStorageUpload}
-        canTestStorage={canUseCloudActions}
-      />
+      <details className="settings-accordion-section storage-diagnostics-details no-print">
+        <summary>
+          <span>
+            <strong>Storage Diagnostics</strong>
+            <small>Test Supabase Storage uploads and review the latest upload path or error.</small>
+          </span>
+        </summary>
+        <div className="settings-accordion-content">
+          <StorageDiagnosticsPanel
+            authLoading={authLoading}
+            authUser={authUser}
+            bucketName={bucketName}
+            cloudSync={cloudSync}
+            diagnostics={storageDiagnostics}
+            onTestStorageUpload={onTestStorageUpload}
+            canTestStorage={canUseCloudActions}
+          />
+        </div>
+      </details>
       {isSupabaseConfigured ? (
         <div className="cloud-status-actions">
           {authUser ? (
