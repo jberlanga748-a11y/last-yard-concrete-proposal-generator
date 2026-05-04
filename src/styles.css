@@ -2283,7 +2283,7 @@ h4 {
 
 .proposal-workbench {
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr);
+  grid-template-columns: minmax(430px, 0.42fr) minmax(0, 1fr);
   gap: 24px;
   align-items: start;
   max-width: 1900px;
@@ -2391,6 +2391,61 @@ h4 {
   box-shadow: 0 14px 34px rgba(4, 29, 47, 0.1);
 }
 
+.editor-navigation {
+  position: sticky;
+  top: -18px;
+  z-index: 5;
+  display: grid;
+  gap: 10px;
+  margin: -18px -18px 0;
+  border-bottom: 1px solid rgba(6, 43, 69, 0.14);
+  background: rgba(255, 255, 255, 0.97);
+  padding: 12px 18px;
+  box-shadow: 0 8px 18px rgba(4, 29, 47, 0.06);
+  backdrop-filter: blur(8px);
+}
+
+.editor-navigation strong {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.editor-navigation span {
+  display: block;
+  margin-top: 2px;
+  color: #556171;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.editor-navigation-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.editor-navigation-links a {
+  border: 1px solid rgba(6, 43, 69, 0.14);
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--blue);
+  padding: 6px 9px;
+  font-size: 10.5px;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.editor-navigation-links a:hover,
+.pricing-mini-toolbar a:hover,
+.pricing-bottom-actions a:hover {
+  border-color: rgba(201, 166, 74, 0.8);
+  background: #fffaf0;
+  color: var(--deep-blue);
+}
+
 .validation-panel {
   display: grid;
   gap: 10px;
@@ -2434,22 +2489,35 @@ h4 {
 }
 
 .editor-section {
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 16px;
+  scroll-margin-top: 92px;
+  border: 1px solid rgba(6, 43, 69, 0.12);
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 14px;
+  box-shadow: 0 8px 18px rgba(4, 29, 47, 0.035);
 }
 
 .editor-section:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
+  padding-bottom: 14px;
 }
 
 .editor-section h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 0 0 12px;
   color: var(--blue);
   font-size: 14px;
   font-weight: 950;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.editor-section h2::after {
+  content: "";
+  height: 2px;
+  flex: 1;
+  background: rgba(201, 166, 74, 0.55);
 }
 
 .editor-section-actions {
@@ -2697,9 +2765,13 @@ h4 {
 .line-item-editor {
   display: grid;
   gap: 12px;
+  scroll-margin-top: 92px;
 }
 
 .pricing-mini-toolbar {
+  position: sticky;
+  top: 78px;
+  z-index: 3;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -2711,6 +2783,7 @@ h4 {
 }
 
 .pricing-mini-toolbar a {
+  border: 1px solid rgba(6, 43, 69, 0.12);
   border-radius: 999px;
   background: white;
   color: var(--blue);
@@ -2731,10 +2804,59 @@ h4 {
   padding: 10px;
 }
 
+.price-library-picker-toolbar > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.price-library-picker-toolbar strong {
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 950;
+}
+
 .price-library-picker-toolbar span {
   color: #556171;
   font-size: 12px;
   font-weight: 800;
+}
+
+.pricing-action-buttons,
+.pricing-bottom-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pricing-action-buttons .editor-add-button,
+.pricing-action-buttons .editor-secondary-button,
+.pricing-bottom-actions .editor-add-button,
+.pricing-bottom-actions .editor-secondary-button {
+  width: auto;
+  white-space: nowrap;
+}
+
+.pricing-bottom-actions {
+  justify-content: stretch;
+  border: 1px dashed rgba(6, 43, 69, 0.2);
+  border-radius: 9px;
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.pricing-bottom-actions a {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(6, 43, 69, 0.12);
+  border-radius: 999px;
+  background: white;
+  color: var(--blue);
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 900;
+  text-decoration: none;
 }
 
 .price-library-picker-panel {
@@ -2808,13 +2930,17 @@ h4 {
   display: grid;
   gap: 12px;
   margin-top: 2px;
+  scroll-margin-top: 92px;
 }
 
 .pricing-section-editor-header {
   display: grid;
   gap: 3px;
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
+  border: 1px solid rgba(6, 43, 69, 0.12);
+  border-left: 4px solid var(--gold);
+  border-radius: 9px;
+  background: #fffaf0;
+  padding: 10px 12px;
 }
 
 .pricing-section-editor-header strong {
@@ -3303,8 +3429,11 @@ h4 {
 .editor-totals {
   display: grid;
   gap: 7px;
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
+  scroll-margin-top: 92px;
+  border: 1px solid rgba(6, 43, 69, 0.12);
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 12px;
 }
 
 .editor-totals div {
@@ -3314,6 +3443,26 @@ h4 {
   gap: 12px;
   color: var(--body);
   font-size: 12px;
+}
+
+.editor-totals .editor-totals-heading {
+  margin: -12px -12px 5px;
+  border-radius: 10px 10px 0 0;
+  background: var(--blue);
+  color: white;
+  padding: 10px 12px;
+}
+
+.editor-totals .editor-totals-heading span,
+.editor-totals .editor-totals-heading strong {
+  color: white;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.submitted-packet-history,
+.send-submission-panel {
+  scroll-margin-top: 92px;
 }
 
 .editor-totals strong {
@@ -4890,6 +5039,13 @@ h4 {
   font-weight: 850;
 }
 
+@media (max-width: 1400px) {
+  .proposal-workbench {
+    grid-template-columns: minmax(400px, 0.5fr) minmax(0, 1fr);
+    gap: 18px;
+  }
+}
+
 @media (max-width: 1180px) {
   .proposal-workbench {
     grid-template-columns: 1fr;
@@ -4898,6 +5054,11 @@ h4 {
   .editor-panel {
     position: static;
     max-height: none;
+  }
+
+  .editor-navigation,
+  .pricing-mini-toolbar {
+    top: 0;
   }
 
   .preview-pane .proposal-grid {
@@ -4985,6 +5146,22 @@ h4 {
   .cover-inner,
   .full-footer {
     align-items: flex-start;
+  }
+
+  .price-library-picker-toolbar,
+  .pricing-action-buttons,
+  .pricing-bottom-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pricing-action-buttons .editor-add-button,
+  .pricing-action-buttons .editor-secondary-button,
+  .pricing-bottom-actions .editor-add-button,
+  .pricing-bottom-actions .editor-secondary-button,
+  .pricing-bottom-actions a {
+    justify-content: center;
+    width: 100%;
   }
 
   .print-bar {

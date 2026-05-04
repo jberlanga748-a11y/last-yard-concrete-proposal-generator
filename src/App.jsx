@@ -6612,7 +6612,7 @@ function SubmittedPacketHistory({ permissions = {}, records = [], onAttachPdf, o
   const visibleRecords = normalizeSubmittedPacketRecords(records);
 
   return (
-    <div className="submitted-packet-history">
+    <div className="submitted-packet-history" id="submitted-packet-history">
       <div className="submitted-packet-history-heading">
         <div>
           <strong>Submitted Packet History</strong>
@@ -6778,7 +6778,7 @@ function SendSubmissionPanel({ contacts = [], packetRecords = [], permissions = 
 
   if (packetRecords.length === 0) {
     return (
-      <div className="send-submission-panel">
+      <div className="send-submission-panel" id="send-submission">
         <div>
           <strong>Send / Submission</strong>
           <span>Create a packet record before preparing a send package.</span>
@@ -6788,7 +6788,7 @@ function SendSubmissionPanel({ contacts = [], packetRecords = [], permissions = 
   }
 
   return (
-    <div className="send-submission-panel">
+    <div className="send-submission-panel" id="send-submission">
       <div className="send-submission-heading">
         <div>
           <strong>Send / Submission</strong>
@@ -6975,6 +6975,8 @@ function ProposalEditor({
         <p className="permission-message">Viewer mode: proposal fields are read-only for your current role.</p>
       ) : null}
 
+      <EditorNavigation proposal={proposal} showTemplatePicker={showTemplatePicker} />
+
       <fieldset className="editor-permission-fieldset" disabled={readOnly}>
       {showTemplatePicker ? (
         <TemplatePicker
@@ -6995,7 +6997,7 @@ function ProposalEditor({
 
       <ContactSelector contacts={contacts} proposal={proposal} onSelectContact={onSelectContact} />
 
-      <EditorSection title="Proposal Info">
+      <EditorSection id="proposal-info-section" title="Proposal Info">
         <EditorField
           label="Proposal Type"
           path="proposalType"
@@ -7039,7 +7041,7 @@ function ProposalEditor({
         />
       </EditorSection>
 
-      <EditorSection title="Send / Follow-Up Tracking">
+      <EditorSection id="follow-up-tracking-section" title="Send / Follow-Up Tracking">
         <EditorField label="Sent Date" path="sentDate" type="date" value={proposal.sentDate} onChange={onChange} />
         <EditorField label="Sent To Name" path="sentToName" value={proposal.sentToName} onChange={onChange} />
         <EditorField label="Sent To Email" path="sentToEmail" type="email" value={proposal.sentToEmail} onChange={onChange} />
@@ -7075,7 +7077,7 @@ function ProposalEditor({
         />
       </EditorSection>
 
-      <EditorSection title="Client / Prepared For">
+      <EditorSection id="client-contact-section" title="Client / Prepared For">
         <EditorField
           label="Client / Company Name"
           path="client.companyName"
@@ -7101,7 +7103,7 @@ function ProposalEditor({
         />
       </EditorSection>
 
-      <EditorSection title="Project Summary">
+      <EditorSection id="project-summary-section" title="Project Summary">
         <EditorField label="Project Name" path="project.name" value={proposal.project.name} onChange={onChange} />
         <EditorField
           label="Project Location"
@@ -7165,7 +7167,7 @@ function ProposalEditor({
         />
       </EditorSection>
 
-      <EditorSection title="Project Photos">
+      <EditorSection id="project-photos-section" title="Project Photos">
         <ProjectPhotoEditor
           message={assetUploadMessage}
           photos={proposal.projectPhotos}
@@ -7174,7 +7176,7 @@ function ProposalEditor({
         />
       </EditorSection>
 
-      <EditorSection title="Plan Sheets / Takeoff Pages">
+      <EditorSection id="plan-sheets-section" title="Plan Sheets / Takeoff Pages">
         <PlanSheetEditor
           message={assetUploadMessage}
           planSheets={proposal.planSheets}
@@ -7185,7 +7187,7 @@ function ProposalEditor({
         />
       </EditorSection>
 
-      <EditorSection title="GC Packet Tables">
+      <EditorSection id="gc-packet-tables-section" title="GC Packet Tables">
         <GcPacketTablesEditor
           gcPacketTables={proposal.gcPacketTables}
           onAddRow={onAddGcPacketTableRow}
@@ -7195,7 +7197,7 @@ function ProposalEditor({
         />
       </EditorSection>
 
-      <EditorSection title="Scope of Work">
+      <EditorSection id="scope-section" title="Scope of Work">
         <ScopeBuilder
           scopeSections={proposal.scopeSections}
           onAddBullet={onAddScopeBullet}
@@ -7207,18 +7209,18 @@ function ProposalEditor({
         />
       </EditorSection>
 
-      <EditorSection title="Concrete Specifications">
+      <EditorSection id="concrete-specs-section" title="Concrete Specifications">
         <ConcreteSpecsEditor concreteSpecs={proposal.concreteSpecs} onChange={onConcreteSpecChange} />
       </EditorSection>
 
       {isGcPrime ? (
-        <EditorSection title="GC / Prime Contractor">
+        <EditorSection id="gc-prime-section" title="GC / Prime Contractor">
           <GcPrimeEditor gcPrime={proposal.gcPrime} onChange={onGcPrimeChange} />
         </EditorSection>
       ) : null}
 
       {proposal.packetMode === "full_gc_packet" ? (
-        <EditorSection title="Packet Builder">
+        <EditorSection id="packet-builder-section" title="Packet Builder">
           <PacketBuilderEditor
             proposal={proposal}
             onChange={onPacketBuilderChange}
@@ -7228,7 +7230,7 @@ function ProposalEditor({
         </EditorSection>
       ) : null}
 
-      <EditorSection title="Legal / Terms Blocks">
+      <EditorSection id="legal-terms-section" title="Legal / Terms Blocks">
         <div className="editor-section-actions">
           <button
             type="button"
@@ -7241,7 +7243,7 @@ function ProposalEditor({
         <LegalTermsEditor terms={proposal.terms} onChange={onChange} />
       </EditorSection>
 
-      <EditorSection title="Pricing">
+      <EditorSection id="pricing-section" title="Pricing">
         <nav className="pricing-mini-toolbar" aria-label="Pricing editor shortcuts">
           <a href="#pricing-line-items">Line Items</a>
           <a href="#pricing-library-picker">Add from Price Library</a>
@@ -7302,7 +7304,7 @@ function TemplatePicker({ currentTemplateId, draftLabel = "New Draft", onApplyTe
   }
 
   return (
-    <EditorSection title="Proposal Template">
+    <EditorSection id="proposal-template-section" title="Proposal Template">
       <p className="template-picker-help">
         Choose a starter template to prefill common scope, specs, exclusions, terms, pricing rows, and packet defaults.
       </p>
@@ -7356,9 +7358,45 @@ function TemplatePicker({ currentTemplateId, draftLabel = "New Draft", onApplyTe
   );
 }
 
+function EditorNavigation({ proposal, showTemplatePicker = false }) {
+  const links = [
+    showTemplatePicker ? ["Proposal Template", "proposal-template-section"] : null,
+    ["Proposal Info", "proposal-info-section"],
+    ["Client / Contact", "saved-contact-section"],
+    ["Project Summary", "project-summary-section"],
+    ["Photos", "project-photos-section"],
+    ["Smart Paste", "smart-paste-section"],
+    ["Scope", "scope-section"],
+    ["Concrete Specs", "concrete-specs-section"],
+    ["Pricing", "pricing-section"],
+    ["Alternates / Allowances", "pricing-alternates"],
+    proposal?.packetMode === "full_gc_packet" ? ["GC Packet Tables", "gc-packet-tables-section"] : null,
+    proposal?.packetMode === "full_gc_packet" ? ["Packet Builder", "packet-builder-section"] : null,
+    proposal?.packetMode === "full_gc_packet" ? ["Plan Sheets", "plan-sheets-section"] : null,
+    ["Submitted Packet History", "submitted-packet-history"],
+    ["Send / Submission", "send-submission"],
+  ].filter(Boolean);
+
+  return (
+    <nav className="editor-navigation" aria-label="Editor navigation">
+      <div>
+        <strong>Editor Navigation</strong>
+        <span>Jump to the work area you need.</span>
+      </div>
+      <div className="editor-navigation-links">
+        {links.map(([label, targetId]) => (
+          <a href={`#${targetId}`} key={targetId}>
+            {label}
+          </a>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
 function SmartPastePanel({ notes, result, onFill, onNotesChange }) {
   return (
-    <EditorSection title="Paste Project Notes">
+    <EditorSection id="smart-paste-section" title="Paste Project Notes">
       <p className="smart-paste-help">
         Paste rough bid notes, takeoff notes, or GC scope notes. Review all fields before sending.
       </p>
@@ -7425,15 +7463,23 @@ function LineItemEditor({
   return (
     <div className="line-item-editor" id="pricing-line-items">
       <div className="price-library-picker-toolbar" id="pricing-library-picker">
-        <button
-          className="editor-secondary-button"
-          type="button"
-          title="Open reusable unit price items and add one to this proposal."
-          onClick={() => setLibraryPickerOpen((isOpen) => !isOpen)}
-        >
-          Add from Price Library
-        </button>
-        <span>{activeLibraryItems.length} active reusable items</span>
+        <div>
+          <strong>Line Items</strong>
+          <span>{activeLibraryItems.length} active reusable price library items</span>
+        </div>
+        <div className="pricing-action-buttons">
+          <button className="editor-add-button" type="button" title="Add a blank pricing line item." onClick={onAddLineItem}>
+            Add Line Item
+          </button>
+          <button
+            className="editor-secondary-button"
+            type="button"
+            title="Open reusable unit price items and add one to this proposal."
+            onClick={() => setLibraryPickerOpen((isOpen) => !isOpen)}
+          >
+            Add from Price Library
+          </button>
+        </div>
       </div>
 
       {libraryPickerOpen ? (
@@ -7547,9 +7593,20 @@ function LineItemEditor({
         );
       })}
 
-      <button className="editor-add-button" type="button" onClick={onAddLineItem}>
-        Add line item
-      </button>
+      <div className="pricing-bottom-actions">
+        <button className="editor-add-button" type="button" title="Add another blank pricing line item." onClick={onAddLineItem}>
+          Add Line Item
+        </button>
+        <button
+          className="editor-secondary-button"
+          type="button"
+          title="Open reusable unit price items and add one to this proposal."
+          onClick={() => setLibraryPickerOpen((isOpen) => !isOpen)}
+        >
+          Add from Price Library
+        </button>
+        <a href="#pricing-summary">Jump to Pricing Summary</a>
+      </div>
     </div>
   );
 }
@@ -7672,6 +7729,10 @@ function LegalTermsEditor({ terms = {}, onChange }) {
 function PricingSummary({ totals }) {
   return (
     <div className="editor-totals" id="pricing-summary">
+      <div className="editor-totals-heading">
+        <span>Pricing Summary</span>
+        <strong>{formatCurrency(totals.total)}</strong>
+      </div>
       <div>
         <span>Subtotal</span>
         <strong>{formatCurrency(totals.subtotal)}</strong>
@@ -8632,7 +8693,7 @@ function ContactSelector({ contacts = [], proposal, onSelectContact }) {
   const linkedContact = getLinkedContact(proposal, contacts);
 
   return (
-    <EditorSection title="Select Saved Contact">
+    <EditorSection id="saved-contact-section" title="Select Saved Contact">
       {contacts.length > 0 ? (
         <label className="editor-field contact-select-field" htmlFor="field-contact-id">
           <span>Saved Contact</span>
@@ -8658,9 +8719,9 @@ function ContactSelector({ contacts = [], proposal, onSelectContact }) {
   );
 }
 
-function EditorSection({ title, children }) {
+function EditorSection({ id, title, children }) {
   return (
-    <section className="editor-section">
+    <section className="editor-section" id={id}>
       <h2>{title}</h2>
       <div className="editor-fields">{children}</div>
     </section>
