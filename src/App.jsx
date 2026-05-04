@@ -515,7 +515,7 @@ export default function App() {
       setRoute(nextRoute);
 
       if (isProposalRouteView(nextRoute.view)) {
-        setProposalDirty(false);
+        resetProposalTransientState();
         setProposalDraft(getInitialProposalForRoute(nextRoute, savedProposals, companySettings));
       }
     }
@@ -539,8 +539,8 @@ export default function App() {
   }, [proposalDirty, route.view]);
 
   useEffect(() => {
-    setSaveMessage("");
     setValidationNotice("");
+    setSmartPasteNotes("");
     setSmartPasteResult(null);
     setBidSmartPasteResult(null);
     setBackupMessage("");
@@ -701,13 +701,25 @@ export default function App() {
     setRoute(nextRoute);
 
     if (isProposalRouteView(nextRoute.view)) {
-      setProposalDirty(false);
+      resetProposalTransientState();
       setProposalDraft(
         options.proposal ? createEditableProposal(options.proposal) : getInitialProposalForRoute(nextRoute, savedProposals, companySettings),
       );
     }
 
     return true;
+  }
+
+  function resetProposalTransientState({ clearSaveMessage = true } = {}) {
+    setProposalDirty(false);
+    setValidationNotice("");
+    setSmartPasteNotes("");
+    setSmartPasteResult(null);
+    setAssetUploadMessage("");
+
+    if (clearSaveMessage) {
+      setSaveMessage("");
+    }
   }
 
   function openProposal(proposalId) {
@@ -725,7 +737,12 @@ export default function App() {
     }
 
     const proposal = createNewProposalDraft(savedProposals, companySettings);
-    navigate("/proposals/new", { proposal });
+
+    if (!navigate("/proposals/new", { proposal })) {
+      return;
+    }
+
+    setSaveMessage("New Draft started. This draft starts with starter template data. Choose a template or edit fields before sending.");
     recordActivity({
       action: "Proposal created",
       entityType: "proposal",
@@ -740,8 +757,12 @@ export default function App() {
     }
 
     const proposal = createBlankProposalDraft(savedProposals, companySettings);
-    navigate("/proposals/new", { proposal });
-    setSaveMessage("Started a blank proposal draft. Add required fields before saving or printing.");
+
+    if (!navigate("/proposals/new/blank", { proposal })) {
+      return;
+    }
+
+    setSaveMessage("Blank Draft started. Add required fields before saving or printing.");
   }
 
   function createNewProposalFromTemplate(templateId) {
@@ -750,7 +771,12 @@ export default function App() {
     }
 
     const proposal = createEditableProposal(applyTemplateToProposal(templateId, createNewProposalDraft(savedProposals, companySettings)));
-    navigate("/proposals/new", { proposal });
+
+    if (!navigate("/proposals/new", { proposal })) {
+      return;
+    }
+
+    setSaveMessage(`New Draft started from the ${proposal.templateName || templateId} template.`);
     recordActivity({
       action: "Proposal created",
       entityType: "proposal",
@@ -875,6 +901,9 @@ export default function App() {
     }
 
     setProposalDraft((currentProposal) => createEditableProposal(applyTemplateToProposal(templateId, currentProposal)));
+    setSmartPasteNotes("");
+    setSmartPasteResult(null);
+    setAssetUploadMessage("");
     setProposalDirty(false);
     setSaveMessage(`Applied ${template.name} template.`);
   }
@@ -884,9 +913,13 @@ export default function App() {
       return;
     }
 
-    setProposalDraft(createBlankProposalDraft(savedProposals, companySettings));
-    setProposalDirty(false);
-    setSaveMessage("Started a blank proposal draft. Add required fields before saving or printing.");
+    const proposal = createBlankProposalDraft(savedProposals, companySettings);
+
+    if (!navigate("/proposals/new/blank", { proposal, skipUnsavedCheck: true })) {
+      return;
+    }
+
+    setSaveMessage("Blank Draft started. Add required fields before saving or printing.");
   }
 
   function refreshProposalTermsFromCompanyDefaults() {
@@ -4401,7 +4434,9 @@ export default function App() {
             </>
           ) : (
               <ProposalActionBar
+                key={`action-${route.path}-${proposalDraft.id}`}
                 contacts={savedContacts}
+                draftLabel={getDraftRouteLabel(route)}
                 isPrintView={isPrintView}
                 proposal={proposalDraft}
                 revisionHistory={getRevisionHistory(proposalDraft, savedProposals)}
@@ -4429,10 +4464,12 @@ export default function App() {
           <div className={`proposal-workbench ${isPrintView ? "print-route-view" : ""}`}>
             {isPrintView ? null : (
               <ProposalEditor
+                key={`editor-${route.path}-${proposalDraft.id}`}
                 proposal={proposalDraft}
                 readOnly={!permissions.editProposal}
                 contacts={savedContacts}
                 assetUploadMessage={assetUploadMessage}
+                draftLabel={getDraftRouteLabel(route)}
                 showTemplatePicker={route.view === "new"}
                 onAddLineItem={addLineItem}
                 onAddLineItemFromLibrary={addLineItemFromPriceLibrary}
@@ -6381,6 +6418,7 @@ function CompanySettingsView({
 
 function ProposalActionBar({
   contacts = [],
+  draftLabel = "",
   isPrintView,
   permissions = {},
   proposal,
@@ -6413,6 +6451,7 @@ function ProposalActionBar({
         <p>
           {formatProposalNumberWithRevision(proposal)}
           <span className="revision-inline-date">{formatDisplayDate(proposal.revisionDate || proposal.proposalDate)}</span>
+          {draftLabel ? <Badge className="draft-route-badge">{draftLabel}</Badge> : null}
         </p>
         <h2>{proposal.project?.name || "Untitled Proposal"}</h2>
         <div className="revision-summary-line">
@@ -6443,9 +6482,9 @@ function ProposalActionBar({
           </button>
         ) : null}
         {showStartBlank && permissions.createProposal ? (
-          <a className="proposal-action-link" href="/proposals/new/blank" title="Clear starter template data for a fresh proposal draft.">
+          <button className="proposal-action-link" type="button" onClick={onStartBlankProposal} title="Clear starter template data for a fresh proposal draft.">
             Start Blank Proposal
-          </a>
+          </button>
         ) : null}
         <button type="button" title="Create a separate copy with a new proposal ID and draft status." onClick={onDuplicate} disabled={!permissions.createProposal}>
           Duplicate
@@ -6823,6 +6862,7 @@ function ValidationPanel({ className = "", notice = "", validation }) {
 function ProposalEditor({
   assetUploadMessage = "",
   contacts = [],
+  draftLabel = "",
   proposal,
   showTemplatePicker = false,
   onAddLineItem,
@@ -6883,6 +6923,7 @@ function ProposalEditor({
       {showTemplatePicker ? (
         <TemplatePicker
           currentTemplateId={proposal.templateId}
+          draftLabel={draftLabel}
           templates={PROPOSAL_TEMPLATES}
           onApplyTemplate={onApplyTemplate}
           onStartBlankProposal={onStartBlankProposal}
@@ -7198,7 +7239,7 @@ function ProposalEditor({
   );
 }
 
-function TemplatePicker({ currentTemplateId, onApplyTemplate, onStartBlankProposal, templates }) {
+function TemplatePicker({ currentTemplateId, draftLabel = "New Draft", onApplyTemplate, onStartBlankProposal, templates }) {
   function useTemplate(event, templateId) {
     event.preventDefault();
     onApplyTemplate(templateId);
@@ -7213,15 +7254,18 @@ function TemplatePicker({ currentTemplateId, onApplyTemplate, onStartBlankPropos
         Choose a template to start faster, or continue editing the current draft.
       </p>
       <p className="starter-data-notice">
-        This draft starts with starter template data. Choose a template or edit fields before sending.
+        {draftLabel === "Blank Draft"
+          ? "Blank Draft: this proposal starts without project, client, scope, pricing, photos, packet records, PDF attachments, send history, or follow-up data."
+          : "New Draft: this draft starts with starter template data. Choose a template or edit fields before sending."}
       </p>
       <div className="template-picker-actions">
-        <a
-          href="/proposals/new/blank"
+        <button
+          type="button"
           title="Clear starter project, client, scope, and pricing fields for a fresh draft."
+          onClick={onStartBlankProposal}
         >
           Start Blank Proposal
-        </a>
+        </button>
       </div>
       <div className="template-card-grid">
         {templates.map((template) => (
@@ -8652,6 +8696,14 @@ function isProposalRouteView(view) {
   return view === "new" || view === "edit" || view === "print";
 }
 
+function getDraftRouteLabel(route = {}) {
+  if (route.view !== "new") {
+    return "";
+  }
+
+  return route.blank ? "Blank Draft" : "New Draft";
+}
+
 function createCloudSyncState() {
   const localMessage = isSupabaseConfigured ? cloudSignInLabel : "Cloud save is not configured. Proposals, contacts, and settings are stored locally.";
 
@@ -9425,10 +9477,15 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
   const today = new Date();
   const validUntil = new Date(today);
   validUntil.setDate(validUntil.getDate() + getExpirationDays(companySettings));
+  const seedProposal = cloneObject(SEED_PROPOSAL);
+
+  delete seedProposal.demo;
+  delete seedProposal.metadata;
 
   return createEditableProposal({
-    ...applyCompanySettingsToProposal(SEED_PROPOSAL, companySettings, today),
+    ...applyCompanySettingsToProposal(seedProposal, companySettings, today),
     id: createProposalId(),
+    contactId: "",
     proposalNumber: getNextProposalNumber(existingProposals, today),
     status: "draft",
     revisionNumber: 0,
@@ -9441,6 +9498,14 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
     ...getDefaultTrackingFields(),
     proposalDate: formatInputDate(today),
     validUntil: formatInputDate(validUntil),
+    packetBuilder: normalizePacketBuilder([]),
+    projectPhotos: normalizeProjectPhotos([]),
+    planSheets: normalizePlanSheets([]),
+    gcPrime: getDefaultGcPrime(),
+    gcPacketTables: normalizeGcPacketTables({}),
+    submittedPacketRecords: [],
+    sendRecords: [],
+    proposalNotes: "",
     createdAt: today.toISOString(),
     updatedAt: today.toISOString(),
   });
@@ -9484,8 +9549,13 @@ function createBlankProposalDraft(existingProposals, companySettings = getDefaul
     exclusions: [],
     assumptions: [],
     projectPhotos: normalizeProjectPhotos([]),
+    planSheets: normalizePlanSheets([]),
+    packetBuilder: normalizePacketBuilder([]),
+    gcPrime: getDefaultGcPrime(),
+    gcPacketTables: normalizeGcPacketTables({}),
     submittedPacketRecords: [],
     sendRecords: [],
+    proposalNotes: "",
   });
 }
 
@@ -9629,6 +9699,7 @@ function duplicateProposalDraft(sourceProposal, existingProposals) {
     previousTotal: "",
     revisedTotal: "",
     submittedPacketRecords: [],
+    sendRecords: [],
     proposalDate: formatInputDate(now),
     validUntil: formatInputDate(validUntil),
     createdAt: now.toISOString(),
