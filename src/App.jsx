@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Component, useEffect, useState } from "react";
 import { LoginView } from "./components/auth/LoginView.jsx";
 import { BackupRestorePanel } from "./components/backup/BackupRestorePanel.jsx";
 import { BackupView } from "./components/backup/BackupView.jsx";
@@ -3339,36 +3339,38 @@ export default function App() {
           onToggleActive={togglePriceLibraryItem}
         />
       ) : isBidsView ? (
-        <BidsView
-          bidDraft={bidDraft}
-          bidSmartPasteNotes={bidSmartPasteNotes}
-          bidSmartPasteResult={bidSmartPasteResult}
-          bids={savedBids}
-          contacts={savedContacts}
-          isEditorOpen={bidEditorOpen}
-          message={bidMessage}
-          priorityFilter={bidPriorityFilter}
-          proposals={savedProposals}
-          searchQuery={bidSearchQuery}
-          statusFilter={bidStatusFilter}
-          onBackToDashboard={() => navigate("/dashboard")}
-          onCreateProposal={createProposalFromBid}
-          onDelete={deleteBid}
-          onDuplicate={duplicateBid}
-          onEdit={editBid}
-          onFillBidFromNotes={fillBidFromNotes}
-          onLinkProposal={linkBidToProposal}
-          onMarkSubmitted={markBidSubmitted}
-          onNew={startNewBid}
-          onOpenProposal={openProposal}
-          onPriorityFilterChange={setBidPriorityFilter}
-          onSave={saveBid}
-          onSearchChange={setBidSearchQuery}
-          onStatusChange={updateBidStatus}
-          onStatusFilterChange={setBidStatusFilter}
-          onUpdateBidSmartPasteNotes={setBidSmartPasteNotes}
-          onUpdateDraft={updateBidDraft}
-        />
+        <BidsRouteErrorBoundary onBackToDashboard={() => navigate("/dashboard")} onNewBid={startNewBid} resetKey={route.path}>
+          <BidsView
+            bidDraft={normalizeBid(bidDraft)}
+            bidSmartPasteNotes={bidSmartPasteNotes}
+            bidSmartPasteResult={bidSmartPasteResult}
+            bids={normalizeBids(savedBids)}
+            contacts={normalizeContacts(savedContacts)}
+            isEditorOpen={bidEditorOpen}
+            message={bidMessage}
+            priorityFilter={bidPriorityFilter}
+            proposals={normalizeProposals(savedProposals, companySettings)}
+            searchQuery={bidSearchQuery}
+            statusFilter={bidStatusFilter}
+            onBackToDashboard={() => navigate("/dashboard")}
+            onCreateProposal={createProposalFromBid}
+            onDelete={deleteBid}
+            onDuplicate={duplicateBid}
+            onEdit={editBid}
+            onFillBidFromNotes={fillBidFromNotes}
+            onLinkProposal={linkBidToProposal}
+            onMarkSubmitted={markBidSubmitted}
+            onNew={startNewBid}
+            onOpenProposal={openProposal}
+            onPriorityFilterChange={setBidPriorityFilter}
+            onSave={saveBid}
+            onSearchChange={setBidSearchQuery}
+            onStatusChange={updateBidStatus}
+            onStatusFilterChange={setBidStatusFilter}
+            onUpdateBidSmartPasteNotes={setBidSmartPasteNotes}
+            onUpdateDraft={updateBidDraft}
+          />
+        </BidsRouteErrorBoundary>
       ) : isSettingsView ? (
         <CompanySettingsView
           authLoading={authLoading}
@@ -3757,6 +3759,59 @@ function DashboardView({
       </div>
     </section>
   );
+}
+
+class BidsRouteErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      error: null,
+      resetKey: props.resetKey,
+    };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  static getDerivedStateFromProps(props, state) {
+    if (props.resetKey !== state.resetKey) {
+      return {
+        error: null,
+        resetKey: props.resetKey,
+      };
+    }
+
+    return null;
+  }
+
+  componentDidCatch(error) {
+    console.error("Bid Tracker render failed:", error);
+  }
+
+  render() {
+    if (!this.state.error) {
+      return this.props.children;
+    }
+
+    return (
+      <section className="bids-panel no-print">
+        <div className="contact-empty-state bid-route-error-state">
+          <p className="list-kicker">Bid Tracker</p>
+          <h3>Bid Tracker could not render one saved record.</h3>
+          <p>The app recovered instead of showing a blank screen. Start a new bid or return to the dashboard.</p>
+          <div className="settings-actions">
+            <button type="button" onClick={this.props.onNewBid}>
+              Add Bid
+            </button>
+            <button type="button" onClick={this.props.onBackToDashboard}>
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
 }
 
 function BidsView({
@@ -7406,6 +7461,21 @@ function loadSavedProposals(companySettings = getDefaultCompanySettings()) {
   return [createSeedProposal(companySettings)];
 }
 
+function normalizeProposals(proposals = [], companySettings = getDefaultCompanySettings()) {
+  const normalizedProposals = (Array.isArray(proposals) ? proposals : [])
+    .filter(isPlainObject)
+    .map((proposal) => {
+      try {
+        return createEditableProposal(proposal);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+
+  return normalizedProposals.length > 0 ? normalizedProposals : [createSeedProposal(companySettings)];
+}
+
 function saveStoredProposals(proposals) {
   try {
     window.localStorage.setItem(storageKey, JSON.stringify(proposals));
@@ -8183,26 +8253,32 @@ function createEmptyContact() {
 
 function normalizeContact(contact = {}) {
   const now = new Date().toISOString();
-  const contactType = CONTACT_TYPES.includes(contact.contactType) ? contact.contactType : "";
+  const sourceContact = isPlainObject(contact) ? contact : {};
+  const safeContactType = toSafeBidText(sourceContact.contactType);
+  const contactType = CONTACT_TYPES.includes(safeContactType) ? safeContactType : "";
 
   return {
-    id: contact.id || createProposalId(),
-    companyName: contact.companyName || "",
-    contactName: contact.contactName || "",
-    phone: contact.phone || "",
-    email: contact.email || "",
-    billingAddress: contact.billingAddress || contact.address || "",
-    defaultProjectAddress: contact.defaultProjectAddress || contact.projectAddress || "",
+    id: toSafeBidText(sourceContact.id) || createProposalId(),
+    companyName: toSafeBidText(sourceContact.companyName),
+    contactName: toSafeBidText(sourceContact.contactName),
+    phone: toSafeBidText(sourceContact.phone),
+    email: toSafeBidText(sourceContact.email),
+    billingAddress: toSafeBidText(sourceContact.billingAddress || sourceContact.address),
+    defaultProjectAddress: toSafeBidText(sourceContact.defaultProjectAddress || sourceContact.projectAddress),
     contactType,
-    notes: contact.notes || "",
-    demo: Boolean(contact.demo || contact.metadata?.isDemo),
+    notes: toSafeBidText(sourceContact.notes),
+    demo: Boolean(sourceContact.demo || sourceContact.metadata?.isDemo),
     metadata: {
-      ...(isPlainObject(contact.metadata) ? contact.metadata : {}),
-      isDemo: Boolean(contact.demo || contact.metadata?.isDemo),
+      ...(isPlainObject(sourceContact.metadata) ? sourceContact.metadata : {}),
+      isDemo: Boolean(sourceContact.demo || sourceContact.metadata?.isDemo),
     },
-    createdAt: contact.createdAt || now,
-    updatedAt: contact.updatedAt || now,
+    createdAt: toSafeBidText(sourceContact.createdAt) || now,
+    updatedAt: toSafeBidText(sourceContact.updatedAt) || now,
   };
+}
+
+function normalizeContacts(contacts = []) {
+  return (Array.isArray(contacts) ? contacts : []).filter(isPlainObject).map((contact) => normalizeContact(contact));
 }
 
 function upsertContact(contacts, contact) {
@@ -8253,43 +8329,75 @@ function createEmptyBid() {
 
 function normalizeBid(bid = {}) {
   const now = new Date().toISOString();
+  const sourceBid = isPlainObject(bid) ? bid : {};
+  const safeId = toSafeBidText(sourceBid.id);
+  const safeStatus = toSafeBidText(sourceBid.bidStatus);
+  const safePriority = toSafeBidText(sourceBid.priority);
 
   return {
     ...createEmptyBid(),
-    ...bid,
-    id: bid.id || createProposalId(),
-    projectName: bid.projectName || "",
-    ownerOrClient: bid.ownerOrClient || "",
-    gcCompany: bid.gcCompany || "",
-    contactId: bid.contactId || "",
-    contactName: bid.contactName || "",
-    contactEmail: bid.contactEmail || "",
-    contactPhone: bid.contactPhone || "",
-    projectLocation: bid.projectLocation || "",
-    bidSource: bid.bidSource || "",
-    bidUrl: bid.bidUrl || "",
-    planLink: bid.planLink || "",
-    bidDueDate: bid.bidDueDate || "",
-    bidDueTime: bid.bidDueTime || "",
-    preBidMeetingDate: bid.preBidMeetingDate || "",
-    rfiDeadline: bid.rfiDeadline || "",
-    addendumDeadline: bid.addendumDeadline || "",
-    expectedAwardDate: bid.expectedAwardDate || "",
-    bidStatus: BID_STATUSES.includes(bid.bidStatus) ? bid.bidStatus : "New",
-    priority: BID_PRIORITIES.includes(bid.priority) ? bid.priority : "Medium",
-    estimatorAssigned: bid.estimatorAssigned || "",
-    scopeSummary: bid.scopeSummary || "",
-    concreteScope: bid.concreteScope || "",
-    redFlags: bid.redFlags || "",
-    missingInfo: bid.missingInfo || "",
-    nextStep: bid.nextStep || "",
-    followUpDate: bid.followUpDate || "",
-    proposalId: bid.proposalId || "",
-    submittedPacketRecordId: bid.submittedPacketRecordId || "",
-    notes: bid.notes || "",
-    createdAt: bid.createdAt || now,
-    updatedAt: bid.updatedAt || now,
+    ...sourceBid,
+    id: safeId || createProposalId(),
+    projectName: toSafeBidText(sourceBid.projectName),
+    ownerOrClient: toSafeBidText(sourceBid.ownerOrClient),
+    gcCompany: toSafeBidText(sourceBid.gcCompany),
+    contactId: toSafeBidText(sourceBid.contactId),
+    contactName: toSafeBidText(sourceBid.contactName),
+    contactEmail: toSafeBidText(sourceBid.contactEmail),
+    contactPhone: toSafeBidText(sourceBid.contactPhone),
+    projectLocation: toSafeBidText(sourceBid.projectLocation),
+    bidSource: toSafeBidText(sourceBid.bidSource),
+    bidUrl: toSafeBidText(sourceBid.bidUrl),
+    planLink: toSafeBidText(sourceBid.planLink),
+    bidDueDate: toSafeBidText(sourceBid.bidDueDate),
+    bidDueTime: toSafeBidText(sourceBid.bidDueTime),
+    preBidMeetingDate: toSafeBidText(sourceBid.preBidMeetingDate),
+    rfiDeadline: toSafeBidText(sourceBid.rfiDeadline),
+    addendumDeadline: toSafeBidText(sourceBid.addendumDeadline),
+    expectedAwardDate: toSafeBidText(sourceBid.expectedAwardDate),
+    bidStatus: BID_STATUSES.includes(safeStatus) ? safeStatus : "New",
+    priority: BID_PRIORITIES.includes(safePriority) ? safePriority : "Medium",
+    estimatorAssigned: toSafeBidText(sourceBid.estimatorAssigned),
+    scopeSummary: toSafeBidText(sourceBid.scopeSummary),
+    concreteScope: toSafeBidText(sourceBid.concreteScope),
+    redFlags: toSafeBidText(sourceBid.redFlags),
+    missingInfo: toSafeBidText(sourceBid.missingInfo),
+    nextStep: toSafeBidText(sourceBid.nextStep),
+    followUpDate: toSafeBidText(sourceBid.followUpDate),
+    proposalId: toSafeBidText(sourceBid.proposalId),
+    submittedPacketRecordId: toSafeBidText(sourceBid.submittedPacketRecordId),
+    notes: toSafeBidText(sourceBid.notes),
+    createdAt: toSafeBidText(sourceBid.createdAt) || now,
+    updatedAt: toSafeBidText(sourceBid.updatedAt) || now,
   };
+}
+
+function toSafeBidText(value) {
+  if (!hasTextValue(value)) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.filter(hasTextValue).map(toSafeBidText).filter(hasTextValue).join(", ");
+  }
+
+  if (isPlainObject(value)) {
+    const likelyValue = value.value ?? value.text ?? value.name ?? value.label ?? value.title ?? value.display;
+
+    if (hasTextValue(likelyValue)) {
+      return toSafeBidText(likelyValue);
+    }
+  }
+
+  return "";
 }
 
 function hasBidDraftAnchor(bid = {}) {
@@ -9686,12 +9794,14 @@ function normalizePdfAttachment(pdfAttachment = {}) {
 }
 
 function hasPacketPdfAttachment(record = {}) {
-  const pdfAttachment = normalizePdfAttachment(record.pdfAttachment);
+  const safeRecord = isPlainObject(record) ? record : {};
+  const pdfAttachment = normalizePdfAttachment(safeRecord.pdfAttachment);
   return hasTextValue(pdfAttachment.storagePath) || hasTextValue(pdfAttachment.publicUrl);
 }
 
 function getSubmittedPacketPdfUrl(record = {}) {
-  const pdfAttachment = normalizePdfAttachment(record.pdfAttachment);
+  const safeRecord = isPlainObject(record) ? record : {};
+  const pdfAttachment = normalizePdfAttachment(safeRecord.pdfAttachment);
 
   if (hasTextValue(pdfAttachment.publicUrl)) {
     return pdfAttachment.publicUrl;
