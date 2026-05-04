@@ -17,15 +17,24 @@ export function AppChrome({
 }) {
   const activeView = ["new", "edit", "print"].includes(currentView) ? "list" : currentView;
   const navItems = [
-    ["dashboard", "Dashboard", () => onNavigate("/dashboard")],
-    ["list", "Proposals", () => onNavigate("/proposals")],
-    ["bids", "Bids", () => onNavigate("/bids")],
-    ["contacts", "Contacts", () => onNavigate("/contacts")],
-    ["priceLibrary", "Price Library", () => onNavigate("/price-library")],
-    ["activity", "Activity", () => onNavigate("/activity")],
-    ["settings", "Company Settings", () => onNavigate("/settings")],
-    ["backup", "Backup / Restore", () => onNavigate("/backup")],
+    { view: "dashboard", label: "Dashboard", shortLabel: "Dash", action: () => onNavigate("/dashboard") },
+    { view: "bids", label: "Bids", shortLabel: "Bids", action: () => onNavigate("/bids") },
+    { view: "list", label: "Proposals", shortLabel: "Props", action: () => onNavigate("/proposals") },
+    { view: "contacts", label: "Contacts", shortLabel: "Contacts", action: () => onNavigate("/contacts") },
+    {
+      view: "priceLibrary",
+      label: "Price Library",
+      shortLabel: "Prices",
+      action: () => onNavigate("/price-library"),
+    },
+    { view: "activity", label: "Activity", shortLabel: "Activity", action: () => onNavigate("/activity") },
+    { view: "settings", label: "Settings", shortLabel: "Settings", action: () => onNavigate("/settings") },
+    { view: "backup", label: "Backup", shortLabel: "Backup", action: () => onNavigate("/backup") },
   ];
+  const runMenuAction = (event, action) => {
+    event.currentTarget.closest("details")?.removeAttribute("open");
+    action();
+  };
 
   return (
     <header className="app-chrome no-print">
@@ -47,9 +56,16 @@ export function AppChrome({
         </div>
       </div>
       <nav className="app-nav" aria-label="Primary navigation">
-        {navItems.map(([view, label, action]) => (
-          <button className={activeView === view ? "active" : ""} key={view} type="button" onClick={action}>
-            {label}
+        {navItems.map(({ action, label, shortLabel, view }) => (
+          <button
+            className={activeView === view ? "active" : ""}
+            key={view}
+            type="button"
+            onClick={action}
+            title={label}
+          >
+            <span className="nav-label-full">{label}</span>
+            <span className="nav-label-short">{shortLabel}</span>
           </button>
         ))}
       </nav>
@@ -59,28 +75,96 @@ export function AppChrome({
           {roleLabel ? <span className="app-role-label">{roleLabel}</span> : null}
           {isCloudConfigured ? (
             authUser ? (
-              <button type="button" onClick={onSignOut} disabled={authLoading}>
+              <button type="button" onClick={onSignOut} disabled={authLoading} title="Sign out">
                 Sign Out
               </button>
             ) : (
-              <button type="button" onClick={onOpenLogin} disabled={authLoading}>
+              <button type="button" onClick={onOpenLogin} disabled={authLoading} title="Open login">
                 Sign In
               </button>
             )
           ) : null}
         </div>
-        <button type="button" onClick={onNewProposal} disabled={!permissions.createProposal}>
+        <button
+          className="app-desktop-action"
+          type="button"
+          onClick={onNewProposal}
+          disabled={!permissions.createProposal}
+          title="Start a new proposal"
+        >
           New Proposal
         </button>
-        <button type="button" onClick={onNewContact} disabled={!permissions.createContact}>
+        <button
+          className="app-desktop-action"
+          type="button"
+          onClick={onNewContact}
+          disabled={!permissions.createContact}
+          title="Add a new contact"
+        >
           New Contact
         </button>
-        <button type="button" onClick={onNewBid} disabled={!permissions.createBid}>
+        <button
+          className="app-desktop-action"
+          type="button"
+          onClick={onNewBid}
+          disabled={!permissions.createBid}
+          title="Add a new bid opportunity"
+        >
           New Bid
         </button>
-        <button className="gold-action" type="button" onClick={onNewGcPacket} disabled={!permissions.createProposal}>
+        <button
+          className="gold-action app-primary-action"
+          type="button"
+          onClick={onNewGcPacket}
+          disabled={!permissions.createProposal}
+          title="Start a new GC packet"
+        >
           New GC Packet
         </button>
+        <details className="app-actions-menu">
+          <summary title="Open quick actions">Actions</summary>
+          <div className="app-actions-popover">
+            <button
+              type="button"
+              onClick={(event) => runMenuAction(event, onNewProposal)}
+              disabled={!permissions.createProposal}
+              title="Start a new proposal"
+            >
+              New Proposal
+            </button>
+            <button
+              type="button"
+              onClick={(event) => runMenuAction(event, onNewGcPacket)}
+              disabled={!permissions.createProposal}
+              title="Start a new GC packet"
+            >
+              New GC Packet
+            </button>
+            <button
+              type="button"
+              onClick={(event) => runMenuAction(event, onNewBid)}
+              disabled={!permissions.createBid}
+              title="Add a new bid opportunity"
+            >
+              New Bid
+            </button>
+            <button
+              type="button"
+              onClick={(event) => runMenuAction(event, onNewContact)}
+              disabled={!permissions.createContact}
+              title="Add a new contact"
+            >
+              New Contact
+            </button>
+            <button
+              type="button"
+              onClick={(event) => runMenuAction(event, () => onNavigate("/backup"))}
+              title="Open Backup / Restore"
+            >
+              Backup / Restore
+            </button>
+          </div>
+        </details>
       </div>
     </header>
   );
