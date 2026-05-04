@@ -887,6 +887,26 @@ export default function App() {
     setSaveMessage("Started a blank proposal draft. Add required fields before saving or printing.");
   }
 
+  function refreshProposalTermsFromCompanyDefaults() {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    if (
+      !window.confirm(
+        "Refresh terms, exclusions, and GC scope-protection wording from Company Settings? This will replace the proposal-specific legal/default wording.",
+      )
+    ) {
+      return;
+    }
+
+    setProposalDraft((currentProposal) =>
+      createEditableProposal(applyCompanyLegalDefaultsToProposal(currentProposal, companySettings)),
+    );
+    setProposalDirty(true);
+    setSaveMessage("Terms refreshed from company defaults. Review before sending.");
+  }
+
   function updateSettingsDraft(field, value) {
     if (!canPerform("manageSettings", setSettingsMessage)) {
       return;
@@ -4287,6 +4307,7 @@ export default function App() {
                 onMovePacketBuilderSection={movePacketBuilderSection}
                 onPacketBuilderChange={updatePacketBuilderSection}
                 onResetPacketBuilder={resetPacketBuilderOrder}
+                onRefreshTermsFromDefaults={refreshProposalTermsFromCompanyDefaults}
                 onStartBlankProposal={startBlankProposalFromTemplatePicker}
                 onSmartPasteFill={fillProposalFromNotes}
                 onSmartPasteNotesChange={setSmartPasteNotes}
@@ -6064,6 +6085,136 @@ function CompanySettingsView({
             multiline
           />
         </div>
+        <div className="settings-wide-field settings-subsection">
+          <h3>Legal / Scope Protection</h3>
+          <p>Editable default wording for proposal terms, warranty limitations, exclusions, and GC / Prime scope-control language.</p>
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Proposal Expiration Clause"
+            path="settings.defaultProposalExpirationClause"
+            value={settings.defaultProposalExpirationClause}
+            onChange={(_, value) => onChange("defaultProposalExpirationClause", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Deposit Terms"
+            path="settings.defaultDepositTerms"
+            value={settings.defaultDepositTerms}
+            onChange={(_, value) => onChange("defaultDepositTerms", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Progress Billing Terms"
+            path="settings.defaultProgressBillingTerms"
+            value={settings.defaultProgressBillingTerms}
+            onChange={(_, value) => onChange("defaultProgressBillingTerms", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Final Payment Terms"
+            path="settings.defaultFinalPaymentTerms"
+            value={settings.defaultFinalPaymentTerms}
+            onChange={(_, value) => onChange("defaultFinalPaymentTerms", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Late Payment / Collection Language"
+            path="settings.defaultLatePaymentTerms"
+            value={settings.defaultLatePaymentTerms}
+            onChange={(_, value) => onChange("defaultLatePaymentTerms", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Change Order Language"
+            path="settings.defaultChangeOrderLanguage"
+            value={settings.defaultChangeOrderLanguage}
+            onChange={(_, value) => onChange("defaultChangeOrderLanguage", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Site Readiness Language"
+            path="settings.defaultSiteReadinessLanguage"
+            value={settings.defaultSiteReadinessLanguage}
+            onChange={(_, value) => onChange("defaultSiteReadinessLanguage", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Weather Delay Language"
+            path="settings.defaultWeatherDelayLanguage"
+            value={settings.defaultWeatherDelayLanguage}
+            onChange={(_, value) => onChange("defaultWeatherDelayLanguage", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Utility Responsibility"
+            path="settings.defaultUtilityResponsibility"
+            value={settings.defaultUtilityResponsibility}
+            onChange={(_, value) => onChange("defaultUtilityResponsibility", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Hidden / Unknown Conditions"
+            path="settings.defaultHiddenConditions"
+            value={settings.defaultHiddenConditions}
+            onChange={(_, value) => onChange("defaultHiddenConditions", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Concrete Cracking Disclaimer"
+            path="settings.defaultConcreteCrackingDisclaimer"
+            value={settings.defaultConcreteCrackingDisclaimer}
+            onChange={(_, value) => onChange("defaultConcreteCrackingDisclaimer", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Color / Finish Variation Disclaimer"
+            path="settings.defaultColorFinishVariationDisclaimer"
+            value={settings.defaultColorFinishVariationDisclaimer}
+            onChange={(_, value) => onChange("defaultColorFinishVariationDisclaimer", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="Warranty Limitation"
+            path="settings.defaultWarrantyLimitation"
+            value={settings.defaultWarrantyLimitation}
+            onChange={(_, value) => onChange("defaultWarrantyLimitation", value)}
+            multiline
+          />
+        </div>
+        <div className="settings-wide-field">
+          <EditorField
+            label="GC / Prime Scope-Control Note"
+            path="settings.defaultGcScopeControlNote"
+            value={settings.defaultGcScopeControlNote}
+            onChange={(_, value) => onChange("defaultGcScopeControlNote", value)}
+            multiline
+          />
+        </div>
       </div>
       </fieldset>
     </section>
@@ -6545,6 +6696,7 @@ function ProposalEditor({
   onMovePacketBuilderSection,
   onPacketBuilderChange,
   onRemoveGcPacketTableRow,
+  onRefreshTermsFromDefaults,
   onResetPacketBuilder,
   onStartBlankProposal,
   onSmartPasteFill,
@@ -6821,6 +6973,15 @@ function ProposalEditor({
       ) : null}
 
       <EditorSection title="Legal / Terms Blocks">
+        <div className="editor-section-actions">
+          <button
+            type="button"
+            title="Replace proposal-specific terms and exclusions with the latest saved Company Settings defaults."
+            onClick={onRefreshTermsFromDefaults}
+          >
+            Refresh Terms from Company Defaults
+          </button>
+        </div>
         <LegalTermsEditor terms={proposal.terms} onChange={onChange} />
       </EditorSection>
 
@@ -7216,13 +7377,17 @@ function LegalTermsEditor({ terms = {}, onChange }) {
     ["proposalExpiration", "Proposal Expiration"],
     ["depositText", "Deposit / Scheduling Language"],
     ["progressBilling", "Progress Billing"],
+    ["finalPayment", "Final Payment"],
+    ["latePayment", "Late Payment / Collection"],
     ["changeOrderLanguage", "Change Order Language"],
-    ["weatherSiteReadiness", "Weather / Site Readiness"],
+    ["siteReadiness", "Site Readiness"],
+    ["weatherDelay", "Weather Delays"],
     ["utilityResponsibility", "Utility Responsibility"],
     ["hiddenConditions", "Hidden Conditions"],
     ["concreteCrackingDisclaimer", "Concrete Cracking Disclaimer"],
     ["colorFinishVariationDisclaimer", "Color / Finish Variation Disclaimer"],
     ["warrantyLimitation", "Warranty Limitation"],
+    ["gcScopeControl", "GC / Prime Scope Control"],
     ["acceptance", "Acceptance Language"],
   ];
 
@@ -9092,7 +9257,7 @@ function createNewGcPacketDraft(existingProposals, companySettings = getDefaultC
   const baseProposal = createNewProposalDraft(existingProposals, companySettings);
   const gcPacketTables = normalizeGcPacketTables(baseProposal.gcPacketTables);
 
-  return createEditableProposal({
+  return createEditableProposal(applyCompanyLegalDefaultsToProposal({
     ...baseProposal,
     proposalType: "gc_prime",
     type: "gc_prime",
@@ -9110,12 +9275,13 @@ function createNewGcPacketDraft(existingProposals, companySettings = getDefaultC
         ...gcPacketTables.proposalNotes,
         enabled: true,
         proposalBasis: "Proposal based on provided plans, addenda, and listed clarifications.",
-        contractScopeControl: "Accepted bid form, exclusions, and clarifications control final contract scope.",
+        contractScopeControl:
+          "Proposal includes only the concrete scope specifically listed. Work shown elsewhere in the documents is excluded unless expressly included in this proposal, SOV, or written accepted scope sheet.",
         acceptanceSummary: "GC to identify accepted alternates and allowances before contract execution.",
         gcPrimeReviewer: "Reviewed by: ______________________________ Date: __________",
       },
     },
-  });
+  }, companySettings));
 }
 
 function createProposalRevisionDraft(sourceProposal, existingProposals = []) {
@@ -10181,6 +10347,7 @@ function hasFullPacketContent(proposal = {}) {
 
 function getDefaultCompanySettings() {
   const company = SEED_PROPOSAL.company;
+  const terms = SEED_PROPOSAL.terms || {};
 
   return {
     companyName: company.name,
@@ -10191,10 +10358,26 @@ function getDefaultCompanySettings() {
     credentialsText: company.credentials.join(" | "),
     serviceArea: company.serviceArea,
     defaultProposalExpirationDays: 30,
-    defaultPaymentTerms: SEED_PROPOSAL.terms.payment,
+    defaultPaymentTerms: terms.payment,
+    defaultProposalExpirationClause:
+      "Price is valid for {days} days from proposal date unless otherwise stated. Material or labor price changes after expiration require revised pricing.",
+    defaultDepositTerms: terms.depositText,
+    defaultProgressBillingTerms: terms.progressBilling,
+    defaultFinalPaymentTerms: terms.finalPayment,
+    defaultLatePaymentTerms: terms.latePayment,
+    defaultChangeOrderLanguage: terms.changeOrderLanguage,
+    defaultSiteReadinessLanguage: terms.siteReadiness,
+    defaultWeatherDelayLanguage: terms.weatherDelay,
+    defaultUtilityResponsibility: terms.utilityResponsibility,
+    defaultHiddenConditions: terms.hiddenConditions,
+    defaultConcreteCrackingDisclaimer: terms.concreteCrackingDisclaimer,
+    defaultColorFinishVariationDisclaimer: terms.colorFinishVariationDisclaimer,
+    defaultWarrantyLimitation: terms.warrantyLimitation,
+    defaultGcScopeControlNote:
+      "Proposal includes only the concrete scope specifically listed. Work shown elsewhere in the documents is excluded unless expressly included in this proposal, SOV, or written accepted scope sheet.",
     defaultExclusions: SEED_PROPOSAL.exclusions.join("\n"),
     defaultWarrantyNote: "",
-    defaultSignatureBlock: SEED_PROPOSAL.terms.acceptance,
+    defaultSignatureBlock: terms.acceptance,
   };
 }
 
@@ -10215,11 +10398,131 @@ function normalizeCompanySettings(settings = {}) {
     defaultPaymentTerms: hasTextValue(settings.defaultPaymentTerms)
       ? settings.defaultPaymentTerms
       : defaults.defaultPaymentTerms,
+    defaultProposalExpirationClause: hasTextValue(settings.defaultProposalExpirationClause)
+      ? settings.defaultProposalExpirationClause
+      : defaults.defaultProposalExpirationClause,
+    defaultDepositTerms: hasTextValue(settings.defaultDepositTerms) ? settings.defaultDepositTerms : defaults.defaultDepositTerms,
+    defaultProgressBillingTerms: hasTextValue(settings.defaultProgressBillingTerms)
+      ? settings.defaultProgressBillingTerms
+      : defaults.defaultProgressBillingTerms,
+    defaultFinalPaymentTerms: hasTextValue(settings.defaultFinalPaymentTerms)
+      ? settings.defaultFinalPaymentTerms
+      : defaults.defaultFinalPaymentTerms,
+    defaultLatePaymentTerms: hasTextValue(settings.defaultLatePaymentTerms)
+      ? settings.defaultLatePaymentTerms
+      : defaults.defaultLatePaymentTerms,
+    defaultChangeOrderLanguage: hasTextValue(settings.defaultChangeOrderLanguage)
+      ? settings.defaultChangeOrderLanguage
+      : defaults.defaultChangeOrderLanguage,
+    defaultSiteReadinessLanguage: hasTextValue(settings.defaultSiteReadinessLanguage)
+      ? settings.defaultSiteReadinessLanguage
+      : defaults.defaultSiteReadinessLanguage,
+    defaultWeatherDelayLanguage: hasTextValue(settings.defaultWeatherDelayLanguage)
+      ? settings.defaultWeatherDelayLanguage
+      : defaults.defaultWeatherDelayLanguage,
+    defaultUtilityResponsibility: hasTextValue(settings.defaultUtilityResponsibility)
+      ? settings.defaultUtilityResponsibility
+      : defaults.defaultUtilityResponsibility,
+    defaultHiddenConditions: hasTextValue(settings.defaultHiddenConditions)
+      ? settings.defaultHiddenConditions
+      : defaults.defaultHiddenConditions,
+    defaultConcreteCrackingDisclaimer: hasTextValue(settings.defaultConcreteCrackingDisclaimer)
+      ? settings.defaultConcreteCrackingDisclaimer
+      : defaults.defaultConcreteCrackingDisclaimer,
+    defaultColorFinishVariationDisclaimer: hasTextValue(settings.defaultColorFinishVariationDisclaimer)
+      ? settings.defaultColorFinishVariationDisclaimer
+      : defaults.defaultColorFinishVariationDisclaimer,
+    defaultWarrantyLimitation: hasTextValue(settings.defaultWarrantyLimitation)
+      ? settings.defaultWarrantyLimitation
+      : defaults.defaultWarrantyLimitation,
+    defaultGcScopeControlNote: hasTextValue(settings.defaultGcScopeControlNote)
+      ? settings.defaultGcScopeControlNote
+      : defaults.defaultGcScopeControlNote,
     defaultExclusions: hasTextValue(settings.defaultExclusions) ? settings.defaultExclusions : defaults.defaultExclusions,
     defaultWarrantyNote: settings.defaultWarrantyNote ?? defaults.defaultWarrantyNote,
     defaultSignatureBlock: hasTextValue(settings.defaultSignatureBlock)
       ? settings.defaultSignatureBlock
       : defaults.defaultSignatureBlock,
+  };
+}
+
+function buildDefaultTermsFromCompanySettings(settings = {}, proposal = {}) {
+  const normalizedSettings = normalizeCompanySettings(settings);
+  const isGcPrime = proposal.proposalType === "gc_prime" || proposal.type === "gc_prime" || proposal.packetMode === "full_gc_packet";
+  const siteReadiness = normalizedSettings.defaultSiteReadinessLanguage;
+  const weatherDelay = normalizedSettings.defaultWeatherDelayLanguage;
+  const terms = {
+    payment: normalizedSettings.defaultPaymentTerms,
+    proposalExpiration: formatLegalClause(normalizedSettings.defaultProposalExpirationClause, normalizedSettings),
+    depositText: normalizedSettings.defaultDepositTerms,
+    progressBilling: normalizedSettings.defaultProgressBillingTerms,
+    finalPayment: normalizedSettings.defaultFinalPaymentTerms,
+    latePayment: normalizedSettings.defaultLatePaymentTerms,
+    changeOrderLanguage: normalizedSettings.defaultChangeOrderLanguage,
+    siteReadiness,
+    weatherDelay,
+    weatherSiteReadiness: [siteReadiness, weatherDelay].filter(hasTextValue).join(" "),
+    utilityResponsibility: normalizedSettings.defaultUtilityResponsibility,
+    hiddenConditions: normalizedSettings.defaultHiddenConditions,
+    concreteCrackingDisclaimer: normalizedSettings.defaultConcreteCrackingDisclaimer,
+    colorFinishVariationDisclaimer: normalizedSettings.defaultColorFinishVariationDisclaimer,
+    warrantyLimitation: normalizedSettings.defaultWarrantyLimitation,
+    warrantyNote: normalizedSettings.defaultWarrantyNote,
+    acceptance: normalizedSettings.defaultSignatureBlock,
+    signatureBlock: normalizedSettings.defaultSignatureBlock,
+  };
+
+  if (isGcPrime) {
+    terms.gcScopeControl = normalizedSettings.defaultGcScopeControlNote;
+  }
+
+  return terms;
+}
+
+function formatLegalClause(value, settings = {}) {
+  return String(value || "").replace(/\{days\}/g, String(getExpirationDays(settings)));
+}
+
+function applyCompanyLegalDefaultsToProposal(sourceProposal, settings = getDefaultCompanySettings()) {
+  const normalizedSettings = normalizeCompanySettings(settings);
+  const nextProposal = cloneObject(sourceProposal);
+  const defaultTerms = buildDefaultTermsFromCompanySettings(normalizedSettings, nextProposal);
+  const isGcPrime =
+    nextProposal.proposalType === "gc_prime" || nextProposal.type === "gc_prime" || nextProposal.packetMode === "full_gc_packet";
+  const updatedProposal = {
+    ...nextProposal,
+    exclusions: parseMultilineList(normalizedSettings.defaultExclusions),
+    terms: {
+      ...(nextProposal.terms || {}),
+      ...defaultTerms,
+    },
+  };
+
+  if (!isGcPrime) {
+    return updatedProposal;
+  }
+
+  const gcPacketTables = normalizeGcPacketTables(updatedProposal.gcPacketTables);
+  const scopeControlSummary = normalizeScopeControlSummary(updatedProposal.gcPrime?.scopeControlSummary);
+
+  return {
+    ...updatedProposal,
+    gcPrime: {
+      ...(updatedProposal.gcPrime || {}),
+      scopeControlSummary: {
+        ...scopeControlSummary,
+        ownerGcByOthers: scopeControlSummary.ownerGcByOthers || "Owner / GC / others are responsible for work not expressly included in this proposal.",
+        hiddenUnshownConditionsNote: defaultTerms.hiddenConditions || scopeControlSummary.hiddenUnshownConditionsNote,
+      },
+    },
+    gcPacketTables: {
+      ...gcPacketTables,
+      proposalNotes: {
+        ...gcPacketTables.proposalNotes,
+        enabled: true,
+        contractScopeControl: defaultTerms.gcScopeControl || gcPacketTables.proposalNotes.contractScopeControl,
+      },
+    },
   };
 }
 
@@ -10229,7 +10532,7 @@ function applyCompanySettingsToProposal(sourceProposal, settings, proposalDate =
   const validUntil = new Date(proposalDate);
   validUntil.setDate(validUntil.getDate() + getExpirationDays(normalizedSettings));
 
-  return {
+  return applyCompanyLegalDefaultsToProposal({
     ...nextProposal,
     company: {
       ...nextProposal.company,
@@ -10242,15 +10545,7 @@ function applyCompanySettingsToProposal(sourceProposal, settings, proposalDate =
       serviceArea: normalizedSettings.serviceArea,
     },
     validUntil: formatInputDate(validUntil),
-    exclusions: parseMultilineList(normalizedSettings.defaultExclusions),
-    terms: {
-      ...nextProposal.terms,
-      payment: normalizedSettings.defaultPaymentTerms,
-      acceptance: normalizedSettings.defaultSignatureBlock,
-      signatureBlock: normalizedSettings.defaultSignatureBlock,
-      warrantyNote: normalizedSettings.defaultWarrantyNote,
-    },
-  };
+  }, normalizedSettings);
 }
 
 function getExpirationDays(settings = {}) {
@@ -10627,6 +10922,7 @@ function createEditableProposal(seedProposal) {
   const proposalType = proposal.proposalType ?? proposal.type ?? "commercial";
   const revisionNumber = normalizeRevisionNumber(proposal.revisionNumber);
   const revisionLabel = proposal.revisionLabel || formatRevisionLabel(revisionNumber);
+  const hasProposalTerms = Object.prototype.hasOwnProperty.call(proposal, "terms");
 
   const editableProposal = {
     ...proposal,
@@ -10691,8 +10987,7 @@ function createEditableProposal(seedProposal) {
     exclusions: normalizeTextList(proposal.exclusions),
     assumptions: normalizeTextList(proposal.assumptions),
     terms: {
-      ...SEED_PROPOSAL.terms,
-      ...(proposal.terms || {}),
+      ...(hasProposalTerms ? proposal.terms || {} : SEED_PROPOSAL.terms),
     },
     lineItems: (proposal.lineItems || []).map((item) => ({
       ...item,
@@ -11643,18 +11938,25 @@ function hasRfiRowData(row = {}) {
 }
 
 function buildLegalTermsSections(terms = {}) {
+  const legacyWeatherSiteReadiness =
+    !hasTextValue(terms.siteReadiness) && !hasTextValue(terms.weatherDelay) ? terms.weatherSiteReadiness : "";
   const legalFields = [
     ["Proposal Expiration", terms.proposalExpiration],
     ["Payment Terms", terms.payment],
     ["Deposit / Scheduling", terms.depositText],
     ["Progress Billing", terms.progressBilling],
+    ["Final Payment", terms.finalPayment],
+    ["Late Payment / Collection", terms.latePayment],
     ["Change Orders", terms.changeOrderLanguage],
-    ["Weather / Site Readiness", terms.weatherSiteReadiness],
+    ["Site Readiness", terms.siteReadiness],
+    ["Weather Delays", terms.weatherDelay],
+    ["Weather / Site Readiness", legacyWeatherSiteReadiness],
     ["Utility Responsibility", terms.utilityResponsibility],
     ["Hidden Conditions", terms.hiddenConditions],
     ["Concrete Cracking", terms.concreteCrackingDisclaimer],
     ["Color / Finish Variation", terms.colorFinishVariationDisclaimer],
     ["Warranty Limitation", terms.warrantyLimitation],
+    ["GC / Prime Scope Control", terms.gcScopeControl],
     ["Acceptance", terms.acceptance],
   ];
 

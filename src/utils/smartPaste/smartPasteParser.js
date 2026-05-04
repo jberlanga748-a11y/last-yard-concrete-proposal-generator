@@ -479,10 +479,23 @@ function parseProjectNotes(notes) {
   setTextValue("projectAddress", "projectAddress", "project address");
   setTextValue("schedule", "schedule", "schedule");
   setTextValue("terms", "terms", "terms");
+  setTextValue("proposalExpiration", "proposalExpiration", "proposal expiration");
   setTextValue("paymentTerms", "paymentTerms", "payment terms");
+  setTextValue("depositText", "depositTerms", "deposit terms");
+  setTextValue("progressBilling", "progressBilling", "progress billing");
+  setTextValue("finalPayment", "finalPayment", "final payment");
+  setTextValue("latePayment", "latePayment", "late payment");
   setTextValue("changeOrderLanguage", "changeOrders", "change orders");
+  setTextValue("siteReadiness", "siteReadiness", "site readiness");
+  setTextValue("weatherDelay", "weatherDelays", "weather delays");
+  setTextValue("weatherSiteReadiness", "weatherSiteReadiness", "weather / site readiness");
+  setTextValue("utilityResponsibility", "utilityResponsibility", "utility responsibility");
   setTextValue("hiddenConditions", "hiddenConditions", "hidden conditions");
+  setTextValue("concreteCrackingDisclaimer", "concreteCracking", "concrete cracking");
+  setTextValue("colorFinishVariationDisclaimer", "colorFinishVariation", "color / finish variation");
   setTextValue("warrantyLimitation", "warranty", "warranty");
+  setTextValue("warrantyLimitation", "warrantyLimitation", "warranty limitation");
+  setTextValue("gcScopeControl", "gcScopeControl", "GC / Prime scope control");
   setTextValue("ownerGcByOthers", "ownerGcByOthers", "Owner / GC by others");
   setTextValue("rfiClarificationNotes", "rfiClarifications", "RFIs / Clarifications");
   setTextValue("addendaAcknowledged", "addendaAcknowledged", "addenda acknowledged");
@@ -585,6 +598,9 @@ function parseProjectNotes(notes) {
 function applyParsedNotesToProposal(proposal, parsedNotes) {
   const nextProposal = cloneObject(proposal);
   const values = parsedNotes.values;
+  nextProposal.terms = nextProposal.terms || {};
+  nextProposal.gcPrime = nextProposal.gcPrime || {};
+  nextProposal.gcPacketTables = normalizeGcPacketTables(nextProposal.gcPacketTables);
 
   if (values.projectName) {
     nextProposal.project.name = values.projectName;
@@ -657,6 +673,29 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     };
   }
 
+  const termFieldMap = [
+    ["proposalExpiration", "proposalExpiration"],
+    ["depositText", "depositText"],
+    ["progressBilling", "progressBilling"],
+    ["finalPayment", "finalPayment"],
+    ["latePayment", "latePayment"],
+    ["siteReadiness", "siteReadiness"],
+    ["weatherDelay", "weatherDelay"],
+    ["weatherSiteReadiness", "weatherSiteReadiness"],
+    ["utilityResponsibility", "utilityResponsibility"],
+    ["concreteCrackingDisclaimer", "concreteCrackingDisclaimer"],
+    ["colorFinishVariationDisclaimer", "colorFinishVariationDisclaimer"],
+  ];
+
+  termFieldMap.forEach(([valueKey, termKey]) => {
+    if (values[valueKey]) {
+      nextProposal.terms = {
+        ...(nextProposal.terms || {}),
+        [termKey]: values[valueKey],
+      };
+    }
+  });
+
   if (values.paymentTerms) {
     nextProposal.terms.payment = values.paymentTerms;
   }
@@ -676,6 +715,19 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
 
   if (values.warrantyLimitation) {
     nextProposal.terms.warrantyLimitation = values.warrantyLimitation;
+  }
+
+  if (values.gcScopeControl) {
+    nextProposal.terms.gcScopeControl = values.gcScopeControl;
+    const gcPacketTables = normalizeGcPacketTables(nextProposal.gcPacketTables);
+    nextProposal.gcPacketTables = {
+      ...gcPacketTables,
+      proposalNotes: {
+        ...gcPacketTables.proposalNotes,
+        enabled: true,
+        contractScopeControl: values.gcScopeControl,
+      },
+    };
   }
 
   if (values.ownerGcByOthers) {
@@ -754,10 +806,23 @@ function collectSmartPasteSections(notes) {
     "exclusions",
     "assumptions",
     "terms",
+    "proposalExpiration",
     "paymentTerms",
+    "depositTerms",
+    "progressBilling",
+    "finalPayment",
+    "latePayment",
     "changeOrders",
+    "siteReadiness",
+    "weatherDelays",
+    "weatherSiteReadiness",
+    "utilityResponsibility",
     "hiddenConditions",
+    "concreteCracking",
+    "colorFinishVariation",
     "warranty",
+    "warrantyLimitation",
+    "gcScopeControl",
     "ownerGcByOthers",
     "lineItems",
     "rfiClarifications",
@@ -781,10 +846,23 @@ function collectSmartPasteSections(notes) {
   const textCaptureKeys = new Set([
     "rfiClarifications",
     "addendaAcknowledged",
+    "proposalExpiration",
     "paymentTerms",
+    "depositTerms",
+    "progressBilling",
+    "finalPayment",
+    "latePayment",
     "changeOrders",
+    "siteReadiness",
+    "weatherDelays",
+    "weatherSiteReadiness",
+    "utilityResponsibility",
     "hiddenConditions",
+    "concreteCracking",
+    "colorFinishVariation",
     "warranty",
+    "warrantyLimitation",
+    "gcScopeControl",
     "ownerGcByOthers",
     "proposalNotes",
     "gcPrimeNotes",
@@ -1076,19 +1154,31 @@ function getSmartPasteLabelKey(label) {
     alternates: "pricingSections",
     assumptions: "assumptions",
     "change order": "changeOrders",
+    "change order language": "changeOrders",
     "change orders": "changeOrders",
     client: "clientCompany",
+    "color / finish variation": "colorFinishVariation",
+    "color finish variation": "colorFinishVariation",
     "concrete specs": "concreteSpecs",
+    "concrete cracking": "concreteCracking",
+    "concrete cracking disclaimer": "concreteCracking",
     contact: "contactName",
     "contract scope control": "contractScopeControl",
+    "deposit terms": "depositTerms",
     email: "clientEmail",
     exclusions: "exclusions",
+    "final payment": "finalPayment",
     "gc / prime notes": "gcPrimeNotes",
     "gc / prime reviewer": "gcPrimeReviewer",
+    "gc / prime scope control": "gcScopeControl",
     "gc prime notes": "gcPrimeNotes",
     "gc prime reviewer": "gcPrimeReviewer",
+    "gc prime scope control": "gcScopeControl",
     "hidden condition": "hiddenConditions",
     "hidden conditions": "hiddenConditions",
+    "hidden / unknown conditions": "hiddenConditions",
+    "late payment": "latePayment",
+    "late payment / collection": "latePayment",
     "line items": "lineItems",
     "line item": "lineItems",
     location: "projectLocation",
@@ -1102,6 +1192,8 @@ function getSmartPasteLabelKey(label) {
     "project address": "projectAddress",
     "project location": "projectLocation",
     "project name": "projectName",
+    "progress billing": "progressBilling",
+    "proposal expiration": "proposalExpiration",
     "proposal notes / acceptance summary": "proposalNotes",
     "proposal notes": "proposalNotes",
     "proposal basis": "proposalBasis",
@@ -1113,12 +1205,20 @@ function getSmartPasteLabelKey(label) {
     schedule: "schedule",
     "schedule of values": "scheduleOfValues",
     scope: "scope",
+    "scope control": "gcScopeControl",
     "shade footing estimate": "shadeFootingEstimate",
+    "site readiness": "siteReadiness",
     "takeoff quantities": "takeoffQuantities",
     terms: "terms",
     "total if all accepted": "pricingSections",
     "total if all alternates accepted": "pricingSections",
+    "utilities": "utilityResponsibility",
+    "utility responsibility": "utilityResponsibility",
     warranty: "warranty",
+    "warranty limitation": "warrantyLimitation",
+    "weather delay": "weatherDelays",
+    "weather delays": "weatherDelays",
+    "weather / site readiness": "weatherSiteReadiness",
   };
 
   if (/^addendum\s+[a-z0-9.-]+$/i.test(normalizedLabel)) {
@@ -1143,19 +1243,33 @@ function isSmartPasteSectionHeading(label, key) {
     "alternates",
     "assumptions",
     "change order",
+    "change order language",
     "change orders",
+    "color / finish variation",
+    "color finish variation",
     "concrete specs",
+    "concrete cracking",
+    "concrete cracking disclaimer",
+    "deposit terms",
     "exclusions",
+    "final payment",
     "gc / prime notes",
+    "gc / prime scope control",
     "gc prime notes",
+    "gc prime scope control",
     "hidden condition",
     "hidden conditions",
+    "hidden / unknown conditions",
+    "late payment",
+    "late payment / collection",
     "line item",
     "line items",
     "owner / gc by others",
     "owner gc by others",
     "payment terms",
     "pricing summary",
+    "progress billing",
+    "proposal expiration",
     "proposal notes / acceptance summary",
     "proposal notes",
     "proposal basis",
@@ -1168,10 +1282,18 @@ function isSmartPasteSectionHeading(label, key) {
     "rfis / clarifications",
     "schedule of values",
     "scope",
+    "scope control",
     "shade footing estimate",
+    "site readiness",
     "takeoff quantities",
     "terms",
+    "utilities",
+    "utility responsibility",
     "warranty",
+    "warranty limitation",
+    "weather delay",
+    "weather delays",
+    "weather / site readiness",
   ]);
 
   return sectionHeadingLabels.has(normalizedLabel) || /^addendum\s+[a-z0-9.-]+$/i.test(normalizedLabel) || key === "lineItems";
@@ -1198,22 +1320,30 @@ function getCapturedSmartPasteLabels(sections) {
     clientCompany: "Client",
     clientEmail: "Client Email",
     clientPhone: "Client Phone",
+    colorFinishVariation: "Color / Finish Variation",
     concreteSpecs: "Concrete Specs",
+    concreteCracking: "Concrete Cracking",
     contactName: "Contact",
     contractScopeControl: "Contract Scope Control",
+    depositTerms: "Deposit Terms",
     exclusions: "Exclusions",
+    finalPayment: "Final Payment",
     gcPrimeNotes: "GC / Prime Notes",
     gcPrimeReviewer: "GC / Prime Reviewer",
+    gcScopeControl: "GC / Prime Scope Control",
     hiddenConditions: "Hidden Conditions",
+    latePayment: "Late Payment",
     lineItems: "Line Items",
     ownerGcByOthers: "Owner / GC By Others",
     paymentTerms: "Payment Terms",
     planSheets: "Plan Sheets / Takeoff Pages",
     pricingSummary: "Pricing Summary",
     pricingSections: "Alternates / Allowances",
+    progressBilling: "Progress Billing",
     projectAddress: "Project Address",
     projectLocation: "Project Location",
     projectName: "Project",
+    proposalExpiration: "Proposal Expiration",
     proposalBasis: "Proposal Basis",
     proposalNotes: "Proposal Notes",
     proposalType: "Proposal Type",
@@ -1223,9 +1353,14 @@ function getCapturedSmartPasteLabels(sections) {
     scheduleOfValues: "Schedule of Values",
     scope: "Scope",
     shadeFootingEstimate: "Shade Footing Estimate",
+    siteReadiness: "Site Readiness",
     takeoffQuantities: "Takeoff Quantities",
     terms: "Terms",
+    utilityResponsibility: "Utility Responsibility",
     warranty: "Warranty",
+    warrantyLimitation: "Warranty Limitation",
+    weatherDelays: "Weather Delays",
+    weatherSiteReadiness: "Weather / Site Readiness",
   };
 
   return (sections.__capturedKeys || []).map((key) => labels[key] || key);

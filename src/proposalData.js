@@ -298,12 +298,12 @@ export const DEFAULT_SCOPE_SECTIONS = [
 ];
 
 export const DEFAULT_EXCLUSIONS = [
-  "Permits and fees by others",
-  "Testing by others unless noted",
-  "Landscaping, irrigation, and lighting by others",
-  "Unsuitable soils or rock excavation",
-  "Cold weather protection",
-  "Price valid for 30 days from proposal date",
+  "Permits, fees, testing, inspections, engineering, and design by others unless specifically listed.",
+  "Survey, staking, layout control, utility locating, utility conflicts, utility relocation, and utility repairs by others unless listed.",
+  "Excavation, rough grading, base rock, unsuitable soils, rock excavation, buried debris, groundwater, and hidden conditions are excluded unless listed.",
+  "Asphalt paving/patching, landscaping, irrigation, fencing, traffic control, and after-hours/weekend work by others unless listed.",
+  "Demolition, haul-off, and added mobilizations are excluded unless specifically listed in the scope or pricing.",
+  "Cold/weather protection and work outside the specifically listed concrete scope are excluded unless included in writing.",
 ];
 
 export const DEFAULT_ASSUMPTIONS = [
@@ -318,14 +318,18 @@ export const DEFAULT_TERMS = {
   depositRate: 0.5,
   depositText: "A 50% deposit is required to schedule the project.",
   progressBilling: "Progress billings will be submitted monthly as work completes.",
-  proposalExpiration: "Proposal pricing is valid through the expiration date shown unless extended in writing.",
-  changeOrderLanguage: "Added, changed, or out-of-scope work requires written approval before proceeding.",
+  finalPayment: "Final payment is due upon substantial completion of the included concrete scope unless otherwise stated.",
+  latePayment: "Past-due amounts may be subject to collection costs and applicable late charges where allowed by contract or law.",
+  proposalExpiration: "Price is valid for 30 days from proposal date unless otherwise stated. Material or labor price changes after expiration require revised pricing.",
+  changeOrderLanguage: "Written approval is required before added work proceeds. Added scope, field directives, plan revisions, changed conditions, and added mobilizations are extra unless expressly included.",
+  siteReadiness: "Work depends on clear access, prepared subgrade/base, layout, approvals, inspections, and required work by others being complete before scheduled concrete operations.",
+  weatherDelay: "Weather, temperature, rain, freezing conditions, unsuitable site conditions, or supplier delays may affect schedule. Cold/weather protection is excluded unless specifically included.",
   weatherSiteReadiness: "Schedule is subject to weather, access, approved subgrade, site readiness, and concrete supplier availability.",
-  utilityResponsibility: "Utility locating, private utility identification, and protection of unmarked utilities are by owner / GC unless noted otherwise.",
-  hiddenConditions: "Hidden, unsuitable, contaminated, unstable, or unshown conditions are excluded and may require a written change order.",
-  concreteCrackingDisclaimer: "Concrete is expected to crack; control joints reduce but do not eliminate random cracking.",
-  colorFinishVariationDisclaimer: "Color, texture, cure marks, and finish appearance may vary due to site conditions, weather, material batches, and curing.",
-  warrantyLimitation: "Warranty is limited to workmanship for accepted scope and excludes movement, settlement, abuse, deicing chemicals, and conditions outside contractor control.",
+  utilityResponsibility: "Utility locating, potholing, relocation, conflicts, damage from unmarked utilities, and utility repairs are excluded unless specifically included.",
+  hiddenConditions: "Unsuitable soils, buried debris, unknown thickness, hidden concrete/asphalt, undocumented utilities, rock, groundwater, and unshown conditions are excluded unless specifically included.",
+  concreteCrackingDisclaimer: "Concrete may crack due to shrinkage, subgrade movement, weather, curing, or site conditions. Control joints reduce risk but do not guarantee crack-free concrete.",
+  colorFinishVariationDisclaimer: "Concrete color, texture, finish, broom marks, curing variation, patching, and decorative effects may vary unless a separate written finish scope is accepted.",
+  warrantyLimitation: "Warranty applies only to workmanship within the included scope and excludes movement, settlement, abuse, weather, deicing chemicals, owner/third-party damage, and work by others.",
   acceptance: "This proposal, including terms and conditions, is accepted by signature below.",
 };
 
@@ -378,6 +382,10 @@ export const PROPOSAL_TEMPLATES = [
       "Payment by approved progress billing or pay application per contract documents.",
       "Deposit requirements may be waived or adjusted for approved GC / Prime contract terms.",
       "Progress billings will be submitted monthly or by approved schedule of values.",
+      {
+        gcScopeControl:
+          "Proposal includes only the concrete scope specifically listed. Work shown elsewhere in the documents is excluded unless expressly included in this proposal, SOV, or written accepted scope sheet.",
+      },
     ),
     starterLineItems: makeTemplateLineItems([
       ["Base Concrete Work", 1, "LS", 0],
@@ -1102,12 +1110,13 @@ function templateScope(title, items) {
   return { title, items };
 }
 
-function createTemplateTerms(payment, depositText = DEFAULT_TERMS.depositText, progressBilling = DEFAULT_TERMS.progressBilling) {
+function createTemplateTerms(payment, depositText = DEFAULT_TERMS.depositText, progressBilling = DEFAULT_TERMS.progressBilling, overrides = {}) {
   return {
     ...DEFAULT_TERMS,
     payment,
     depositText,
     progressBilling,
+    ...overrides,
   };
 }
 
@@ -1170,7 +1179,8 @@ function createFullGcPacketTableDefaults() {
     proposalNotes: {
       enabled: true,
       proposalBasis: "Proposal based on provided plans, specifications, addenda, and written clarifications.",
-      contractScopeControl: "Accepted bid form, exclusions, alternates, and clarifications control final contract scope.",
+      contractScopeControl:
+        "Proposal includes only the concrete scope specifically listed. Work shown elsewhere in the documents is excluded unless expressly included in this proposal, SOV, or written accepted scope sheet.",
       acceptanceSummary: "GC to identify accepted alternates and allowances before contract execution.",
       gcPrimeReviewer: "Reviewed by: ______________________________ Date: __________",
     },

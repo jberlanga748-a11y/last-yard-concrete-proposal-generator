@@ -1134,6 +1134,28 @@ h4 {
   grid-column: 1 / -1;
 }
 
+.settings-subsection {
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+  padding-top: 18px;
+}
+
+.settings-subsection h3 {
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 950;
+  letter-spacing: 0.07em;
+  margin: 0 0 6px;
+  text-transform: uppercase;
+}
+
+.settings-subsection p {
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+}
+
 .permission-message {
   border: 1px solid rgba(201, 166, 74, 0.45);
   border-radius: 9px;
@@ -2296,6 +2318,28 @@ h4 {
   font-weight: 950;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.editor-section-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin: -2px 0 12px;
+}
+
+.editor-section-actions button {
+  border: 1px solid rgba(6, 43, 69, 0.28);
+  border-radius: 8px;
+  background: white;
+  color: var(--blue);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 850;
+  padding: 8px 10px;
+}
+
+.editor-section-actions button:hover {
+  border-color: var(--gold);
+  color: var(--deep-blue);
 }
 
 .editor-fields {

@@ -186,6 +186,8 @@ test("GC / Prime Full Packet template sets GC proposal type and full packet mode
   assert.ok(proposal.scopeSections.length > 0);
   assert.ok(proposal.exclusions.length > 0);
   assert.ok(proposal.terms.payment);
+  assert.match(proposal.terms.gcScopeControl, /concrete scope specifically listed/i);
+  assert.match(proposal.gcPacketTables.proposalNotes.contractScopeControl, /concrete scope specifically listed/i);
   assert.equal(proposal.gcPacketTables.pricingSummary.enabled, true);
 });
 
@@ -199,6 +201,7 @@ test("Driveway template sets residential summary proposal defaults", () => {
   assert.ok(proposal.scopeSections.length > 0);
   assert.ok(proposal.exclusions.length > 0);
   assert.ok(proposal.terms.payment);
+  assert.equal(proposal.terms.gcScopeControl, undefined);
   assert.ok(proposal.lineItems.length > 0);
 });
 

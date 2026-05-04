@@ -178,3 +178,46 @@ Total if all accepted: $965,000.`,
   assert.doesNotMatch(warningText(result), /Skipped line item/i);
   assert.doesNotMatch(warningText(result), /RFIs|Addenda|Proposal Notes/i);
 });
+
+test("maps legal and scope protection labels into proposal terms", () => {
+  const result = parseSmartPasteNotes(
+    `Payment Terms:
+Progress billing by approved pay application.
+Change Orders:
+Written approval required before added work.
+Hidden Conditions:
+Unknown utilities and unsuitable soils are excluded.
+Warranty Limitation:
+Warranty applies to included workmanship only.
+Site Readiness:
+GC to provide access, layout, and prepared base.
+Weather Delays:
+Rain or freezing conditions may delay work.
+Utility Responsibility:
+Utility locating and repairs by others.
+Concrete Cracking:
+Control joints reduce risk but do not guarantee crack-free concrete.
+Color / Finish Variation:
+Concrete finish and color may vary.
+GC / Prime Scope Control:
+Proposal includes only the concrete scope specifically listed.`,
+    proposalFixture(),
+  );
+
+  assert.equal(result.proposal.terms.payment, "Progress billing by approved pay application.");
+  assert.equal(result.proposal.terms.changeOrderLanguage, "Written approval required before added work.");
+  assert.equal(result.proposal.terms.hiddenConditions, "Unknown utilities and unsuitable soils are excluded.");
+  assert.equal(result.proposal.terms.warrantyLimitation, "Warranty applies to included workmanship only.");
+  assert.equal(result.proposal.terms.siteReadiness, "GC to provide access, layout, and prepared base.");
+  assert.equal(result.proposal.terms.weatherDelay, "Rain or freezing conditions may delay work.");
+  assert.equal(result.proposal.terms.utilityResponsibility, "Utility locating and repairs by others.");
+  assert.equal(result.proposal.terms.concreteCrackingDisclaimer, "Control joints reduce risk but do not guarantee crack-free concrete.");
+  assert.equal(result.proposal.terms.colorFinishVariationDisclaimer, "Concrete finish and color may vary.");
+  assert.equal(result.proposal.terms.gcScopeControl, "Proposal includes only the concrete scope specifically listed.");
+  assert.equal(
+    result.proposal.gcPacketTables.proposalNotes.contractScopeControl,
+    "Proposal includes only the concrete scope specifically listed.",
+  );
+  assert.ok(result.summary.fields.includes("payment terms"));
+  assert.doesNotMatch(warningText(result), /Use clear labels/i);
+});
