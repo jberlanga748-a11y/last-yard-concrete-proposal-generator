@@ -72,6 +72,12 @@ import {
 } from "./utils/cloud/storageCloud.js";
 import { formatAssetFileSize, formatCloudSyncTime, formatDashboardDate, formatDisplayDate, formatOptionLabel } from "./utils/formatting/display.js";
 import { parseBidSmartPasteNotes } from "./utils/smartPaste/bidSmartPasteParser.js";
+import {
+  extractSmartPasteCoverFieldsFromNotes,
+  firstSmartPasteText,
+  mergeSmartPasteCoverValues,
+  summarizeSmartPasteCoverValues,
+} from "./utils/smartPaste/smartPasteCoverFields.js";
 import { parseSmartPasteNotes } from "./utils/smartPaste/smartPasteParser.js";
 import {
   activityLogStorageKey,
@@ -3903,7 +3909,9 @@ export default function App() {
   }
 
   function fillProposalFromNotes() {
-    const { proposal: parsedProposal, summary } = parseSmartPasteNotes(smartPasteNotes, proposalDraft);
+    const extractedCoverValues = extractSmartPasteCoverFieldsFromNotes(smartPasteNotes);
+    const hasExtractedCoverValues = Object.values(extractedCoverValues).some(hasTextValue);
+    const { proposal: parsedProposal, parsedNotes, summary } = parseSmartPasteNotes(smartPasteNotes, proposalDraft);
 
     if (
       summary.fields.length === 0 &&
@@ -3911,7 +3919,8 @@ export default function App() {
       summary.pricingSectionCount === 0 &&
       summary.planSheetCount === 0 &&
       summary.gcPacketTableCount === 0 &&
-      summary.sectionsCaptured.length === 0
+      summary.sectionsCaptured.length === 0 &&
+      !hasExtractedCoverValues
     ) {
       setSmartPasteResult({
         fields: [],
@@ -3926,19 +3935,35 @@ export default function App() {
         defaultRowsRemoved: [],
         packetSectionsCreated: 0,
         pricingRowsReplaced: 0,
+        parsedCoverValues: {},
+        activeDraftFieldsUpdated: [],
         warnings: summary.warnings.length > 0 ? summary.warnings : ["No clearly labeled proposal fields were found."],
       });
       return;
     }
 
-    const nextProposal = createEditableProposal(linkProposalToMatchingContact(parsedProposal, savedContacts));
+    const coverValues = mergeSmartPasteCoverValues(parsedNotes?.values, extractedCoverValues);
+    const parsedProposalWithRawCover = forceApplySmartPasteCoverFields(parsedProposal, parsedProposal, coverValues);
+    const contactLinkedProposal = linkProposalToMatchingContact(parsedProposalWithRawCover, savedContacts);
+    const nextProposal = createEditableProposal(
+      forceApplySmartPasteCoverFields(
+        createEditableProposal(contactLinkedProposal),
+        parsedProposalWithRawCover,
+        coverValues,
+      ),
+    );
     const nextValidation = validateProposalCompleteness(nextProposal);
+    const nextSummary = {
+      ...summary,
+      parsedCoverValues: summarizeSmartPasteCoverValues(coverValues),
+      activeDraftFieldsUpdated: getSmartPasteActiveDraftFields(nextProposal, coverValues),
+    };
 
     setProposalDirty(true);
     setProposalDraft(nextProposal);
     setValidationNotice(nextValidation.errors.length === 0 ? "" : "Review required fields before save/print.");
     setSaveMessage("Smart Paste applied. Review fields before saving.");
-    setSmartPasteResult(summary);
+    setSmartPasteResult(nextSummary);
   }
 
   function exportBackup(type) {
@@ -7613,6 +7638,10 @@ function SmartPasteSummary({ result }) {
         {result.fields.length > 0 ? <li>Updated: {result.fields.join(", ")}</li> : null}
         {(result.sectionsCaptured || []).length > 0 ? <li>Captured: {result.sectionsCaptured.join(", ")}</li> : null}
         {(result.coverFieldsUpdated || []).length > 0 ? <li>Cover updated: {result.coverFieldsUpdated.join(", ")}</li> : null}
+        {result.parsedCoverValues?.projectName ? <li>Project applied: {result.parsedCoverValues.projectName}</li> : null}
+        {result.parsedCoverValues?.clientCompany ? <li>Client applied: {result.parsedCoverValues.clientCompany}</li> : null}
+        {result.parsedCoverValues?.projectLocation ? <li>Location applied: {result.parsedCoverValues.projectLocation}</li> : null}
+        {(result.activeDraftFieldsUpdated || []).length > 0 ? <li>Applied to active draft: {result.activeDraftFieldsUpdated.join(", ")}</li> : null}
         {(result.cleanupActions || []).length > 0 ? <li>Cleanup: {result.cleanupActions.join(" ")}</li> : null}
         {(result.defaultRowsRemoved || []).length > 0 ? <li>Removed defaults: {result.defaultRowsRemoved.join(", ")}</li> : null}
       </ul>
@@ -10727,6 +10756,86 @@ function linkProposalToMatchingContact(proposal = {}, contacts = []) {
   });
 
   return matches.length === 1 ? { ...proposal, contactId: matches[0].id } : proposal;
+}
+
+function forceApplySmartPasteCoverFields(proposal = {}, parsedProposal = {}, parsedValues = {}) {
+  const nextProposal = cloneObject(proposal);
+  const values = parsedValues || {};
+  const parsedProject = parsedProposal.project || {};
+  const parsedClient = parsedProposal.client || {};
+  const projectName = firstSmartPasteText(values.projectName, parsedProject.name);
+  const projectLocation = firstSmartPasteText(values.projectLocation, parsedProject.location, values.projectAddress);
+  const projectAddress = firstSmartPasteText(values.projectAddress, parsedProject.address, projectLocation);
+  const clientCompany = firstSmartPasteText(values.clientCompany, parsedClient.companyName);
+  const contactName = firstSmartPasteText(values.contactName, parsedClient.contactName);
+  const clientEmail = firstSmartPasteText(values.clientEmail, parsedClient.email);
+  const clientPhone = firstSmartPasteText(values.clientPhone, parsedClient.phone);
+
+  nextProposal.project = { ...(nextProposal.project || {}) };
+  nextProposal.client = { ...(nextProposal.client || {}) };
+
+  if (hasTextValue(projectName)) {
+    nextProposal.project.name = projectName;
+  }
+
+  if (hasTextValue(projectLocation)) {
+    nextProposal.project.location = projectLocation;
+  }
+
+  if (hasTextValue(projectAddress)) {
+    nextProposal.project.address = projectAddress;
+  }
+
+  if (hasTextValue(clientCompany)) {
+    nextProposal.client.companyName = clientCompany;
+  }
+
+  if (hasTextValue(contactName)) {
+    nextProposal.client.contactName = contactName;
+  }
+
+  if (hasTextValue(clientEmail)) {
+    nextProposal.client.email = clientEmail;
+  }
+
+  if (hasTextValue(clientPhone)) {
+    nextProposal.client.phone = clientPhone;
+  }
+
+  return nextProposal;
+}
+
+function getSmartPasteActiveDraftFields(proposal = {}, values = {}) {
+  const fields = [];
+
+  if (hasTextValue(values.projectName) && proposal.project?.name === values.projectName) {
+    fields.push("Project Name");
+  }
+
+  if (
+    (hasTextValue(values.projectLocation) && proposal.project?.location === values.projectLocation) ||
+    (hasTextValue(values.projectAddress) && proposal.project?.address === values.projectAddress)
+  ) {
+    fields.push("Project Location");
+  }
+
+  if (hasTextValue(values.clientCompany) && proposal.client?.companyName === values.clientCompany) {
+    fields.push("Prepared For");
+  }
+
+  if (hasTextValue(values.contactName) && proposal.client?.contactName === values.contactName) {
+    fields.push("Attention / Contact");
+  }
+
+  if (hasTextValue(values.clientEmail) && proposal.client?.email === values.clientEmail) {
+    fields.push("Email");
+  }
+
+  if (hasTextValue(values.clientPhone) && proposal.client?.phone === values.clientPhone) {
+    fields.push("Phone");
+  }
+
+  return fields;
 }
 
 function getNextProposalNumber(proposals, date = new Date()) {

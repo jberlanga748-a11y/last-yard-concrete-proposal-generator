@@ -1279,7 +1279,13 @@ function getSovValidationWarnings(proposal = {}) {
     }
   });
 
-  const comparableRows = validationRows.filter((row) => isSovRowExplicitlyIncluded(row) || !isSovOptionalPresentationRow(row));
+  const comparableRows = validationRows.filter((row) => {
+    if (isSovOptionalPresentationRow(row)) {
+      return row.included === true;
+    }
+
+    return isSovRowExplicitlyIncluded(row) || !isSovOptionalPresentationRow(row);
+  });
 
   if (comparableRows.length > 0) {
     const sovTotal = roundMoney(comparableRows.reduce((sum, row) => sum + toNumber(row.amount), 0));
@@ -1304,7 +1310,7 @@ function isSovPresentationTotalRow(row = {}) {
   const description = String(row.description || "").trim().toLowerCase();
   const rowText = getSovRowText(row);
   const presentationPattern = /^(subtotal|total|total base|total if)\b/;
-  const presentationPhrases = ["subtotal", "total if", "total base", "base + additive", "base + additive + optional"];
+  const presentationPhrases = ["subtotal", "total", "total if", "total base", "base + additive", "base + additive + optional"];
 
   return presentationPattern.test(item) || presentationPattern.test(description) || presentationPhrases.some((phrase) => rowText.includes(phrase));
 }
@@ -1322,7 +1328,7 @@ function isSovRowExplicitlyIncluded(row = {}) {
 function isSovOptionalPresentationRow(row = {}) {
   const textValue = getSovRowText(row);
 
-  return /\b(optional|alternate|additive alternate|add alternate|deduct alternate|support scope)\b/.test(textValue);
+  return /\b(optional|alternate|alternates|additive alternate|add alternate|deduct alternate|optional support scope|support scope)\b/.test(textValue);
 }
 
 function formatValidationCurrency(value) {

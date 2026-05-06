@@ -196,6 +196,8 @@ test("SOV validation ignores optional alternates and presentation total rows", (
             { item: "1", description: "Base Concrete / Site Package", pricingBasis: "Base Included", amount: "$695,000" },
             { item: "2", description: "Additive Alternate", pricingBasis: "Optional Add Alternate", amount: "$225,000" },
             { item: "3", description: "Optional Support Scope", pricingBasis: "Optional Support Scope", amount: "$210,000" },
+            { item: "4", description: "Additive Alternate", pricingBasis: "Included in alternate total only", amount: "$225,000" },
+            { item: "5", description: "Alternates", pricingBasis: "Optional presentation", amount: "$210,000" },
             { item: "Base + Additive", description: "Presentation subtotal", pricingBasis: "Presentation", amount: "$920,000" },
             { item: "Subtotal", description: "Total if Base + Additive", pricingBasis: "Presentation", amount: "$920,000" },
             {
