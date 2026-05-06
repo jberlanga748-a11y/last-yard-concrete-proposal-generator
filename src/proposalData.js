@@ -1302,9 +1302,11 @@ function getSovRowText(row = {}) {
 function isSovPresentationTotalRow(row = {}) {
   const item = String(row.item || "").trim().toLowerCase();
   const description = String(row.description || "").trim().toLowerCase();
+  const rowText = getSovRowText(row);
   const presentationPattern = /^(subtotal|total|total base|total if)\b/;
+  const presentationPhrases = ["subtotal", "total if", "total base", "base + additive", "base + additive + optional"];
 
-  return presentationPattern.test(item) || presentationPattern.test(description);
+  return presentationPattern.test(item) || presentationPattern.test(description) || presentationPhrases.some((phrase) => rowText.includes(phrase));
 }
 
 function isSovRowExplicitlyIncluded(row = {}) {

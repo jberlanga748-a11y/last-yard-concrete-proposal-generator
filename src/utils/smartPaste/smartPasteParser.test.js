@@ -277,6 +277,7 @@ Schedule of Values:
 1 | Base Concrete / Site Package | Base Included | $695,000
 2 | Additive Alternate | Optional Add Alternate | $225,000
 3 | Optional Support Scope | Optional Support Scope | $210,000
+Base + Additive | Presentation subtotal | Presentation | $920,000
 Subtotal | Total if Base + Additive | Presentation | $920,000
 Total if Base + Additive + Optional Support | Presentation Total | Presentation | $1,130,000
 

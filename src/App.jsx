@@ -3937,6 +3937,7 @@ export default function App() {
     setProposalDirty(true);
     setProposalDraft(nextProposal);
     setValidationNotice(nextValidation.errors.length === 0 ? "" : "Review required fields before save/print.");
+    setSaveMessage("Smart Paste applied. Review fields before saving.");
     setSmartPasteResult(summary);
   }
 
