@@ -3920,6 +3920,12 @@ export default function App() {
         planSheetCount: 0,
         gcPacketTableCount: 0,
         sectionsCaptured: [],
+        cleanupActions: [],
+        coverFieldsUpdated: [],
+        defaultsCleared: 0,
+        defaultRowsRemoved: [],
+        packetSectionsCreated: 0,
+        pricingRowsReplaced: 0,
         warnings: summary.warnings.length > 0 ? summary.warnings : ["No clearly labeled proposal fields were found."],
       });
       return;
@@ -7596,8 +7602,14 @@ function SmartPasteSummary({ result }) {
         <li>{result.planSheetCount || 0} plan / takeoff pages updated</li>
         <li>{result.gcPacketTableCount || 0} structured GC tables updated</li>
         <li>{(result.sectionsCaptured || []).length} sections captured</li>
+        <li>{result.defaultsCleared || 0} default cleanup actions applied</li>
+        <li>{result.pricingRowsReplaced || 0} pricing summary rows replaced</li>
+        <li>{result.packetSectionsCreated || 0} packet sections prepared</li>
         {result.fields.length > 0 ? <li>Updated: {result.fields.join(", ")}</li> : null}
         {(result.sectionsCaptured || []).length > 0 ? <li>Captured: {result.sectionsCaptured.join(", ")}</li> : null}
+        {(result.coverFieldsUpdated || []).length > 0 ? <li>Cover updated: {result.coverFieldsUpdated.join(", ")}</li> : null}
+        {(result.cleanupActions || []).length > 0 ? <li>Cleanup: {result.cleanupActions.join(" ")}</li> : null}
+        {(result.defaultRowsRemoved || []).length > 0 ? <li>Removed defaults: {result.defaultRowsRemoved.join(", ")}</li> : null}
       </ul>
       {result.warnings.length > 0 ? (
         <div className="smart-paste-warnings">

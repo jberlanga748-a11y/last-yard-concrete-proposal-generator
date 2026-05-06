@@ -1,5 +1,7 @@
 ﻿import { LINE_ITEM_UNITS } from "../../proposalData.js";
 
+import { PACKET_BUILDER_SECTIONS } from "../../proposalData.js";
+
 const PLAN_SHEET_PAGE_TYPES = ["plan_takeoff_sheet", "detail_notes", "shade_footing_estimate", "general_backup"];
 
 const defaultPlanSheets = [
@@ -159,6 +161,12 @@ export function parseSmartPasteNotes(notes, currentProposal = {}) {
       planSheetCount: parsedNotes.planSheetCount || 0,
       gcPacketTableCount: parsedNotes.gcPacketTableCount || 0,
       sectionsCaptured: parsedNotes.sectionsCaptured || [],
+      cleanupActions: parsedNotes.cleanupActions || [],
+      coverFieldsUpdated: parsedNotes.coverFieldsUpdated || [],
+      defaultsCleared: parsedNotes.defaultsCleared || 0,
+      defaultRowsRemoved: parsedNotes.defaultRowsRemoved || [],
+      packetSectionsCreated: parsedNotes.packetSectionsCreated || 0,
+      pricingRowsReplaced: parsedNotes.pricingRowsReplaced || 0,
       warnings: parsedNotes.warnings || [],
     },
   };
@@ -349,6 +357,15 @@ function normalizeGcPacketRows(sectionKey, rows = []) {
     return [];
   }
 
+  if (sectionKey === "pricingSummary") {
+    return rows.map((row) => ({
+      id: row?.id || createProposalId(),
+      label: row?.label ?? "",
+      amount: row?.amount ?? "",
+      note: row?.note ?? "",
+    }));
+  }
+
   const fields = gcPacketRowFields[sectionKey] || [];
 
   return rows.map((row) => ({
@@ -477,6 +494,7 @@ function parseProjectNotes(notes) {
   setTextValue("clientEmail", "clientEmail", "client email");
   setTextValue("billingAddress", "billingAddress", "billing address");
   setTextValue("projectAddress", "projectAddress", "project address");
+  setTextValue("projectOwner", "projectOwner", "owner");
   setTextValue("schedule", "schedule", "schedule");
   setTextValue("terms", "terms", "terms");
   setTextValue("proposalExpiration", "proposalExpiration", "proposal expiration");
@@ -537,6 +555,12 @@ function parseProjectNotes(notes) {
   const gcPacketTableParse = parseSmartPasteGcPacketTables(sections, warnings);
   const addendaRegister = parseSmartPasteAddendaRegister(notes);
   const rfiRegister = parseSmartPasteRfiRegister(notes);
+  const subcontractorPacketDetected = isSubcontractorPacketNotes(notes);
+
+  if (subcontractorPacketDetected) {
+    values.subcontractorPacketDetected = true;
+    fields.push("subcontractor packet mode");
+  }
 
   if (addendaRegister.length > 0) {
     values.addendaRegister = addendaRegister;
@@ -565,13 +589,26 @@ function parseProjectNotes(notes) {
     fields.push("total if all accepted");
   }
 
+  if (pricingParse.summaryRows.length > 0 && !values.gcPacketTables?.pricingSummary?.enabled) {
+    values.gcPacketTables = {
+      ...normalizeGcPacketTables(values.gcPacketTables),
+      pricingSummary: {
+        ...defaultGcPacketTables.pricingSummary,
+        enabled: true,
+        rows: pricingParse.summaryRows,
+        presentationNotes: "",
+      },
+    };
+    fields.push("pricing summary");
+  }
+
   if (planSheetParse.length > 0) {
     values.planSheets = planSheetParse;
     fields.push("plan sheets / takeoff pages");
   }
 
   if (gcPacketTableParse.count > 0) {
-    values.gcPacketTables = gcPacketTableParse.tables;
+    values.gcPacketTables = mergeGcPacketTables(values.gcPacketTables, gcPacketTableParse.tables);
     fields.push("structured GC packet tables");
   }
 
@@ -588,7 +625,7 @@ function parseProjectNotes(notes) {
     lineItems,
     pricingSectionCount: pricingParse.sections.length,
     planSheetCount: planSheetParse.length,
-    gcPacketTableCount: gcPacketTableParse.count,
+    gcPacketTableCount: gcPacketTableParse.count + (pricingParse.summaryRows.length > 0 ? 1 : 0),
     sectionsCaptured: getCapturedSmartPasteLabels(sections),
     values,
     warnings: [...new Set(warnings)],
@@ -601,6 +638,15 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
   nextProposal.terms = nextProposal.terms || {};
   nextProposal.gcPrime = nextProposal.gcPrime || {};
   nextProposal.gcPacketTables = normalizeGcPacketTables(nextProposal.gcPacketTables);
+  const cleanupPlan = getSmartPasteCleanupPlan(nextProposal, parsedNotes);
+
+  applySmartPasteCleanup(nextProposal, cleanupPlan);
+  parsedNotes.cleanupActions = cleanupPlan.actions;
+  parsedNotes.coverFieldsUpdated = getSmartPasteCoverFieldsUpdated(values);
+  parsedNotes.defaultsCleared = cleanupPlan.actions.length;
+  parsedNotes.defaultRowsRemoved = cleanupPlan.defaultRowsRemoved;
+  parsedNotes.packetSectionsCreated = values.subcontractorPacketDetected ? getSubcontractorPacketBuilder().filter((section) => section.included).length : 0;
+  parsedNotes.pricingRowsReplaced = values.gcPacketTables?.pricingSummary?.rows?.length || 0;
 
   if (values.projectName) {
     nextProposal.project.name = values.projectName;
@@ -608,6 +654,7 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
 
   if (values.projectLocation) {
     nextProposal.project.location = values.projectLocation;
+    nextProposal.project.address = values.projectAddress || values.projectLocation;
   }
 
   if (values.clientCompany) {
@@ -634,6 +681,12 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
   if (values.projectAddress) {
     nextProposal.client.projectAddress = values.projectAddress;
     nextProposal.project.address = values.projectAddress;
+  }
+
+  if (values.projectOwner) {
+    nextProposal.project.owner = values.projectOwner;
+    nextProposal.gcPrime.ownerAgency = values.projectOwner;
+    nextProposal.gcPrime.gcPrimeNotes = ["Owner / Public Agency: " + values.projectOwner, nextProposal.gcPrime.gcPrimeNotes].filter(hasTextValue).join("\n");
   }
 
   if (values.schedule) {
@@ -774,6 +827,28 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     nextProposal.concreteSpecs.notes = values.concreteSpecNotes;
   }
 
+  if (values.subcontractorPacketDetected) {
+    nextProposal.proposalType = "gc_prime";
+    nextProposal.type = "gc_prime";
+    nextProposal.packetMode = "full_gc_packet";
+    nextProposal.packetBuilder = getSubcontractorPacketBuilder();
+    nextProposal.terms = {
+      ...nextProposal.terms,
+      gcScopeControl:
+        nextProposal.terms.gcScopeControl ||
+        "Last Yard Concrete is bidding as a concrete/site package subcontractor. Proposal includes only the concrete/site package scope specifically listed and is not a full GC/prime proposal.",
+    };
+    nextProposal.gcPrime.scopeControlSummary = {
+      ...normalizeScopeControlSummary(nextProposal.gcPrime.scopeControlSummary),
+      includedScope:
+        nextProposal.gcPrime.scopeControlSummary?.includedScope ||
+        "Last Yard Concrete is bidding as a concrete/site package subcontractor for the listed concrete/site package scope only.",
+      clarifications:
+        nextProposal.gcPrime.scopeControlSummary?.clarifications ||
+        "Last Yard is not bidding as full GC/prime. Optional Support Scope is separate unless accepted in writing.",
+    };
+  }
+
   if (parsedNotes.lineItems.length > 0) {
     nextProposal.lineItems = parsedNotes.lineItems;
   } else if (values.baseBidLineItem) {
@@ -792,7 +867,278 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     nextProposal.gcPacketTables = mergeGcPacketTables(nextProposal.gcPacketTables, values.gcPacketTables);
   }
 
+  if (values.subcontractorPacketDetected) {
+    const gcPacketTables = normalizeGcPacketTables(nextProposal.gcPacketTables);
+    nextProposal.gcPacketTables = {
+      ...gcPacketTables,
+      proposalNotes: {
+        ...gcPacketTables.proposalNotes,
+        enabled: true,
+        contractScopeControl:
+          gcPacketTables.proposalNotes.contractScopeControl ||
+          "Last Yard Concrete is bidding as a concrete/site package subcontractor. Work outside the listed concrete/site package scope is excluded unless expressly accepted in writing.",
+        acceptanceSummary:
+          gcPacketTables.proposalNotes.acceptanceSummary ||
+          "Internal review draft. GC/Prime to confirm accepted base scope, additive alternate, optional support scope, exclusions, and clarifications before release.",
+      },
+    };
+  }
+
   return nextProposal;
+}
+
+function getSmartPasteCleanupPlan(proposal = {}, parsedNotes = {}) {
+  const values = parsedNotes.values || {};
+  const hasIncomingProjectData = ["projectName", "projectLocation", "projectAddress", "projectOwner", "clientCompany", "contactName", "clientEmail", "clientPhone"].some(
+    (field) => hasTextValue(values[field]),
+  );
+  const hasIncomingPricingData = parsedNotes.lineItems.length > 0 || values.baseBidLineItem || values.pricingSections || values.gcPacketTables?.pricingSummary?.enabled;
+  const hasIncomingPacketData =
+    values.subcontractorPacketDetected ||
+    values.gcPacketTables ||
+    values.rfiClarificationNotes ||
+    values.addendaAcknowledged ||
+    values.proposalNotes ||
+    values.scopeItems ||
+    values.exclusions ||
+    values.assumptions;
+  const isStarterDraft = isLikelyStarterOrBlankDraft(proposal);
+  const actions = [];
+  const defaultRowsRemoved = [];
+
+  if (isStarterDraft && (hasIncomingProjectData || hasIncomingPricingData || hasIncomingPacketData)) {
+    actions.push("Starter/demo project and client defaults cleared.");
+  }
+
+  if (isStarterDraft && hasIncomingPricingData) {
+    actions.push("Starter/default pricing rows replaced with pasted pricing.");
+  }
+
+  if (isStarterDraft && hasIncomingPacketData) {
+    actions.push("Starter scope, exclusions, notes, packet records, and send history cleared.");
+  }
+
+  if (isStarterDraft) {
+    const defaultRows = getDefaultPricingRowsInProposal(proposal);
+
+    if (defaultRows.length > 0) {
+      defaultRowsRemoved.push(...defaultRows);
+    }
+  }
+
+  if (values.gcPacketTables?.pricingSummary?.enabled || hasIncomingPricingData) {
+    getDefaultPricingSummaryRows(proposal).forEach((row) => {
+      if (!defaultRowsRemoved.includes(row)) {
+        defaultRowsRemoved.push(row);
+      }
+    });
+  }
+
+  if (values.subcontractorPacketDetected) {
+    actions.push("Subcontractor GC packet wording and section order applied.");
+  }
+
+  return {
+    actions: [...new Set(actions)],
+    clearStarterDefaults: isStarterDraft && (hasIncomingProjectData || hasIncomingPricingData || hasIncomingPacketData),
+    clearStarterPacketDefaults: isStarterDraft && hasIncomingPacketData,
+    clearStarterPricingDefaults: isStarterDraft && hasIncomingPricingData,
+    defaultRowsRemoved: [...new Set(defaultRowsRemoved)],
+  };
+}
+
+function applySmartPasteCleanup(proposal, cleanupPlan) {
+  if (!cleanupPlan.clearStarterDefaults) {
+    return;
+  }
+
+  proposal.contactId = "";
+  proposal.client = {
+    ...(proposal.client || {}),
+    companyName: "",
+    contactName: "",
+    title: "",
+    address: "",
+    billingAddress: "",
+    cityStateZip: "",
+    projectAddress: "",
+    phone: "",
+    email: "",
+  };
+  proposal.project = {
+    ...(proposal.project || {}),
+    name: "",
+    location: "",
+    address: "",
+    owner: "",
+    description: "",
+    estimatedDuration: "",
+    proposedSchedule: {
+      ...(proposal.project?.proposedSchedule || {}),
+      startDate: "",
+      endDate: "",
+      display: "",
+    },
+  };
+
+  if (cleanupPlan.clearStarterPacketDefaults) {
+    proposal.scopeSections = [];
+    proposal.exclusions = [];
+    proposal.assumptions = [];
+    proposal.proposalNotes = "";
+    proposal.notes = "";
+    proposal.gcPrime = {
+      ...(proposal.gcPrime || {}),
+      addendaAcknowledged: "",
+      rfiClarificationNotes: "",
+      gcPrimeNotes: "",
+    };
+    proposal.projectPhotos = [
+      { label: "Architectural Steps", src: "" },
+      { label: "Finished Flatwork", src: "" },
+      { label: "Control Joints", src: "" },
+    ];
+    proposal.planSheets = normalizePlanSheets([]);
+    proposal.submittedPacketRecords = [];
+    proposal.sendRecords = [];
+  }
+
+  if (cleanupPlan.clearStarterPricingDefaults) {
+    proposal.lineItems = [];
+    proposal.pricingSections = [];
+    proposal.gcPacketTables = normalizeGcPacketTables({});
+  }
+}
+
+function getSmartPasteCoverFieldsUpdated(values = {}) {
+  const coverFields = [];
+
+  if (values.projectName) {
+    coverFields.push("Project Name");
+  }
+
+  if (values.projectLocation || values.projectAddress) {
+    coverFields.push("Project Location");
+  }
+
+  if (values.clientCompany) {
+    coverFields.push("Prepared For");
+  }
+
+  if (values.contactName) {
+    coverFields.push("Attention / Contact");
+  }
+
+  if (values.clientEmail) {
+    coverFields.push("Email");
+  }
+
+  if (values.clientPhone) {
+    coverFields.push("Phone");
+  }
+
+  return coverFields;
+}
+
+function isLikelyStarterOrBlankDraft(proposal = {}) {
+  const projectName = String(proposal.project?.name || "").trim().toLowerCase();
+  const projectLocation = String(proposal.project?.location || "").trim().toLowerCase();
+  const clientName = String(proposal.client?.companyName || "").trim().toLowerCase();
+
+  return (
+    proposal.templateId === "blank" ||
+    !projectName ||
+    projectName === "marketplace retail center" ||
+    projectLocation === "albany, or" ||
+    !clientName ||
+    clientName === "company name"
+  );
+}
+
+function getDefaultPricingRowsInProposal(proposal = {}) {
+  const rows = [];
+
+  (proposal.lineItems || []).forEach((item) => {
+    const description = String(item?.description || "").trim();
+
+    if (isStarterLineItemDescription(description)) {
+      rows.push(description);
+    }
+  });
+
+  (proposal.pricingSections || []).forEach((section) => {
+    const label = String(section?.label || section?.description || "").trim();
+
+    if (isUnrelatedDefaultPricingLabel(label)) {
+      rows.push(label);
+    }
+  });
+
+  return rows;
+}
+
+function getDefaultPricingSummaryRows(proposal = {}) {
+  return (proposal.gcPacketTables?.pricingSummary?.rows || [])
+    .map((row) => String(row?.label || row?.description || row?.item || "").trim())
+    .filter(isUnrelatedDefaultPricingLabel);
+}
+
+function isStarterLineItemDescription(value = "") {
+  const normalizedValue = value.toLowerCase();
+
+  return [
+    "site prep & excavation",
+    "sidewalks - 4 in thick",
+    "curb & gutter",
+    "concrete pads / slabs - 5 in thick",
+    "control joints & sealant",
+    "mobilization",
+  ].includes(normalizedValue);
+}
+
+function isUnrelatedDefaultPricingLabel(value = "") {
+  const normalizedValue = value.toLowerCase();
+
+  return (
+    normalizedValue.includes("estimated shade footings") ||
+    normalizedValue.includes("interface / rfi allowance") ||
+    normalizedValue.includes("concrete interface / rfi allowance") ||
+    normalizedValue.includes("base with allowances")
+  );
+}
+
+function isSubcontractorPacketNotes(notes) {
+  const textValue = String(notes || "").toLowerCase();
+
+  return (
+    /concrete\s*\/\s*site package subcontractor/.test(textValue) ||
+    /site package subcontractor/.test(textValue) ||
+    /subcontractor proposal/.test(textValue) ||
+    /not\s+(?:as\s+)?(?:a\s+)?full gc\s*\/\s*prime/.test(textValue) ||
+    /not full gc\s*\/\s*prime/.test(textValue) ||
+    /bidding to .*(gc|prime|faison)/.test(textValue)
+  );
+}
+
+function getSubcontractorPacketBuilder() {
+  const includedSectionIds = [
+    "cover_summary",
+    "details_pricing",
+    "scope_control_summary",
+    "pricing_summary",
+    "schedule_of_values",
+    "rfi_clarification_register",
+    "takeoff_quantities",
+    "legal_terms",
+    "proposal_notes_acceptance_summary",
+  ];
+
+  return PACKET_BUILDER_SECTIONS.map((section) => ({
+    id: section.id,
+    title: section.title,
+    included: includedSectionIds.includes(section.id),
+    order: includedSectionIds.includes(section.id) ? (includedSectionIds.indexOf(section.id) + 1) * 10 : section.defaultOrder + 100,
+  }));
 }
 
 function collectSmartPasteSections(notes) {
@@ -923,6 +1269,14 @@ function collectSmartPasteSections(notes) {
     }
 
     if (activeKey !== "pricingSummary" && isSmartPricingLine(line)) {
+      activeKey = "pricingSections";
+      activePlanSheetIndex = -1;
+      recordSmartPasteSection(sections, "pricingSections");
+      appendSmartPasteSection(sections, "pricingSections", line);
+      return;
+    }
+
+    if (activeKey !== "pricingSummary" && isSmartImplicitPricingLine(line)) {
       activeKey = "pricingSections";
       activePlanSheetIndex = -1;
       recordSmartPasteSection(sections, "pricingSections");
@@ -1182,8 +1536,10 @@ function getSmartPasteLabelKey(label) {
     "line items": "lineItems",
     "line item": "lineItems",
     location: "projectLocation",
+    owner: "projectOwner",
     "owner / gc by others": "ownerGcByOthers",
     "owner gc by others": "ownerGcByOthers",
+    "owner / public agency": "projectOwner",
     "payment terms": "paymentTerms",
     phone: "clientPhone",
     "prepared for": "clientCompany",
@@ -1343,6 +1699,7 @@ function getCapturedSmartPasteLabels(sections) {
     projectAddress: "Project Address",
     projectLocation: "Project Location",
     projectName: "Project",
+    projectOwner: "Owner",
     proposalExpiration: "Proposal Expiration",
     proposalBasis: "Proposal Basis",
     proposalNotes: "Proposal Notes",
@@ -1804,11 +2161,28 @@ function mergePlanSheets(currentPlanSheets = [], parsedPlanSheets = []) {
 }
 
 function splitSmartPasteList(value) {
-  return String(value || "")
-    .split(/\r?\n|,|;/)
-    .map((item) => item.replace(/^[-*â€¢]\s*/, "").trim())
-    .filter(Boolean)
-    .map((item) => item.charAt(0).toUpperCase() + item.slice(1));
+  const textValue = String(value || "").trim();
+
+  if (!textValue) {
+    return [];
+  }
+
+  const normalizedLines = textValue
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const hasExplicitListLines = normalizedLines.some((line) => /^([-*\u2022]|\d+[.)])\s+/.test(line));
+  const sourceItems = hasExplicitListLines
+    ? normalizedLines
+    : normalizedLines.length > 1
+      ? normalizedLines
+      : textValue.includes(";")
+        ? textValue.split(";")
+        : [textValue];
+
+  return sourceItems
+    .map((item) => item.replace(/^([-*\u2022]|\d+[.)])\s*/, "").trim())
+    .filter(Boolean);
 }
 
 function parseSmartPasteLineItems(lines, warnings) {
@@ -1822,6 +2196,7 @@ function parseSmartPastePricingSections(lines, warnings) {
   const result = {
     baseBidLineItem: null,
     sections: [],
+    summaryRows: [],
     totalIfAllAccepted: undefined,
   };
 
@@ -1841,11 +2216,18 @@ function parseSmartPastePricingSections(lines, warnings) {
         unitPrice: parsed.amount,
         taxable: true,
       };
+      result.summaryRows.push(createPricingSummaryRow(parsed.label || "Base Bid", parsed.amount, parsed.note));
       return;
     }
 
     if (parsed.kind === "total_if_all") {
       result.totalIfAllAccepted = parsed.amount;
+      result.summaryRows.push(createPricingSummaryRow(parsed.label || "Total if all accepted", parsed.amount, parsed.note));
+      return;
+    }
+
+    if (parsed.kind === "total_presentation") {
+      result.summaryRows.push(createPricingSummaryRow(parsed.label, parsed.amount, parsed.note));
       return;
     }
 
@@ -1857,15 +2239,14 @@ function parseSmartPastePricingSections(lines, warnings) {
       amount: parsed.amount,
       included: parsed.kind === "allowance",
     });
+    result.summaryRows.push(createPricingSummaryRow(parsed.label, parsed.amount, parsed.note || parsed.description));
   });
 
   return result;
 }
 
 function parseSmartPastePricingLine(line, warnings) {
-  const match = String(line).match(
-    /^(base bid|allowance|add alternate(?:\s+\d+|\s+[a-z]+)?|deduct alternate(?:\s+\d+|\s+[a-z]+)?|unit price(?:\s+\d+|\s+[a-z]+)?|total if all(?: alternates)? accepted)\s*:\s*(.+)$/i,
-  );
+  const match = String(line).match(/^([^:]+):\s*(.+)$/i);
 
   if (!match) {
     return null;
@@ -1882,16 +2263,21 @@ function parseSmartPastePricingLine(line, warnings) {
     return null;
   }
 
-  if (normalizedLabel.startsWith("total if all")) {
-    return { kind: "total_if_all", amount };
+  if (isTotalIfAllAcceptedLabel(normalizedLabel)) {
+    return { kind: "total_if_all", label: rawLabel, amount, note: "" };
   }
 
-  if (normalizedLabel === "base bid") {
+  if (normalizedLabel.startsWith("total if")) {
+    return { kind: "total_presentation", label: rawLabel, amount, note: "" };
+  }
+
+  if (isBaseBidPricingLabel(normalizedLabel)) {
     return {
       kind: "base_bid",
-      label: amountParts.length > 1 ? amountParts[0] : "Base Bid",
+      label: amountParts.length > 1 ? amountParts[0] : rawLabel,
       description: "",
       amount,
+      note: "",
     };
   }
 
@@ -1905,12 +2291,35 @@ function parseSmartPastePricingLine(line, warnings) {
     label: hasNumberedPrefix && type !== "allowance" && type !== "unit_price" ? numberedLabel : valueLabel,
     description: hasNumberedPrefix && type !== "allowance" && type !== "unit_price" ? valueLabel : "",
     amount,
+    note: "",
   };
 }
 
 function isSmartPricingLine(line) {
-  return /^(base bid|allowance|add alternate(?:\s+\d+|\s+[a-z]+)?|deduct alternate(?:\s+\d+|\s+[a-z]+)?|unit price(?:\s+\d+|\s+[a-z]+)?|total if all(?: alternates)? accepted)\s*:/i.test(
+  return /^(base bid|base concrete(?:\s*\/\s*site package)?|allowance|add alternate(?:\s+\d+|\s+[a-z]+)?|additive alternate|optional support scope|deduct alternate(?:\s+\d+|\s+[a-z]+)?|unit price(?:\s+\d+|\s+[a-z]+)?|total if .+)\s*:/i.test(
     String(line).trim(),
+  );
+}
+
+function isSmartImplicitPricingLine(line) {
+  const match = String(line || "").trim().match(/^([^:]+):\s*(.+)$/);
+
+  if (!match) {
+    return false;
+  }
+
+  const normalizedLabel = match[1].trim().toLowerCase();
+  const amount = toEditableNumber(match[2]);
+
+  if (amount <= 0) {
+    return false;
+  }
+
+  return (
+    isBaseBidPricingLabel(normalizedLabel) ||
+    normalizedLabel.includes("alternate") ||
+    normalizedLabel.includes("optional support") ||
+    normalizedLabel.startsWith("total if")
   );
 }
 
@@ -1928,6 +2337,26 @@ function getSmartPricingType(label) {
   }
 
   return "add_alternate";
+}
+
+function isBaseBidPricingLabel(label) {
+  return label === "base bid" || label.includes("base concrete") || label.includes("base concrete / site package");
+}
+
+function isTotalIfAllAcceptedLabel(label) {
+  return (
+    label.startsWith("total if all") ||
+    (label.startsWith("total if") && (label.includes("all accepted") || label.includes("optional support")))
+  );
+}
+
+function createPricingSummaryRow(label, amount, note = "") {
+  return {
+    id: createProposalId(),
+    label,
+    amount,
+    note,
+  };
 }
 
 function parseSmartPasteLineItem(line, warnings) {
