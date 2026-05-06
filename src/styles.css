@@ -5890,7 +5890,7 @@ h4 {
   .preview-pane {
     width: 8.5in;
     overflow: visible !important;
-    padding-bottom: 0;
+    padding: 0;
   }
 
   .preview-pane .proposal-grid,
@@ -5913,15 +5913,15 @@ h4 {
     box-shadow: none !important;
     outline: 0;
     break-inside: avoid;
-    break-after: page;
+    break-after: auto;
     page-break-inside: avoid;
-    page-break-after: always;
+    page-break-after: auto;
     zoom: 1;
   }
 
-  .proposal-page:last-child {
-    break-after: auto;
-    page-break-after: auto;
+  .proposal-page + .proposal-page {
+    break-before: page;
+    page-break-before: always;
   }
 
   .proposal-page.appendix-page {
