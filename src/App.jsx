@@ -73,6 +73,7 @@ import {
   validatePdfUploadFile,
 } from "./utils/cloud/storageCloud.js";
 import { formatAssetFileSize, formatCloudSyncTime, formatDashboardDate, formatDisplayDate, formatOptionLabel } from "./utils/formatting/display.js";
+import { applyAiProposalResultToProposal, normalizeAiProposalResult, summarizeAiProposalResult } from "./utils/aiProposal/aiProposalNormalizer.js";
 import { parseBidSmartPasteNotes } from "./utils/smartPaste/bidSmartPasteParser.js";
 import {
   extractSmartPasteCoverFieldsFromNotes,
@@ -369,6 +370,10 @@ export default function App() {
   const [validationNotice, setValidationNotice] = useState("");
   const [smartPasteNotes, setSmartPasteNotes] = useState("");
   const [smartPasteResult, setSmartPasteResult] = useState(null);
+  const [aiProposalNotes, setAiProposalNotes] = useState("");
+  const [aiProposalResult, setAiProposalResult] = useState(null);
+  const [aiProposalMessage, setAiProposalMessage] = useState("");
+  const [aiProposalLoading, setAiProposalLoading] = useState("");
   const [backupMessage, setBackupMessage] = useState("");
   const [contactDraft, setContactDraft] = useState(() => createEmptyContact());
   const [contactEditorOpen, setContactEditorOpen] = useState(false);
@@ -551,6 +556,10 @@ export default function App() {
     setValidationNotice("");
     setSmartPasteNotes("");
     setSmartPasteResult(null);
+    setAiProposalNotes("");
+    setAiProposalResult(null);
+    setAiProposalMessage("");
+    setAiProposalLoading("");
     setBidSmartPasteResult(null);
     setBackupMessage("");
     setAssetUploadMessage("");
@@ -724,6 +733,10 @@ export default function App() {
     setValidationNotice("");
     setSmartPasteNotes("");
     setSmartPasteResult(null);
+    setAiProposalNotes("");
+    setAiProposalResult(null);
+    setAiProposalMessage("");
+    setAiProposalLoading("");
     setAssetUploadMessage("");
 
     if (clearSaveMessage) {
@@ -3991,6 +4004,83 @@ export default function App() {
     setSmartPasteResult(nextSummary);
   }
 
+  async function runAiProposalTool(mode) {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    const normalizedMode = mode === "review" ? "review" : "extract";
+    const notes = aiProposalNotes.trim();
+
+    if (normalizedMode === "extract" && !notes) {
+      setAiProposalMessage("Paste notes before running AI Extract Proposal.");
+      return;
+    }
+
+    setAiProposalLoading(normalizedMode);
+    setAiProposalMessage(normalizedMode === "review" ? "Reviewing proposal with AI..." : "Extracting proposal data with AI...");
+
+    try {
+      const response = await fetch("/api/ai/extract-proposal", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          mode: normalizedMode,
+          notes,
+          proposal: getAiSafeProposalContext(proposalDraft),
+        }),
+      });
+      const isJsonResponse = response.headers.get("content-type")?.includes("application/json");
+
+      if (!isJsonResponse) {
+        throw new Error("AI extraction is not configured. Use Smart Paste instead.");
+      }
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || "AI request failed.");
+      }
+
+      const result = normalizeAiProposalResult(payload.result);
+      setAiProposalResult(result);
+      setAiProposalMessage(normalizedMode === "review" ? "AI review complete. Review findings before taking action." : "AI extraction complete. Review the result before applying.");
+    } catch (error) {
+      setAiProposalResult(null);
+      setAiProposalMessage(error.message || "AI extraction failed. Use Smart Paste instead.");
+    } finally {
+      setAiProposalLoading("");
+    }
+  }
+
+  function applyAiProposalResult() {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    if (!aiProposalResult || aiProposalResult.mode !== "extract") {
+      setAiProposalMessage("Run AI Extract Proposal before applying results.");
+      return;
+    }
+
+    const applied = applyAiProposalResultToProposal(aiProposalResult, proposalDraft);
+    const linkedProposal = linkProposalToMatchingContact(applied.proposal, savedContacts);
+    const nextProposal = createEditableProposal(linkedProposal);
+    const nextValidation = validateProposalCompleteness(nextProposal);
+
+    setProposalDirty(true);
+    setProposalDraft(nextProposal);
+    setValidationNotice(nextValidation.errors.length === 0 ? "" : "Review required fields before save/print.");
+    setSmartPasteResult({
+      ...applied.summary,
+      fields: applied.summary.fields || [],
+      warnings: [...new Set([...(applied.summary.warnings || []), ...(applied.summary.aiWarnings || [])])],
+    });
+    setAiProposalMessage("AI result applied. Review all fields before saving or sending.");
+  }
+
   function exportBackup(type) {
     if (!canPerform("backupExport", setBackupMessage)) {
       return;
@@ -4576,9 +4666,16 @@ export default function App() {
                 onStartBlankProposal={startBlankProposalFromTemplatePicker}
                 onSmartPasteFill={fillProposalFromNotes}
                 onSmartPasteNotesChange={setSmartPasteNotes}
+                onAiProposalNotesChange={setAiProposalNotes}
+                onAiProposalRun={runAiProposalTool}
+                onApplyAiProposalResult={applyAiProposalResult}
                 onSelectContact={applyContactToCurrentProposal}
                 onUpdatePacketRecord={updateSubmittedPacketRecord}
                 priceLibrary={priceLibrary}
+                aiProposalLoading={aiProposalLoading}
+                aiProposalMessage={aiProposalMessage}
+                aiProposalNotes={aiProposalNotes}
+                aiProposalResult={aiProposalResult}
                 smartPasteNotes={smartPasteNotes}
                 smartPasteResult={smartPasteResult}
                 validation={proposalValidation}
@@ -7078,6 +7175,10 @@ function ValidationPanel({ className = "", notice = "", validation }) {
 }
 
 function ProposalEditor({
+  aiProposalLoading = "",
+  aiProposalMessage = "",
+  aiProposalNotes = "",
+  aiProposalResult = null,
   assetUploadMessage = "",
   contacts = [],
   draftLabel = "",
@@ -7121,6 +7222,9 @@ function ProposalEditor({
   onRefreshTermsFromDefaults,
   onResetPacketBuilder,
   onStartBlankProposal,
+  onAiProposalNotesChange,
+  onAiProposalRun,
+  onApplyAiProposalResult,
   onSmartPasteFill,
   onSmartPasteNotesChange,
   onSelectContact,
@@ -7164,6 +7268,16 @@ function ProposalEditor({
         result={smartPasteResult}
         onFill={onSmartPasteFill}
         onNotesChange={onSmartPasteNotesChange}
+      />
+
+      <AiProposalPanel
+        loading={aiProposalLoading}
+        message={aiProposalMessage}
+        notes={aiProposalNotes}
+        result={aiProposalResult}
+        onApply={onApplyAiProposalResult}
+        onNotesChange={onAiProposalNotesChange}
+        onRun={onAiProposalRun}
       />
 
       <ContactSelector contacts={contacts} proposal={proposal} onSelectContact={onSelectContact} />
@@ -7642,6 +7756,74 @@ function SmartPastePanel({ notes, result, onFill, onNotesChange }) {
         Fill Proposal From Notes
       </button>
       {result ? <SmartPasteSummary result={result} /> : null}
+    </EditorSection>
+  );
+}
+
+function AiProposalPanel({ loading = "", message = "", notes = "", result = null, onApply, onNotesChange, onRun }) {
+  const summary = result ? summarizeAiProposalResult(result) : null;
+  const isExtractResult = result?.mode === "extract";
+
+  return (
+    <EditorSection id="ai-proposal-section" title="AI Extract / Review">
+      <p className="smart-paste-help">
+        Use AI for messy contractor notes, then review the structured result before applying. If AI extraction is not configured, use Smart Paste instead.
+      </p>
+      <label className="editor-field" htmlFor="ai-proposal-notes">
+        <span>AI Extract Notes</span>
+        <textarea
+          id="ai-proposal-notes"
+          value={notes}
+          rows={8}
+          placeholder="Paste bid invite text, GC notes, pricing summary, RFIs, addenda, scope-control notes, and exclusions."
+          onChange={(event) => onNotesChange(event.target.value)}
+        />
+      </label>
+      <div className="pricing-action-buttons">
+        <button className="editor-add-button" type="button" disabled={Boolean(loading)} onClick={() => onRun("extract")}>
+          {loading === "extract" ? "Extracting..." : "AI Extract Proposal"}
+        </button>
+        <button className="editor-secondary-button" type="button" disabled={Boolean(loading)} onClick={() => onRun("review")}>
+          {loading === "review" ? "Reviewing..." : "AI Review Proposal"}
+        </button>
+      </div>
+      {message ? <p className="save-message">{message}</p> : null}
+      {summary ? (
+        <div className="smart-paste-summary" aria-live="polite">
+          <strong>{summary.mode === "review" ? "AI Review Summary" : "AI Extract Summary"}</strong>
+          <ul>
+            {summary.fieldsFound.length > 0 ? <li>Fields found: {summary.fieldsFound.join(", ")}</li> : null}
+            {summary.pricingFound.length > 0 ? <li>Pricing found: {summary.pricingFound.join(", ")}</li> : null}
+            {summary.missingInfo.length > 0 ? <li>Missing info: {summary.missingInfo.join(", ")}</li> : null}
+            {summary.recommendation ? <li>Recommendation: {summary.recommendation}</li> : null}
+          </ul>
+          {summary.reviewNotes.length > 0 ? (
+            <div className="smart-paste-warnings">
+              <span>Review Notes</span>
+              <ul>
+                {summary.reviewNotes.map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {summary.warnings.length > 0 ? (
+            <div className="smart-paste-warnings">
+              <span>Warnings</span>
+              <ul>
+                {summary.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {isExtractResult ? (
+            <button className="editor-add-button" type="button" onClick={onApply}>
+              Apply AI Result
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </EditorSection>
   );
 }
@@ -12143,6 +12325,57 @@ function getProposalValidationWithPacketPdfWarnings(proposal = {}) {
   return {
     ...validation,
     warnings: [...validation.warnings, "Sent proposal has no submitted PDF attached."],
+  };
+}
+
+function getAiSafeProposalContext(proposal = {}) {
+  const totals = calculateProposalTotals(proposal);
+
+  return {
+    id: proposal.id || "",
+    proposalNumber: proposal.proposalNumber || "",
+    proposalType: proposal.proposalType || proposal.type || "",
+    packetMode: proposal.packetMode || "",
+    status: proposal.status || "",
+    project: {
+      name: proposal.project?.name || "",
+      location: proposal.project?.location || "",
+      address: proposal.project?.address || "",
+      description: proposal.project?.description || "",
+      schedule: proposal.project?.proposedSchedule?.display || proposal.project?.estimatedDuration || "",
+      scheduleRestrictions: proposal.project?.scheduleRestrictions || "",
+    },
+    client: {
+      companyName: proposal.client?.companyName || "",
+      contactName: proposal.client?.contactName || "",
+      email: proposal.client?.email || "",
+      phone: proposal.client?.phone || "",
+    },
+    scopeSections: proposal.scopeSections || [],
+    exclusions: proposal.exclusions || [],
+    assumptions: proposal.assumptions || [],
+    lineItems: proposal.lineItems || [],
+    pricingSections: proposal.pricingSections || [],
+    gcPrime: {
+      addendaAcknowledged: proposal.gcPrime?.addendaAcknowledged || "",
+      rfiClarificationNotes: proposal.gcPrime?.rfiClarificationNotes || "",
+      addendaRegister: proposal.gcPrime?.addendaRegister || [],
+      rfiRegister: proposal.gcPrime?.rfiRegister || [],
+      scopeControlSummary: proposal.gcPrime?.scopeControlSummary || {},
+    },
+    gcPacketTables: {
+      pricingSummary: proposal.gcPacketTables?.pricingSummary || {},
+      scheduleOfValues: proposal.gcPacketTables?.scheduleOfValues || {},
+      takeoffQuantities: proposal.gcPacketTables?.takeoffQuantities || {},
+      proposalNotes: proposal.gcPacketTables?.proposalNotes || {},
+    },
+    terms: proposal.terms || {},
+    proposalNotes: proposal.proposalNotes || "",
+    totals: {
+      total: totals.total,
+      baseBid: totals.baseBid,
+      totalIfAllAlternatesAccepted: totals.totalIfAllAlternatesAccepted,
+    },
   };
 }
 

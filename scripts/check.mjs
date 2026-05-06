@@ -11,6 +11,8 @@ const filesToCheck = [
   "src/utils/cloud/storageCloud.js",
   "src/utils/cloud/teamAccess.js",
   "src/utils/formatting/display.js",
+  "src/utils/aiProposal/aiProposalNormalizer.js",
+  "src/utils/aiProposal/aiProposalNormalizer.test.js",
   "src/utils/smartPaste/bidSmartPasteParser.js",
   "src/utils/smartPaste/bidSmartPasteParser.test.js",
   "src/utils/smartPaste/smartPasteCoverFields.js",
@@ -18,6 +20,7 @@ const filesToCheck = [
   "src/utils/smartPaste/smartPasteParser.js",
   "src/utils/smartPaste/smartPasteParser.test.js",
   "src/proposalData.test.js",
+  "api/ai/extract-proposal.js",
 ];
 
 const missingFiles = filesToCheck.filter((file) => !existsSync(file));
