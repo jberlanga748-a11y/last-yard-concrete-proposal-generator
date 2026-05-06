@@ -495,7 +495,10 @@ function parseProjectNotes(notes) {
   setTextValue("billingAddress", "billingAddress", "billing address");
   setTextValue("projectAddress", "projectAddress", "project address");
   setTextValue("projectOwner", "projectOwner", "owner");
+  setTextValue("description", "description", "project description");
+  setTextValue("baseBidIncludes", "baseBidIncludes", "base bid includes");
   setTextValue("schedule", "schedule", "schedule");
+  setTextValue("scheduleAssumptions", "scheduleAssumptions", "schedule assumptions");
   setTextValue("terms", "terms", "terms");
   setTextValue("proposalExpiration", "proposalExpiration", "proposal expiration");
   setTextValue("paymentTerms", "paymentTerms", "payment terms");
@@ -518,8 +521,17 @@ function parseProjectNotes(notes) {
   setTextValue("rfiClarificationNotes", "rfiClarifications", "RFIs / Clarifications");
   setTextValue("addendaAcknowledged", "addendaAcknowledged", "addenda acknowledged");
   setTextValue("proposalNotes", "proposalNotes", "proposal notes");
+  setTextValue("proposalStatus", "proposalStatus", "proposal status");
   setTextValue("gcPrimeNotes", "gcPrimeNotes", "GC / Prime notes");
   setTextValue("concreteSpecNotes", "concreteSpecs", "concrete specs");
+
+  if (values.proposalNotes) {
+    values.proposalNotes = sanitizeSmartPasteProposalNotes(values.proposalNotes);
+
+    if (!hasTextValue(values.proposalNotes)) {
+      delete values.proposalNotes;
+    }
+  }
 
   const proposalType = normalizeSmartProposalType(getSectionText(sections, "proposalType"));
 
@@ -547,6 +559,13 @@ function parseProjectNotes(notes) {
   if (assumptions.length > 0) {
     values.assumptions = assumptions;
     fields.push("assumptions");
+  }
+
+  const scopeControlSummary = parseSmartPasteScopeControlSummary(getSectionText(sections, "scopeControlSummary"));
+
+  if (Object.keys(scopeControlSummary).length > 0) {
+    values.scopeControlSummary = scopeControlSummary;
+    fields.push("scope control summary");
   }
 
   const lineItems = parseSmartPasteLineItems(sections.lineItems || [], warnings);
@@ -692,12 +711,21 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     nextProposal.gcPrime.gcPrimeNotes = ["Owner / Public Agency: " + values.projectOwner, nextProposal.gcPrime.gcPrimeNotes].filter(hasTextValue).join("\n");
   }
 
-  if (values.schedule) {
-    nextProposal.project.estimatedDuration = values.schedule;
+  const projectDescription = getSmartPasteProjectDescription(values);
+
+  if (projectDescription) {
+    nextProposal.project.description = projectDescription;
+  }
+
+  const scheduleText = [values.schedule, values.scheduleAssumptions].filter(hasTextValue).join("\n");
+
+  if (scheduleText) {
+    nextProposal.project.estimatedDuration = scheduleText;
     nextProposal.project.proposedSchedule = {
       ...(nextProposal.project.proposedSchedule || {}),
-      display: values.schedule,
+      display: scheduleText,
     };
+    nextProposal.project.scheduleRestrictions = values.scheduleAssumptions || nextProposal.project.scheduleRestrictions || "";
   }
 
   if (values.proposalType) {
@@ -710,6 +738,13 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
       {
         title: "Scope of Work",
         items: values.scopeItems,
+      },
+    ];
+  } else if (values.description) {
+    nextProposal.scopeSections = [
+      {
+        title: "Scope Summary",
+        items: [values.description],
       },
     ];
   }
@@ -790,6 +825,13 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     nextProposal.gcPrime.scopeControlSummary = {
       ...normalizeScopeControlSummary(nextProposal.gcPrime.scopeControlSummary),
       ownerGcByOthers: values.ownerGcByOthers,
+    };
+  }
+
+  if (values.scopeControlSummary) {
+    nextProposal.gcPrime.scopeControlSummary = {
+      ...normalizeScopeControlSummary(nextProposal.gcPrime.scopeControlSummary),
+      ...values.scopeControlSummary,
     };
   }
 
@@ -1152,6 +1194,11 @@ function collectSmartPasteSections(notes) {
   let activePlanSheetField = "calculationNotes";
   const multiLineKeys = new Set([
     "scope",
+    "description",
+    "baseBidIncludes",
+    "schedule",
+    "scheduleAssumptions",
+    "scopeControlSummary",
     "exclusions",
     "assumptions",
     "terms",
@@ -1173,6 +1220,11 @@ function collectSmartPasteSections(notes) {
     "warrantyLimitation",
     "gcScopeControl",
     "ownerGcByOthers",
+    "description",
+    "baseBidIncludes",
+    "schedule",
+    "scheduleAssumptions",
+    "scopeControlSummary",
     "lineItems",
     "rfiClarifications",
     "rfiRegister",
@@ -1213,6 +1265,11 @@ function collectSmartPasteSections(notes) {
     "warrantyLimitation",
     "gcScopeControl",
     "ownerGcByOthers",
+    "description",
+    "baseBidIncludes",
+    "schedule",
+    "scheduleAssumptions",
+    "scopeControlSummary",
     "proposalNotes",
     "gcPrimeNotes",
     "concreteSpecs",
@@ -1262,6 +1319,19 @@ function collectSmartPasteSections(notes) {
         activePlanSheetIndex = -1;
         recordSmartPasteSection(sections, key);
         appendSmartPasteSection(sections, key, labelMatch[2]);
+        return;
+      }
+    }
+
+    if (labelMatch && shouldBreakSmartPasteTextCapture(activeKey, labelMatch[1], line)) {
+      const key = getSmartPasteLabelKey(labelMatch[1]);
+      const nextKey = key || (isSmartPricingLine(line) || isSmartImplicitPricingLine(line) ? "pricingSections" : "");
+
+      if (nextKey) {
+        activeKey = nextKey;
+        activePlanSheetIndex = -1;
+        recordSmartPasteSection(sections, nextKey);
+        appendSmartPasteSection(sections, nextKey, nextKey === "pricingSections" ? line : labelMatch[2]);
         return;
       }
     }
@@ -1323,6 +1393,16 @@ function collectSmartPasteSections(notes) {
   });
 
   return sections;
+}
+
+function shouldBreakSmartPasteTextCapture(activeKey, label, line) {
+  if (!["description", "baseBidIncludes", "schedule", "scheduleAssumptions", "scopeControlSummary"].includes(activeKey)) {
+    return false;
+  }
+
+  const key = getSmartPasteLabelKey(label);
+
+  return Boolean(key) || isSmartPricingLine(line) || isSmartImplicitPricingLine(line);
 }
 
 function getSmartPlanSheetHeading(label) {
@@ -1510,6 +1590,7 @@ function getSmartPasteLabelKey(label) {
     allowances: "pricingSections",
     alternates: "pricingSections",
     assumptions: "assumptions",
+    "base bid includes": "baseBidIncludes",
     "change order": "changeOrders",
     "change order language": "changeOrders",
     "change orders": "changeOrders",
@@ -1524,6 +1605,7 @@ function getSmartPasteLabelKey(label) {
     "contact phone": "clientPhone",
     "contract scope control": "contractScopeControl",
     "deposit terms": "depositTerms",
+    description: "description",
     email: "clientEmail",
     exclusions: "exclusions",
     "final payment": "finalPayment",
@@ -1556,6 +1638,7 @@ function getSmartPasteLabelKey(label) {
     "pricing summary": "pricingSummary",
     project: "projectName",
     "project address": "projectAddress",
+    "project description": "description",
     "project location": "projectLocation",
     "project location / address": "projectLocation",
     "project name": "projectName",
@@ -1564,15 +1647,19 @@ function getSmartPasteLabelKey(label) {
     "proposal notes / acceptance summary": "proposalNotes",
     "proposal notes": "proposalNotes",
     "proposal basis": "proposalBasis",
+    "proposal status": "proposalStatus",
     "proposal type": "proposalType",
     "rfi / clarification": "rfiClarifications",
     rfi: "rfiRegister",
     clarification: "rfiRegister",
     "rfis / clarifications": "rfiClarifications",
     schedule: "schedule",
+    "schedule assumptions": "scheduleAssumptions",
     "schedule of values": "scheduleOfValues",
     scope: "scope",
+    "scope summary": "description",
     "scope control": "gcScopeControl",
+    "scope control summary": "scopeControlSummary",
     "shade footing estimate": "shadeFootingEstimate",
     "site readiness": "siteReadiness",
     "takeoff quantities": "takeoffQuantities",
@@ -1609,6 +1696,7 @@ function isSmartPasteSectionHeading(label, key) {
     "allowances",
     "alternates",
     "assumptions",
+    "base bid includes",
     "change order",
     "change order language",
     "change orders",
@@ -1618,6 +1706,7 @@ function isSmartPasteSectionHeading(label, key) {
     "concrete cracking",
     "concrete cracking disclaimer",
     "deposit terms",
+    "description",
     "exclusions",
     "final payment",
     "gc / prime notes",
@@ -1635,11 +1724,13 @@ function isSmartPasteSectionHeading(label, key) {
     "owner gc by others",
     "payment terms",
     "pricing summary",
+    "project description",
     "progress billing",
     "proposal expiration",
     "proposal notes / acceptance summary",
     "proposal notes",
     "proposal basis",
+    "proposal status",
     "contract scope control",
     "gc / prime reviewer",
     "gc prime reviewer",
@@ -1647,9 +1738,12 @@ function isSmartPasteSectionHeading(label, key) {
     "rfi",
     "clarification",
     "rfis / clarifications",
+    "schedule assumptions",
     "schedule of values",
     "scope",
+    "scope summary",
     "scope control",
+    "scope control summary",
     "shade footing estimate",
     "site readiness",
     "takeoff quantities",
@@ -1682,6 +1776,7 @@ function getCapturedSmartPasteLabels(sections) {
     addendaRegister: "Structured Addenda",
     acceptanceSummary: "Acceptance Summary",
     assumptions: "Assumptions",
+    baseBidIncludes: "Base Bid Includes",
     billingAddress: "Billing Address",
     changeOrders: "Change Orders",
     clientCompany: "Client",
@@ -1693,6 +1788,7 @@ function getCapturedSmartPasteLabels(sections) {
     contactName: "Contact",
     contractScopeControl: "Contract Scope Control",
     depositTerms: "Deposit Terms",
+    description: "Project Description",
     exclusions: "Exclusions",
     finalPayment: "Final Payment",
     gcPrimeNotes: "GC / Prime Notes",
@@ -1714,12 +1810,15 @@ function getCapturedSmartPasteLabels(sections) {
     proposalExpiration: "Proposal Expiration",
     proposalBasis: "Proposal Basis",
     proposalNotes: "Proposal Notes",
+    proposalStatus: "Proposal Status",
     proposalType: "Proposal Type",
     rfiClarifications: "RFIs / Clarifications",
     rfiRegister: "Structured RFI / Clarification Register",
     schedule: "Schedule",
+    scheduleAssumptions: "Schedule Assumptions",
     scheduleOfValues: "Schedule of Values",
     scope: "Scope",
+    scopeControlSummary: "Scope Control Summary",
     shadeFootingEstimate: "Shade Footing Estimate",
     siteReadiness: "Site Readiness",
     takeoffQuantities: "Takeoff Quantities",
@@ -2196,6 +2295,69 @@ function splitSmartPasteList(value) {
     .filter(Boolean);
 }
 
+function getSmartPasteProjectDescription(values = {}) {
+  return [values.description, values.baseBidIncludes]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .filter((value, index, valuesList) => valuesList.indexOf(value) === index)
+    .join("\n");
+}
+
+function parseSmartPasteScopeControlSummary(value) {
+  const summary = {};
+  const fieldMap = {
+    "included scope": "includedScope",
+    exclusions: "exclusions",
+    clarifications: "clarifications",
+    "accepted alternates": "acceptedAlternates",
+    allowances: "allowances",
+    "owner / gc by others": "ownerGcByOthers",
+    "owner gc by others": "ownerGcByOthers",
+    "hidden / unshown conditions": "hiddenUnshownConditionsNote",
+    "hidden unshown conditions": "hiddenUnshownConditionsNote",
+    "hidden conditions": "hiddenUnshownConditionsNote",
+  };
+
+  String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const pipeParts = line.split("|").map((part) => part.trim()).filter(Boolean);
+
+      if (pipeParts.length >= 2) {
+        const normalizedLabel = pipeParts[0].toLowerCase().replace(/\s+/g, " ");
+        const field = fieldMap[normalizedLabel];
+
+        if (field) {
+          summary[field] = [summary[field], pipeParts.slice(1).join(" | ")].filter(hasTextValue).join("\n");
+        }
+      }
+    });
+
+  return summary;
+}
+
+function sanitizeSmartPasteProposalNotes(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !isScopeControlPipeLine(line))
+    .join("\n");
+}
+
+function isScopeControlPipeLine(line) {
+  const parts = String(line || "").split("|").map((part) => part.trim()).filter(Boolean);
+
+  if (parts.length < 2) {
+    return false;
+  }
+
+  return /^(included scope|exclusions|clarifications|accepted alternates|allowances|owner\s*\/?\s*gc by others|hidden\s*\/?\s*unshown conditions|hidden conditions)$/i.test(
+    parts[0],
+  );
+}
+
 function parseSmartPasteLineItems(lines, warnings) {
   return lines
     .map((line) => parseSmartPasteLineItem(line, warnings))
@@ -2242,6 +2404,10 @@ function parseSmartPastePricingSections(lines, warnings) {
       return;
     }
 
+    if (parsed.kind === "no_alternate") {
+      return;
+    }
+
     result.sections.push({
       id: createProposalId(),
       type: parsed.kind,
@@ -2269,6 +2435,10 @@ function parseSmartPastePricingLine(line, warnings) {
   const amountParts = rawValue.split("|").map((part) => part.trim()).filter(Boolean);
   const amount = toEditableNumber(amountParts[amountParts.length - 1]);
 
+  if (isNoAlternatePricingLabel(normalizedLabel) && isNoAlternateValue(rawValue)) {
+    return { kind: "no_alternate", label: rawLabel, amount: 0, note: rawValue };
+  }
+
   if (amount <= 0) {
     warnings.push(`Skipped pricing section "${line}" because the amount could not be parsed.`);
     return null;
@@ -2278,7 +2448,7 @@ function parseSmartPastePricingLine(line, warnings) {
     return { kind: "total_if_all", label: rawLabel, amount, note: "" };
   }
 
-  if (normalizedLabel.startsWith("total if")) {
+  if (isPresentationTotalPricingLabel(normalizedLabel)) {
     return { kind: "total_presentation", label: rawLabel, amount, note: "" };
   }
 
@@ -2307,7 +2477,7 @@ function parseSmartPastePricingLine(line, warnings) {
 }
 
 function isSmartPricingLine(line) {
-  return /^(base bid|base concrete(?:\s*\/\s*site package)?|allowance|add alternate(?:\s+\d+|\s+[a-z]+)?|additive alternate|optional support scope|deduct alternate(?:\s+\d+|\s+[a-z]+)?|unit price(?:\s+\d+|\s+[a-z]+)?|total if .+)\s*:/i.test(
+  return /^(base bid|base concrete(?:\s*\/\s*site package)?|allowance|add alternate(?:\s+\d+|\s+[a-z]+)?|additive alternate|optional support scope|deduct alternate(?:\s+\d+|\s+[a-z]+)?|unit price(?:\s+\d+|\s+[a-z]+)?|total proposal|total with alternates?|total if .+)\s*:/i.test(
     String(line).trim(),
   );
 }
@@ -2330,7 +2500,7 @@ function isSmartImplicitPricingLine(line) {
     isBaseBidPricingLabel(normalizedLabel) ||
     normalizedLabel.includes("alternate") ||
     normalizedLabel.includes("optional support") ||
-    normalizedLabel.startsWith("total if")
+    isPresentationTotalPricingLabel(normalizedLabel)
   );
 }
 
@@ -2357,8 +2527,26 @@ function isBaseBidPricingLabel(label) {
 function isTotalIfAllAcceptedLabel(label) {
   return (
     label.startsWith("total if all") ||
+    label.startsWith("total if all alternates") ||
     (label.startsWith("total if") && (label.includes("all accepted") || label.includes("optional support")))
   );
+}
+
+function isPresentationTotalPricingLabel(label) {
+  return (
+    label.startsWith("total proposal") ||
+    label.startsWith("total with alternate") ||
+    label.startsWith("total with alternates") ||
+    label.startsWith("total if")
+  );
+}
+
+function isNoAlternatePricingLabel(label) {
+  return label.startsWith("add alternate") || label.startsWith("additive alternate") || label === "alternates" || label === "alternate";
+}
+
+function isNoAlternateValue(value) {
+  return /^(none|none currently|no add alternates?|no alternate(?:s)?|n\/a|not applicable|not included|currently none)$/i.test(String(value || "").trim());
 }
 
 function createPricingSummaryRow(label, amount, note = "") {

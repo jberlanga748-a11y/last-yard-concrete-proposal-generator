@@ -1076,6 +1076,10 @@ export function validateProposalCompleteness(proposal) {
     warnings.push("Client phone is missing.");
   }
 
+  if (hasProposalDraftPlaceholders(proposal)) {
+    warnings.push(proposalPlaceholderWarning);
+  }
+
   if (!hasTextList(proposal.exclusions)) {
     warnings.push("Exclusions are missing.");
   }
@@ -1104,6 +1108,17 @@ export function validateProposalCompleteness(proposal) {
     errors,
     warnings,
   };
+}
+
+export const proposalPlaceholderWarning = "Verify client/contact fields before sending.";
+
+export function hasProposalDraftPlaceholders(proposal = {}) {
+  return [
+    proposal.client?.companyName,
+    proposal.client?.contactName,
+    proposal.client?.email,
+    proposal.client?.phone,
+  ].some(isDraftPlaceholderText);
 }
 
 function templateScope(title, items) {
@@ -1310,7 +1325,17 @@ function isSovPresentationTotalRow(row = {}) {
   const description = String(row.description || "").trim().toLowerCase();
   const rowText = getSovRowText(row);
   const presentationPattern = /^(subtotal|total|total base|total if)\b/;
-  const presentationPhrases = ["subtotal", "total", "total if", "total base", "base + additive", "base + additive + optional"];
+  const presentationPhrases = [
+    "subtotal",
+    "total",
+    "total proposal",
+    "total with alternate",
+    "total with alternates",
+    "total if",
+    "total base",
+    "base + additive",
+    "base + additive + optional",
+  ];
 
   return presentationPattern.test(item) || presentationPattern.test(description) || presentationPhrases.some((phrase) => rowText.includes(phrase));
 }
@@ -1405,6 +1430,10 @@ function requireAllowed(errors, value, allowedValues, fieldName) {
 
 function hasText(value) {
   return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function isDraftPlaceholderText(value) {
+  return /\[(?:verify|enter|confirm|tbd|to be confirmed)[^\]]*\]/i.test(String(value || ""));
 }
 
 function hasTextList(value) {

@@ -25,9 +25,11 @@ import {
   formatCurrency,
   generateProposalNumber,
   getDefaultPriceLibrary,
+  hasProposalDraftPlaceholders,
   normalizePacketBuilder,
   normalizePriceLibrary,
   normalizePriceLibraryItem,
+  proposalPlaceholderWarning,
   validateProposalCompleteness,
 } from "./proposalData.js";
 import { isSupabaseConfigured, supabase } from "./supabaseClient.js";
@@ -2362,6 +2364,12 @@ export default function App() {
       return;
     }
 
+    if (hasProposalDraftPlaceholders(proposalDraft)) {
+      setValidationNotice(proposalPlaceholderWarning);
+      setSaveMessage(proposalPlaceholderWarning);
+      return;
+    }
+
     const updatedProposal = createEditableProposal({
       ...proposalDraft,
       submittedPacketRecords: normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).map((record) =>
@@ -2569,6 +2577,12 @@ export default function App() {
       return;
     }
 
+    if (hasProposalDraftPlaceholders(proposalDraft)) {
+      setValidationNotice(proposalPlaceholderWarning);
+      setSaveMessage(proposalPlaceholderWarning);
+      return;
+    }
+
     const packetRecord = normalizeSubmittedPacketRecords(proposalDraft.submittedPacketRecords).find((record) => record.id === sendDraft.packetRecordId);
 
     if (!packetRecord) {
@@ -2735,6 +2749,12 @@ export default function App() {
       return;
     }
 
+    if (String(status || "").toLowerCase() === "sent" && hasProposalDraftPlaceholders(proposalDraft)) {
+      setValidationNotice(proposalPlaceholderWarning);
+      setSaveMessage(proposalPlaceholderWarning);
+      return;
+    }
+
     const updatedProposal = applyStatusTracking({ ...proposalDraft, updatedAt: new Date().toISOString() }, status);
     setProposalDraft(updatedProposal);
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, updatedProposal));
@@ -2751,6 +2771,11 @@ export default function App() {
 
   async function updateListProposalStatus(proposal, status) {
     if (!canPerform("markProposalOutcome")) {
+      return;
+    }
+
+    if (String(status || "").toLowerCase() === "sent" && hasProposalDraftPlaceholders(proposal)) {
+      setSaveMessage(proposalPlaceholderWarning);
       return;
     }
 

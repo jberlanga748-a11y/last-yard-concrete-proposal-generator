@@ -365,3 +365,59 @@ Concrete site package proposal only.`,
   assert.equal(calculateProposalTotals(result.proposal).totalIfAllAlternatesAccepted, 1130000);
   assert.doesNotMatch(validation.errors.join("\n"), /client\/company|project name|project address|project location/i);
 });
+
+test("handles Costco freezer slab paste without fake alternates or raw scope-control leakage", () => {
+  const result = parseSmartPasteNotes(
+    `Project: Costco #682 Albany POS Boxes Remodel
+Location: Albany, Oregon
+Prepared for: [VERIFY CUSTOMER / GC]
+Contact: [ENTER CONTACT NAME BEFORE SENDING]
+Email: [ENTER EMAIL BEFORE SENDING]
+Phone: [ENTER PHONE BEFORE SENDING]
+Proposal Type: GC / Prime
+Proposal Status: Draft internal review
+
+Scope Summary:
+Interior concrete / night work freezer slab package including phased sawcut, slab demo, haul-off, freezer slab prep, sand base, vapor barrier, insulation, PVC freezer vent pipe, reinforcement, new 6 in freezer slabs, curb work, bollards, patch allowance, line pump allowance, and cleanup.
+
+Schedule:
+Estimated schedule to be confirmed after final phasing and approved night-work window. Current working assumption: night work only, one freezer area at a time, coordinated around active store operations.
+
+Base Bid: $325,000
+Add Alternate: None currently
+Total Proposal: $325,000
+
+Scope Control Summary:
+Included Scope | Interior freezer slab sawcut, slab demo, haul-off, prep, vapor barrier, insulation, vent pipe, reinforcement, new slabs, curb work, bollards, patch allowance, line pump allowance, and cleanup.
+Exclusions | Store operations protection by others; refrigeration system work excluded; permits and testing by others.
+Clarifications | Night work only and one freezer area at a time unless changed in writing.
+
+Schedule of Values:
+1 | Base Bid | Included base scope | $325,000
+Total | Total Proposal | Presentation total | $325,000
+
+Proposal Notes:
+Draft proposal for review. Verify customer, GC, contact, final phasing, and night-work window before sending.`,
+    blankProposalFixture(),
+  );
+
+  const totals = calculateProposalTotals(result.proposal);
+  const validation = validateProposalCompleteness(result.proposal);
+
+  assert.equal(result.proposal.project.name, "Costco #682 Albany POS Boxes Remodel");
+  assert.equal(result.proposal.lineItems.length, 1);
+  assert.equal(result.proposal.lineItems[0].unitPrice, 325000);
+  assert.equal(result.proposal.pricingSections.length, 0);
+  assert.equal(totals.total, 325000);
+  assert.equal(totals.totalIfAllAlternatesAccepted, 325000);
+  assert.match(result.proposal.project.description, /Interior concrete \/ night work freezer slab package/);
+  assert.match(result.proposal.project.proposedSchedule.display, /night work only/);
+  assert.match(result.proposal.gcPrime.scopeControlSummary.includedScope, /Interior freezer slab sawcut/);
+  assert.match(result.proposal.gcPrime.scopeControlSummary.exclusions, /refrigeration system work excluded/);
+  assert.doesNotMatch(result.proposal.proposalNotes || "", /Included Scope \|/);
+  assert.doesNotMatch(result.proposal.gcPacketTables.proposalNotes.proposalBasis || "", /Included Scope \|/);
+  assert.doesNotMatch(JSON.stringify(result.proposal.pricingSections), /Total Proposal/);
+  assert.doesNotMatch(validation.warnings.join("\n"), /Schedule of Values total/);
+  assert.ok(validation.warnings.includes("Verify client/contact fields before sending."));
+  assert.equal(validation.isValid, true);
+});

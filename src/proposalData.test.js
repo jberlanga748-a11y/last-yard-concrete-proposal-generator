@@ -216,6 +216,51 @@ test("SOV validation ignores optional alternates and presentation total rows", (
   assert.doesNotMatch(result.warnings.join("\n"), /3,180,000|Schedule of Values total/);
 });
 
+test("SOV validation ignores Total Proposal presentation rows", () => {
+  const result = validateProposalCompleteness(
+    completeProposal({
+      lineItems: [
+        {
+          description: "Base Bid",
+          quantity: 1,
+          taxable: true,
+          unit: "LS",
+          unitPrice: 325000,
+        },
+      ],
+      gcPacketTables: {
+        scheduleOfValues: {
+          enabled: true,
+          rows: [
+            { item: "1", description: "Base Bid", pricingBasis: "Included base scope", amount: "$325,000" },
+            { item: "Total", description: "Total Proposal", pricingBasis: "Presentation total", amount: "$325,000" },
+          ],
+        },
+      },
+    }),
+  );
+
+  assert.equal(result.errors.length, 0);
+  assert.doesNotMatch(result.warnings.join("\n"), /Schedule of Values total/);
+});
+
+test("validation warns on draft client/contact placeholders without blocking draft completeness", () => {
+  const result = validateProposalCompleteness(
+    completeProposal({
+      client: {
+        companyName: "[VERIFY CUSTOMER / GC]",
+        contactName: "[ENTER CONTACT NAME BEFORE SENDING]",
+        email: "[ENTER EMAIL BEFORE SENDING]",
+        phone: "[ENTER PHONE BEFORE SENDING]",
+        projectAddress: "123 Project Way",
+      },
+    }),
+  );
+
+  assert.equal(result.isValid, true);
+  assert.ok(result.warnings.includes("Verify client/contact fields before sending."));
+});
+
 test("GC / Prime Full Packet template sets GC proposal type and full packet mode", () => {
   const proposal = applyTemplateToProposal("gc_prime_full_packet", proposalFixture());
 
