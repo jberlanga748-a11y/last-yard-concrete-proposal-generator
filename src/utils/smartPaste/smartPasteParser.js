@@ -635,8 +635,11 @@ function parseProjectNotes(notes) {
 function applyParsedNotesToProposal(proposal, parsedNotes) {
   const nextProposal = cloneObject(proposal);
   const values = parsedNotes.values;
+  nextProposal.project = nextProposal.project || {};
+  nextProposal.client = nextProposal.client || {};
   nextProposal.terms = nextProposal.terms || {};
   nextProposal.gcPrime = nextProposal.gcPrime || {};
+  nextProposal.concreteSpecs = nextProposal.concreteSpecs || {};
   nextProposal.gcPacketTables = normalizeGcPacketTables(nextProposal.gcPacketTables);
   const cleanupPlan = getSmartPasteCleanupPlan(nextProposal, parsedNotes);
 
@@ -1517,6 +1520,8 @@ function getSmartPasteLabelKey(label) {
     "concrete cracking": "concreteCracking",
     "concrete cracking disclaimer": "concreteCracking",
     contact: "contactName",
+    "contact email": "clientEmail",
+    "contact phone": "clientPhone",
     "contract scope control": "contractScopeControl",
     "deposit terms": "depositTerms",
     email: "clientEmail",
@@ -1542,11 +1547,17 @@ function getSmartPasteLabelKey(label) {
     "owner / public agency": "projectOwner",
     "payment terms": "paymentTerms",
     phone: "clientPhone",
+    "attn": "contactName",
+    "attention": "contactName",
     "prepared for": "clientCompany",
+    "prepared for / client": "clientCompany",
+    "prepared for/client": "clientCompany",
+    "client / prepared for": "clientCompany",
     "pricing summary": "pricingSummary",
     project: "projectName",
     "project address": "projectAddress",
     "project location": "projectLocation",
+    "project location / address": "projectLocation",
     "project name": "projectName",
     "progress billing": "progressBilling",
     "proposal expiration": "proposalExpiration",

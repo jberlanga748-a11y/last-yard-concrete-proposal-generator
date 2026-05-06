@@ -177,6 +177,42 @@ test("validation warnings do not block otherwise complete proposals", () => {
   assert.ok(result.warnings.includes("Project photos are missing."));
 });
 
+test("SOV validation ignores optional alternates and presentation total rows", () => {
+  const result = validateProposalCompleteness(
+    completeProposal({
+      lineItems: [
+        {
+          description: "Base Concrete / Site Package",
+          quantity: 1,
+          taxable: true,
+          unit: "LS",
+          unitPrice: 695000,
+        },
+      ],
+      gcPacketTables: {
+        scheduleOfValues: {
+          enabled: true,
+          rows: [
+            { item: "1", description: "Base Concrete / Site Package", pricingBasis: "Base Included", amount: "$695,000" },
+            { item: "2", description: "Additive Alternate", pricingBasis: "Optional Add Alternate", amount: "$225,000" },
+            { item: "3", description: "Optional Support Scope", pricingBasis: "Optional Support Scope", amount: "$210,000" },
+            { item: "Subtotal", description: "Total if Base + Additive", pricingBasis: "Presentation", amount: "$920,000" },
+            {
+              item: "Total if Base + Additive + Optional Support",
+              description: "Presentation Total",
+              pricingBasis: "Presentation",
+              amount: "$1,130,000",
+            },
+          ],
+        },
+      },
+    }),
+  );
+
+  assert.equal(result.errors.length, 0);
+  assert.doesNotMatch(result.warnings.join("\n"), /3,180,000|Schedule of Values total/);
+});
+
 test("GC / Prime Full Packet template sets GC proposal type and full packet mode", () => {
   const proposal = applyTemplateToProposal("gc_prime_full_packet", proposalFixture());
 

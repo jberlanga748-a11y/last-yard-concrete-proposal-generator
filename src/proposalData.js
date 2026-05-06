@@ -1268,9 +1268,10 @@ function getSovValidationWarnings(proposal = {}) {
   const visibleRows = rows.filter((row) =>
     ["item", "description", "pricingBasis", "amount"].some((field) => hasText(row?.[field])),
   );
+  const validationRows = visibleRows.filter((row) => !isSovPresentationTotalRow(row));
   const warnings = [];
 
-  visibleRows.forEach((row, index) => {
+  validationRows.forEach((row, index) => {
     const missingFields = ["item", "description", "pricingBasis", "amount"].filter((field) => !hasText(row?.[field]));
 
     if (missingFields.length > 0) {
@@ -1278,8 +1279,10 @@ function getSovValidationWarnings(proposal = {}) {
     }
   });
 
-  if (visibleRows.length > 0) {
-    const sovTotal = roundMoney(visibleRows.reduce((sum, row) => sum + toNumber(row.amount), 0));
+  const comparableRows = validationRows.filter((row) => isSovRowExplicitlyIncluded(row) || !isSovOptionalPresentationRow(row));
+
+  if (comparableRows.length > 0) {
+    const sovTotal = roundMoney(comparableRows.reduce((sum, row) => sum + toNumber(row.amount), 0));
     const proposalTotal = calculateProposalTotals(proposal).total;
 
     if (proposalTotal > 0 && Math.abs(sovTotal - proposalTotal) > 1) {
@@ -1290,6 +1293,34 @@ function getSovValidationWarnings(proposal = {}) {
   }
 
   return warnings;
+}
+
+function getSovRowText(row = {}) {
+  return [row.item, row.description, row.pricingBasis].map((value) => String(value || "").trim()).filter(Boolean).join(" ").toLowerCase();
+}
+
+function isSovPresentationTotalRow(row = {}) {
+  const item = String(row.item || "").trim().toLowerCase();
+  const description = String(row.description || "").trim().toLowerCase();
+  const presentationPattern = /^(subtotal|total|total base|total if)\b/;
+
+  return presentationPattern.test(item) || presentationPattern.test(description);
+}
+
+function isSovRowExplicitlyIncluded(row = {}) {
+  const textValue = getSovRowText(row);
+
+  if (/\b(not included|excluded)\b/.test(textValue)) {
+    return false;
+  }
+
+  return row.included === true || /\b(included|accepted|base included)\b/.test(textValue);
+}
+
+function isSovOptionalPresentationRow(row = {}) {
+  const textValue = getSovRowText(row);
+
+  return /\b(optional|alternate|additive alternate|add alternate|deduct alternate|support scope)\b/.test(textValue);
 }
 
 function formatValidationCurrency(value) {

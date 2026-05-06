@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { SEED_PROPOSAL } from "../../proposalData.js";
+import { calculateProposalTotals, SEED_PROPOSAL, validateProposalCompleteness } from "../../proposalData.js";
 import { parseSmartPasteNotes } from "./smartPasteParser.js";
 
 function proposalFixture(overrides = {}) {
@@ -9,6 +9,30 @@ function proposalFixture(overrides = {}) {
     ...structuredClone(SEED_PROPOSAL),
     ...overrides,
   };
+}
+
+function blankProposalFixture(overrides = {}) {
+  return proposalFixture({
+    templateId: "blank",
+    client: {
+      companyName: "",
+      contactName: "",
+      email: "",
+      phone: "",
+      projectAddress: "",
+    },
+    project: {
+      name: "",
+      location: "",
+      address: "",
+    },
+    lineItems: [],
+    pricingSections: [],
+    scopeSections: [],
+    submittedPacketRecords: [],
+    sendRecords: [],
+    ...overrides,
+  });
 }
 
 function warningText(result) {
@@ -249,6 +273,13 @@ Survey/layout by others; testing by others; unsuitable soils excluded unless acc
 Takeoff Quantities:
 Base Concrete / Site Package | LS | Concrete/site package | 0 | 0 | Base
 
+Schedule of Values:
+1 | Base Concrete / Site Package | Base Included | $695,000
+2 | Additive Alternate | Optional Add Alternate | $225,000
+3 | Optional Support Scope | Optional Support Scope | $210,000
+Subtotal | Total if Base + Additive | Presentation | $920,000
+Total if Base + Additive + Optional Support | Presentation Total | Presentation | $1,130,000
+
 RFIs / Clarifications:
 Confirm final concrete scope limits and whether optional support scope should be carried.
 
@@ -276,6 +307,8 @@ Internal review draft only. Do not release until Faison confirms accepted scope 
   assert.equal(result.proposal.pricingSections[1].label, "Optional Support Scope");
   assert.equal(result.proposal.pricingSections[1].amount, 210000);
   assert.equal(result.parsedNotes.values.totalIfAllAccepted, 1130000);
+  assert.equal(calculateProposalTotals(result.proposal).total, 695000);
+  assert.equal(calculateProposalTotals(result.proposal).totalIfAllAlternatesAccepted, 1130000);
   assert.equal(result.proposal.gcPacketTables.pricingSummary.enabled, true);
   assert.deepEqual(
     result.proposal.gcPacketTables.pricingSummary.rows.map((row) => row.label),
@@ -292,8 +325,42 @@ Internal review draft only. Do not release until Faison confirms accepted scope 
   assert.match(result.proposal.gcPacketTables.proposalNotes.contractScopeControl, /subcontractor/i);
   assert.match(result.proposal.scopeSections[0].items.join("\n"), /not as full GC\/prime/);
   assert.doesNotMatch(result.proposal.scopeSections[0].items.join("\n"), /\nprime$/i);
+  const validation = validateProposalCompleteness(result.proposal);
+  assert.doesNotMatch(validation.errors.join("\n"), /client\/company|project name|project address|project location/i);
+  assert.doesNotMatch(validation.warnings.join("\n"), /3,180,000|Schedule of Values total/i);
   assert.ok(result.summary.coverFieldsUpdated.includes("Project Name"));
   assert.ok(result.summary.cleanupActions.some((action) => /Starter\/default pricing rows replaced/.test(action)));
   assert.ok(result.summary.defaultRowsRemoved.includes("Site Prep & Excavation"));
   assert.equal(result.summary.pricingRowsReplaced, 5);
+});
+
+test("fills required NW Dunbar header fields when pasted into a blank proposal draft", () => {
+  const result = parseSmartPasteNotes(
+    `Project: NW Dunbar Avenue Improvements
+Location: Troutdale, Oregon
+Prepared for: Faison Construction
+Contact: Maize
+Email: maize@faisonconstruction.com
+Base Concrete / Site Package: $695,000
+Additive Alternate: $225,000
+Optional Support Scope: $210,000
+Total if Base + Additive: $920,000
+Total if Base + Additive + Optional Support: $1,130,000
+
+Scope:
+Concrete site package proposal only.`,
+    blankProposalFixture(),
+  );
+
+  const validation = validateProposalCompleteness(result.proposal);
+
+  assert.equal(result.proposal.project.name, "NW Dunbar Avenue Improvements");
+  assert.equal(result.proposal.project.location, "Troutdale, Oregon");
+  assert.equal(result.proposal.project.address, "Troutdale, Oregon");
+  assert.equal(result.proposal.client.companyName, "Faison Construction");
+  assert.equal(result.proposal.client.contactName, "Maize");
+  assert.equal(result.proposal.client.email, "maize@faisonconstruction.com");
+  assert.equal(calculateProposalTotals(result.proposal).total, 695000);
+  assert.equal(calculateProposalTotals(result.proposal).totalIfAllAlternatesAccepted, 1130000);
+  assert.doesNotMatch(validation.errors.join("\n"), /client\/company|project name|project address|project location/i);
 });

@@ -3931,8 +3931,12 @@ export default function App() {
       return;
     }
 
+    const nextProposal = createEditableProposal(linkProposalToMatchingContact(parsedProposal, savedContacts));
+    const nextValidation = validateProposalCompleteness(nextProposal);
+
     setProposalDirty(true);
-    setProposalDraft(createEditableProposal(linkProposalToMatchingContact(parsedProposal, savedContacts)));
+    setProposalDraft(nextProposal);
+    setValidationNotice(nextValidation.errors.length === 0 ? "" : "Review required fields before save/print.");
     setSmartPasteResult(summary);
   }
 
