@@ -7,10 +7,24 @@ export const activityLogFilters = [
   ["proposal", "Proposals"],
   ["contact", "Contacts"],
   ["settings", "Settings"],
-  ["team", "Team"],
   ["backup", "Backup"],
   ["storage", "Storage"],
+  ["team", "Team"],
 ];
+
+export const activityTypeMeta = {
+  backup: { label: "Backup", tone: "backup" },
+  bid: { label: "Bid", tone: "bid" },
+  contact: { label: "Contact", tone: "contact" },
+  packet: { label: "Packet", tone: "packet" },
+  pdf: { label: "PDF", tone: "pdf" },
+  proposal: { label: "Proposal", tone: "proposal" },
+  send: { label: "Send", tone: "send" },
+  settings: { label: "Settings", tone: "settings" },
+  storage: { label: "Storage", tone: "storage" },
+  team: { label: "Team", tone: "team" },
+  general: { label: "Activity", tone: "general" },
+};
 
 export function createActivityRecord(event = {}, authUser = null) {
   const createdAt = event.createdAt || new Date().toISOString();
@@ -74,6 +88,40 @@ export function getActivityLogFromSettings(settings = {}, fallbackRecords = []) 
   return normalizeActivityLog(fallbackRecords);
 }
 
+export function getActivityDisplayMeta(record = {}) {
+  const entityType = String(record.entityType || "general").trim().toLowerCase();
+  const action = String(record.action || "").trim().toLowerCase();
+  const labelText = `${entityType} ${action}`;
+
+  if (labelText.includes("pdf")) {
+    return activityTypeMeta.pdf;
+  }
+
+  if (labelText.includes("packet")) {
+    return activityTypeMeta.packet;
+  }
+
+  if (labelText.includes("send") || labelText.includes("sent")) {
+    return activityTypeMeta.send;
+  }
+
+  return activityTypeMeta[entityType] || activityTypeMeta.general;
+}
+
+export function groupActivityRecordsByDate(records = []) {
+  const groupedRecords = {
+    today: { key: "today", label: "Today", records: [] },
+    yesterday: { key: "yesterday", label: "Yesterday", records: [] },
+    earlier: { key: "earlier", label: "Earlier dates", records: [] },
+  };
+
+  normalizeActivityLog(records).forEach((record) => {
+    groupedRecords[getActivityDateBucket(record.createdAt)].records.push(record);
+  });
+
+  return Object.values(groupedRecords).filter((group) => group.records.length > 0);
+}
+
 function normalizeActivityRecord(record = {}) {
   return {
     id: String(record.id || ""),
@@ -86,4 +134,27 @@ function normalizeActivityRecord(record = {}) {
     createdAt: String(record.createdAt || new Date().toISOString()),
     notes: String(record.notes || ""),
   };
+}
+
+function getActivityDateBucket(createdAt) {
+  const recordDate = new Date(createdAt);
+
+  if (Number.isNaN(recordDate.getTime())) {
+    return "earlier";
+  }
+
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const recordStart = new Date(recordDate.getFullYear(), recordDate.getMonth(), recordDate.getDate()).getTime();
+  const daysAgo = Math.round((todayStart - recordStart) / 86400000);
+
+  if (daysAgo === 0) {
+    return "today";
+  }
+
+  if (daysAgo === 1) {
+    return "yesterday";
+  }
+
+  return "earlier";
 }

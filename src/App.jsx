@@ -76,6 +76,7 @@ import { parseSmartPasteNotes } from "./utils/smartPaste/smartPasteParser.js";
 import {
   activityLogStorageKey,
   createActivityRecord,
+  getActivityDisplayMeta,
   getActivityLogFromSettings,
   loadActivityLogFromLocalStorage,
   normalizeActivityLog,
@@ -4689,20 +4690,29 @@ function DashboardView({
 
         {recentActivity.length > 0 ? (
           <div className="activity-preview-list">
-            {recentActivity.map((record) => (
-              <div className="activity-preview-row" key={record.id}>
-                <div>
-                  <strong>{record.action}</strong>
-                  <span>{record.entityLabel || record.entityId || record.entityType}</span>
+            {recentActivity.map((record) => {
+              const activityMeta = getActivityDisplayMeta(record);
+
+              return (
+                <div className="activity-preview-row" key={record.id}>
+                  <div className={`activity-type-badge activity-type-${activityMeta.tone}`}>
+                    {activityMeta.label}
+                  </div>
+                  <div className="activity-preview-main">
+                    <strong>{record.action}</strong>
+                    <span>{record.entityLabel || record.entityId || record.entityType}</span>
+                  </div>
+                  <small>
+                    {record.userEmail || "Local user"} | {formatCloudSyncTime(record.createdAt)}
+                  </small>
                 </div>
-                <small>
-                  {record.userEmail} | {formatCloudSyncTime(record.createdAt)}
-                </small>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
-          <p className="empty-list-message">No activity recorded yet.</p>
+          <p className="empty-list-message">
+            No activity yet. Actions like saving proposals, creating bids, attaching PDFs, and exporting backups will appear here.
+          </p>
         )}
       </div>
 

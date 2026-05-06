@@ -1815,15 +1815,43 @@ h4 {
 .activity-log-list,
 .activity-preview-list {
   display: grid;
+  gap: 12px;
+}
+
+.activity-date-group {
+  display: grid;
+  gap: 8px;
+}
+
+.activity-date-group h3 {
+  display: flex;
+  align-items: center;
   gap: 10px;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.activity-date-group h3::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--line);
+}
+
+.activity-date-group-list {
+  display: grid;
+  gap: 8px;
 }
 
 .activity-log-row,
 .activity-preview-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  align-items: start;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: white;
@@ -1832,8 +1860,10 @@ h4 {
 
 .activity-log-row strong,
 .activity-preview-row strong {
+  display: block;
   color: var(--ink);
   font-size: 13px;
+  line-height: 1.25;
 }
 
 .activity-log-row span,
@@ -1846,9 +1876,107 @@ h4 {
   line-height: 1.45;
 }
 
-.activity-log-row > div:last-child,
+.activity-row-main,
+.activity-preview-main {
+  min-width: 0;
+}
+
+.activity-row-main span,
+.activity-preview-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.activity-row-meta,
 .activity-preview-row > small {
   text-align: right;
+}
+
+.activity-row-meta {
+  min-width: 150px;
+}
+
+.activity-type-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 74px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: var(--blue);
+  padding: 5px 9px;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.activity-type-bid {
+  background: rgba(6, 43, 69, 0.1);
+}
+
+.activity-type-proposal,
+.activity-type-packet {
+  background: rgba(201, 166, 74, 0.18);
+  color: #7a5c0f;
+}
+
+.activity-type-contact,
+.activity-type-team {
+  background: rgba(20, 83, 45, 0.1);
+  color: #14532d;
+}
+
+.activity-type-pdf,
+.activity-type-send {
+  background: rgba(127, 29, 29, 0.08);
+  color: #7f1d1d;
+}
+
+.activity-type-backup,
+.activity-type-storage {
+  background: rgba(30, 64, 175, 0.09);
+  color: #1e40af;
+}
+
+.activity-type-settings {
+  background: rgba(71, 85, 105, 0.12);
+  color: #334155;
+}
+
+.activity-preview-list {
+  gap: 8px;
+}
+
+.activity-preview-row {
+  grid-template-columns: auto minmax(0, 1fr) minmax(145px, auto);
+  padding: 10px 12px;
+}
+
+.activity-preview-row .activity-type-badge {
+  min-width: 64px;
+  padding: 4px 8px;
+  font-size: 9px;
+}
+
+.activity-preview-row > small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .activity-log-row,
+  .activity-preview-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .activity-row-meta,
+  .activity-preview-row > small {
+    grid-column: 2;
+    min-width: 0;
+    text-align: left;
+  }
 }
 
 .bid-form-grid {

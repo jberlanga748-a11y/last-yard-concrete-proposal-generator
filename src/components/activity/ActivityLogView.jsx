@@ -1,5 +1,10 @@
 import { useState } from "react";
-import { activityLogFilters, normalizeActivityLog } from "../../utils/activityLog.js";
+import {
+  activityLogFilters,
+  getActivityDisplayMeta,
+  groupActivityRecordsByDate,
+  normalizeActivityLog,
+} from "../../utils/activityLog.js";
 import { formatCloudSyncTime } from "../../utils/formatting/display.js";
 
 export function ActivityLogView({ records = [], onBackToDashboard }) {
@@ -7,6 +12,8 @@ export function ActivityLogView({ records = [], onBackToDashboard }) {
   const normalizedRecords = normalizeActivityLog(records);
   const filteredRecords =
     filter === "all" ? normalizedRecords : normalizedRecords.filter((record) => record.entityType === filter);
+  const groupedRecords = groupActivityRecordsByDate(filteredRecords);
+  const hasAnyActivity = normalizedRecords.length > 0;
 
   return (
     <section className="activity-log-panel no-print">
@@ -36,22 +43,40 @@ export function ActivityLogView({ records = [], onBackToDashboard }) {
         ))}
       </div>
 
-      {filteredRecords.length > 0 ? (
+      {groupedRecords.length > 0 ? (
         <div className="activity-log-list">
-          {filteredRecords.map((record) => (
-            <article className="activity-log-row" key={record.id}>
-              <div>
-                <strong>{record.action}</strong>
-                <span>{record.entityLabel || record.entityId || record.entityType}</span>
-                {record.notes ? <small>{record.notes}</small> : null}
+          {groupedRecords.map((group) => (
+            <div className="activity-date-group" key={group.key}>
+              <h3>{group.label}</h3>
+              <div className="activity-date-group-list">
+                {group.records.map((record) => {
+                  const activityMeta = getActivityDisplayMeta(record);
+
+                  return (
+                    <article className="activity-log-row" key={record.id}>
+                      <div className={`activity-type-badge activity-type-${activityMeta.tone}`}>
+                        {activityMeta.label}
+                      </div>
+                      <div className="activity-row-main">
+                        <strong>{record.action}</strong>
+                        <span>{record.entityLabel || record.entityId || record.entityType}</span>
+                        {record.notes ? <small>{record.notes}</small> : null}
+                      </div>
+                      <div className="activity-row-meta">
+                        <span>{record.userEmail || "Local user"}</span>
+                        <small>{formatCloudSyncTime(record.createdAt)}</small>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
-              <div>
-                <span>{record.userEmail || "Local user"}</span>
-                <small>{formatCloudSyncTime(record.createdAt)}</small>
-              </div>
-            </article>
+            </div>
           ))}
         </div>
+      ) : !hasAnyActivity ? (
+        <p className="empty-list-message">
+          No activity yet. Actions like saving proposals, creating bids, attaching PDFs, and exporting backups will appear here.
+        </p>
       ) : (
         <p className="empty-list-message">No activity records match this filter yet.</p>
       )}
