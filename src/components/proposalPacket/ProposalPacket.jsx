@@ -1,6 +1,7 @@
 import { Fragment, createContext, useContext, useState } from "react";
 import { calculateProposalTotals, formatCurrency, normalizePacketBuilder } from "../../proposalData.js";
 import { formatDisplayDate, formatOptionLabel } from "../../utils/formatting/display.js";
+import { cleanProposalForPrint, getPrintablePreparedForLines, hasPrintableText } from "../../utils/proposalPacket/printContentCleanup.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
 const PacketRenderContext = createContext(null);
@@ -120,15 +121,16 @@ function ProposalPacketContent({ proposal }) {
     getEnabledPlanSheets,
     toEditableNumber,
   } = usePacketHelpers();
-  const company = proposal.company;
+  const packetProposal = cleanProposalForPrint(proposal);
+  const company = packetProposal.company;
   const companyCredentials = company.credentials.join(" | ");
-  const isGcPrime = proposal.proposalType === "gc_prime";
-  const appendixPlan = buildAppendixPlan(proposal);
+  const isGcPrime = packetProposal.proposalType === "gc_prime";
+  const appendixPlan = buildAppendixPlan(packetProposal);
   const gcPrimeRows = isGcPrime ? buildGcPrimeRows(appendixPlan.mainGcPrime) : [];
   const scopeSplitIndex = Math.ceil(appendixPlan.mainScopeSections.length / 2);
   const scopeLeft = appendixPlan.mainScopeSections.slice(0, scopeSplitIndex);
   const scopeRight = appendixPlan.mainScopeSections.slice(scopeSplitIndex);
-  const specRows = buildConcreteSpecRows(proposal.concreteSpecs);
+  const specRows = buildConcreteSpecRows(packetProposal.concreteSpecs);
   const specSplitIndex = Math.ceil(specRows.length / 2);
   const specsLeft = specRows.slice(0, specSplitIndex);
   const specsRight = specRows.slice(specSplitIndex);
@@ -144,16 +146,16 @@ function ProposalPacketContent({ proposal }) {
       formatCurrency(amount),
     ];
   });
-  const proposalTotals = calculateProposalTotals(proposal);
+  const proposalTotals = calculateProposalTotals(packetProposal);
   const totalProposalPrice = formatCurrency(proposalTotals.total);
-  const termsCopy = buildTermsCopy(proposal.terms);
+  const termsCopy = buildTermsCopy(packetProposal.terms);
   const visiblePricingSections = appendixPlan.mainPricingSections;
-  const structuredPacketPages = buildStructuredPacketPages(proposal);
-  const planSheetPages = getEnabledPlanSheets(proposal.planSheets);
+  const structuredPacketPages = buildStructuredPacketPages(packetProposal);
+  const planSheetPages = getEnabledPlanSheets(packetProposal.planSheets);
   const hasExtendedPacketPages = structuredPacketPages.length > 0 || appendixPlan.pages.length > 0 || planSheetPages.length > 0;
   const showCoverGcPrimeNotes = gcPrimeRows.length > 0 && !hasExtendedPacketPages;
   const packetItems = orderPacketRenderItems(
-    proposal,
+    packetProposal,
     [
       {
         key: "cover-summary",
@@ -162,10 +164,10 @@ function ProposalPacketContent({ proposal }) {
           <ProposalPage className="first-page">
             <CoverHeader company={company} />
             <CompanyIntro company={company} companyCredentials={companyCredentials} />
-            <ProjectCards proposal={proposal} />
+            <ProjectCards proposal={packetProposal} />
             {showCoverGcPrimeNotes ? <GcPrimeNotes rows={gcPrimeRows} /> : null}
             <div className="page-one-feature-block">
-              <PhotoBand photos={proposal.projectPhotos} />
+              <PhotoBand photos={packetProposal.projectPhotos} />
               <WhyChoose />
             </div>
             <PageFooter company={company} companyCredentials={companyCredentials} compact />
@@ -231,7 +233,7 @@ function ProposalPacketContent({ proposal }) {
             company={company}
             page={page}
             pageNumber={pageNumber}
-            projectName={proposal.project?.name}
+            projectName={packetProposal.project?.name}
           />
         ),
       })),
@@ -243,7 +245,7 @@ function ProposalPacketContent({ proposal }) {
             company={company}
             page={page}
             pageNumber={pageNumber}
-            projectName={proposal.project?.name}
+            projectName={packetProposal.project?.name}
           />
         ),
       })),
@@ -254,7 +256,7 @@ function ProposalPacketContent({ proposal }) {
           <PlanSheetPage
             company={company}
             pageNumber={pageNumber}
-            projectName={proposal.project?.name}
+            projectName={packetProposal.project?.name}
             sheet={sheet}
           />
         ),
@@ -595,15 +597,11 @@ function PlanSheetPage({ company, sheet, pageNumber, projectName }) {
       </header>
 
       <div className="plan-sheet-body">
-        <section className="plan-sheet-image-area">
-          {sheet.imageSrc ? (
+        {sheet.imageSrc ? (
+          <section className="plan-sheet-image-area">
             <img src={sheet.imageSrc} alt={sheet.title || "Uploaded plan sheet"} />
-          ) : (
-            <div className="plan-sheet-placeholder">
-              <span>Upload plan image</span>
-            </div>
-          )}
-        </section>
+          </section>
+        ) : null}
 
         <aside className="plan-sheet-notes">
           <div className="plan-notes-box">
@@ -722,17 +720,14 @@ function ProjectCards({ proposal }) {
   const { formatRevisionLabel } = usePacketHelpers();
   const { client, project } = proposal;
   const revisionLabel = proposal.revisionLabel || formatRevisionLabel(proposal.revisionNumber);
+  const preparedForLines = getPrintablePreparedForLines(client);
 
   return (
     <section className="project-cards">
       <InfoCard title="Prepared For" watermark="CLIENT">
-        <p>{client.companyName}</p>
-        <p>Attn: {client.contactName}</p>
-        <p>{client.title}</p>
-        <p>{client.billingAddress || client.address}</p>
-        <p>{client.projectAddress || client.cityStateZip}</p>
-        <p>Phone: {client.phone}</p>
-        <p>Email: {client.email}</p>
+        {preparedForLines.map((line) => (
+          <p key={`${line.label}-${line.text}`}>{line.label ? `${line.label}: ${line.text}` : line.text}</p>
+        ))}
       </InfoCard>
 
       <InfoCard title="Project Summary" watermark="SCOPE">
@@ -765,6 +760,10 @@ function InfoCard({ title, watermark, children }) {
 }
 
 function Field({ label, value }) {
+  if (!hasPrintableText(value)) {
+    return null;
+  }
+
   return (
     <p className="field-row">
       <span>{label}:</span>

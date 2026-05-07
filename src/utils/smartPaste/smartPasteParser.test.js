@@ -112,7 +112,7 @@ test("parses Schedule of Values rows with four pipe-separated values", () => {
   assert.equal(table.rows[0].description, "Base Concrete Work");
   assert.equal(table.rows[0].pricingBasis, "LS");
   assert.equal(table.rows[0].amount, "263000");
-  assert.equal(warningText(result), "");
+  assert.doesNotMatch(warningText(result), /Skipped Schedule of Values|incomplete/i);
 });
 
 test("parses Takeoff Quantities rows with six pipe-separated values", () => {
@@ -131,7 +131,7 @@ Sidewalks | 1250 SF | 4 inch | 15.4 | 17.0 | Base`,
   assert.equal(table.rows[0].netCy, "15.4");
   assert.equal(table.rows[0].cyWithTenPercent, "17.0");
   assert.equal(table.rows[0].priceStatus, "Base");
-  assert.equal(warningText(result), "");
+  assert.doesNotMatch(warningText(result), /Skipped Takeoff Quantities|incomplete/i);
 });
 
 test("parses Shade Footing Estimate rows and treats Allowance Note as metadata", () => {
@@ -420,4 +420,108 @@ Draft proposal for review. Verify customer, GC, contact, final phasing, and nigh
   assert.doesNotMatch(validation.warnings.join("\n"), /Schedule of Values total/);
   assert.ok(validation.warnings.includes("Verify client/contact fields before sending."));
   assert.equal(validation.isValid, true);
+});
+
+test("treats Total Proposal and Grand Total lines as summary totals, not alternates", () => {
+  const result = parseSmartPasteNotes(
+    `Project: Total Proposal Trap
+Site: Albany, Oregon
+GC: Faison Construction
+Contact: Maize
+Base Bid: $325,000
+Total Proposal: $325,000
+Grand Total: $325,000`,
+    blankProposalFixture(),
+  );
+
+  const totals = calculateProposalTotals(result.proposal);
+
+  assert.equal(result.proposal.project.name, "Total Proposal Trap");
+  assert.equal(result.proposal.project.location, "Albany, Oregon");
+  assert.equal(result.proposal.client.companyName, "Faison Construction");
+  assert.equal(result.proposal.pricingSections.length, 0);
+  assert.doesNotMatch(JSON.stringify(result.proposal.pricingSections), /Total Proposal|Grand Total/);
+  assert.equal(totals.total, 325000);
+  assert.equal(totals.totalIfAllAlternatesAccepted, 325000);
+  assert.deepEqual(
+    result.proposal.gcPacketTables.pricingSummary.rows.map((row) => row.label),
+    ["Base Bid", "Total Proposal", "Grand Total"],
+  );
+});
+
+test("warns when Smart Paste cannot find project, client, or location", () => {
+  const result = parseSmartPasteNotes(
+    `Scope:
+Place and finish slab.
+
+Base Bid: $12,000`,
+    blankProposalFixture(),
+  );
+
+  assert.match(warningText(result), /project name/i);
+  assert.match(warningText(result), /client, GC, or contact/i);
+  assert.match(warningText(result), /project location or address/i);
+});
+
+test("dedupes repeated exclusions, RFIs, proposal notes, and scope-control notes", () => {
+  const result = parseSmartPasteNotes(
+    `Project: Duplicate Note Test
+Location: Salem, Oregon
+Client: Faison Construction
+
+Exclusions:
+Testing by others.
+testing by others
+- Testing by others
+
+RFIs / Clarifications:
+Confirm slab limits.
+Confirm slab limits
+
+Scope Control Summary:
+Included Scope | Site concrete package.
+Included Scope | site concrete package
+Exclusions | Testing by others.
+Exclusions | testing by others
+
+Proposal Notes:
+Draft for review.
+Draft for review`,
+    blankProposalFixture(),
+  );
+
+  assert.deepEqual(result.proposal.exclusions, ["Testing by others."]);
+  assert.equal(result.proposal.gcPrime.rfiClarificationNotes, "Confirm slab limits.");
+  assert.equal(result.proposal.proposalNotes, "Draft for review.");
+  assert.equal(result.proposal.gcPrime.scopeControlSummary.includedScope, "Site concrete package.");
+  assert.equal(result.proposal.gcPrime.scopeControlSummary.exclusions, "Testing by others.");
+});
+
+test("does not show false SOV warnings when no SOV table was pasted", () => {
+  const result = parseSmartPasteNotes(
+    `Project: No SOV Needed
+Location: Salem, Oregon
+Prepared for: Faison Construction
+Base Bid: $100,000
+Total Proposal: $100,000`,
+    blankProposalFixture(),
+  );
+
+  assert.doesNotMatch(warningText(result), /Schedule of Values/i);
+  assert.equal(result.proposal.gcPacketTables.scheduleOfValues.rows.length, 0);
+});
+
+test("warns only when a pasted SOV section is actually incomplete", () => {
+  const result = parseSmartPasteNotes(
+    `Project: Incomplete SOV
+Location: Salem, Oregon
+Prepared for: Faison Construction
+Base Bid: $100,000
+
+Schedule of Values:
+Base Bid | $100,000`,
+    blankProposalFixture(),
+  );
+
+  assert.match(warningText(result), /Schedule of Values/i);
 });

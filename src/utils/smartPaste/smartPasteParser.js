@@ -150,6 +150,9 @@ export function parseSmartPasteNotes(notes, currentProposal = {}) {
   const parsedNotes = parseProjectNotes(notes);
   const proposal = applyParsedNotesToProposal(currentProposal, parsedNotes);
   const lineItemCount = parsedNotes.lineItems.length + (parsedNotes.values.baseBidLineItem ? 1 : 0);
+  parsedNotes.warnings = [
+    ...new Set([...(parsedNotes.warnings || []), ...getSmartPasteReviewWarnings(proposal, parsedNotes)]),
+  ];
 
   return {
     proposal,
@@ -174,6 +177,76 @@ export function parseSmartPasteNotes(notes, currentProposal = {}) {
 
 export { parseProjectNotes, applyParsedNotesToProposal };
 
+function getSmartPasteReviewWarnings(proposal = {}, parsedNotes = {}) {
+  const warnings = [];
+  const project = proposal.project || {};
+  const client = proposal.client || {};
+  const values = parsedNotes.values || {};
+  const totalRows = values.pricingTotalRows || [];
+  const lineItemTotal = getSmartPasteLineItemTotal(proposal.lineItems || []);
+  const optionalScopeDetected = getSmartPasteOptionalScopeDetected(values);
+
+  if (!hasTextValue(project.name)) {
+    warnings.push("Smart Paste did not find a project name.");
+  }
+
+  if (!hasTextValue(client.companyName) && !hasTextValue(client.contactName)) {
+    warnings.push("Smart Paste did not find a client, GC, or contact.");
+  }
+
+  if (!hasTextValue(project.location) && !hasTextValue(project.address) && !hasTextValue(client.projectAddress)) {
+    warnings.push("Smart Paste did not find a project location or address.");
+  }
+
+  if (optionalScopeDetected) {
+    warnings.push("Optional scope detected. Confirm whether it is excluded from the base bid before sending.");
+  }
+
+  totalRows.forEach((row) => {
+    const label = String(row?.label || "").trim();
+    const normalizedLabel = label.toLowerCase();
+    const amount = toEditableNumber(row?.amount);
+
+    if (!isProposalGrandTotalLabel(normalizedLabel) || amount <= 0) {
+      return;
+    }
+
+    if (lineItemTotal <= 0) {
+      warnings.push(`Pricing total "${label}" was found, but no supporting base line item was parsed.`);
+      return;
+    }
+
+    if (Math.abs(lineItemTotal - amount) > 1 && !hasParsedOptionalOrAlternatePricing(values)) {
+      warnings.push(`Pricing total "${label}" does not match parsed base line items. Review pricing before sending.`);
+    }
+  });
+
+  return warnings;
+}
+
+function getSmartPasteLineItemTotal(lineItems = []) {
+  return lineItems.reduce(
+    (sum, item) => sum + toEditableNumber(item.quantity || 1) * toEditableNumber(item.unitPrice),
+    0,
+  );
+}
+
+function getSmartPasteOptionalScopeDetected(values = {}) {
+  if ((values.pricingSections || []).some((section) => /optional|support scope/i.test(`${section.label} ${section.description}`))) {
+    return true;
+  }
+
+  return /optional support|optional scope|optional alternate|not included unless accepted/i.test(JSON.stringify(values));
+}
+
+function hasParsedOptionalOrAlternatePricing(values = {}) {
+  return (values.pricingSections || []).some((section) => section?.type !== "allowance");
+}
+
+function isProposalGrandTotalLabel(label) {
+  return /^(total proposal|grand total)$/.test(String(label || "").trim().toLowerCase());
+}
+
 function cloneObject(value) {
   return JSON.parse(JSON.stringify(value || {}));
 }
@@ -188,6 +261,40 @@ function createProposalId() {
 
 function hasTextValue(value) {
   return value !== undefined && value !== null && String(value).trim() !== "";
+}
+
+function normalizeSmartPasteFingerprint(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/\s+/g, " ")
+    .replace(/[^a-z0-9$%\s]/g, "")
+    .trim();
+}
+
+function dedupeSmartPasteTextList(items = []) {
+  const seen = new Set();
+
+  return items.filter((item) => {
+    const textValue = String(item || "").trim();
+    const fingerprint = normalizeSmartPasteFingerprint(textValue);
+
+    if (!textValue || !fingerprint || seen.has(fingerprint)) {
+      return false;
+    }
+
+    seen.add(fingerprint);
+    return true;
+  });
+}
+
+function dedupeSmartPasteTextBlock(value) {
+  return dedupeSmartPasteTextList(
+    String(value || "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  ).join("\n");
 }
 
 function toEditableNumber(value) {
@@ -489,6 +596,7 @@ function parseProjectNotes(notes) {
   setTextValue("projectName", "projectName", "project name");
   setTextValue("projectLocation", "projectLocation", "project location");
   setTextValue("clientCompany", "clientCompany", "client/company");
+  setTextValue("gcCompany", "gcCompany", "GC / Prime");
   setTextValue("contactName", "contactName", "contact name");
   setTextValue("clientPhone", "clientPhone", "client phone");
   setTextValue("clientEmail", "clientEmail", "client email");
@@ -531,6 +639,17 @@ function parseProjectNotes(notes) {
     if (!hasTextValue(values.proposalNotes)) {
       delete values.proposalNotes;
     }
+  }
+
+  ["rfiClarificationNotes", "addendaAcknowledged", "gcPrimeNotes", "concreteSpecNotes"].forEach((key) => {
+    if (values[key]) {
+      values[key] = dedupeSmartPasteTextBlock(values[key]);
+    }
+  });
+
+  if (!values.clientCompany && values.gcCompany) {
+    values.clientCompany = values.gcCompany;
+    fields.push("client/company");
   }
 
   const proposalType = normalizeSmartProposalType(getSectionText(sections, "proposalType"));
@@ -608,6 +727,10 @@ function parseProjectNotes(notes) {
     fields.push("total if all accepted");
   }
 
+  if (pricingParse.totalRows.length > 0) {
+    values.pricingTotalRows = pricingParse.totalRows;
+  }
+
   if (pricingParse.summaryRows.length > 0 && !values.gcPacketTables?.pricingSummary?.enabled) {
     values.gcPacketTables = {
       ...normalizeGcPacketTables(values.gcPacketTables),
@@ -629,6 +752,10 @@ function parseProjectNotes(notes) {
   if (gcPacketTableParse.count > 0) {
     values.gcPacketTables = mergeGcPacketTables(values.gcPacketTables, gcPacketTableParse.tables);
     fields.push("structured GC packet tables");
+  }
+
+  if ((sections.__capturedKeys || []).includes("scheduleOfValues") && !values.gcPacketTables?.scheduleOfValues?.rows?.length) {
+    warnings.push("Schedule of Values section was found, but no complete SOV rows were parsed.");
   }
 
   if ((sections.lineItems || []).length > 0 && lineItems.length === 0) {
@@ -708,7 +835,9 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
   if (values.projectOwner) {
     nextProposal.project.owner = values.projectOwner;
     nextProposal.gcPrime.ownerAgency = values.projectOwner;
-    nextProposal.gcPrime.gcPrimeNotes = ["Owner / Public Agency: " + values.projectOwner, nextProposal.gcPrime.gcPrimeNotes].filter(hasTextValue).join("\n");
+    nextProposal.gcPrime.gcPrimeNotes = dedupeSmartPasteTextBlock(
+      ["Owner / Public Agency: " + values.projectOwner, nextProposal.gcPrime.gcPrimeNotes].filter(hasTextValue).join("\n"),
+    );
   }
 
   const projectDescription = getSmartPasteProjectDescription(values);
@@ -865,7 +994,9 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
   }
 
   if (values.gcPrimeNotes) {
-    nextProposal.gcPrime.gcPrimeNotes = values.gcPrimeNotes;
+    nextProposal.gcPrime.gcPrimeNotes = dedupeSmartPasteTextBlock(
+      [nextProposal.gcPrime.gcPrimeNotes, values.gcPrimeNotes].filter(hasTextValue).join("\n"),
+    );
   }
 
   if (values.concreteSpecNotes) {
@@ -1245,6 +1376,15 @@ function collectSmartPasteSections(notes) {
     "gcPrimeReviewer",
   ]);
   const textCaptureKeys = new Set([
+    "projectName",
+    "projectLocation",
+    "projectAddress",
+    "projectOwner",
+    "clientCompany",
+    "gcCompany",
+    "contactName",
+    "clientEmail",
+    "clientPhone",
     "rfiClarifications",
     "addendaAcknowledged",
     "proposalExpiration",
@@ -1318,7 +1458,7 @@ function collectSmartPasteSections(notes) {
         activeKey = key;
         activePlanSheetIndex = -1;
         recordSmartPasteSection(sections, key);
-        appendSmartPasteSection(sections, key, labelMatch[2]);
+        appendSmartPasteSection(sections, key, key === "pricingSections" ? line : labelMatch[2]);
         return;
       }
     }
@@ -1336,9 +1476,16 @@ function collectSmartPasteSections(notes) {
       }
     }
 
-    if (textCaptureKeys.has(activeKey)) {
-      appendSmartPasteSection(sections, activeKey, line);
-      return;
+    if (labelMatch) {
+      const key = getSmartPasteLabelKey(labelMatch[1]);
+
+      if (key) {
+        activeKey = key;
+        activePlanSheetIndex = -1;
+        recordSmartPasteSection(sections, key);
+        appendSmartPasteSection(sections, key, key === "pricingSections" ? line : labelMatch[2]);
+        return;
+      }
     }
 
     if (activeKey !== "pricingSummary" && isSmartPricingLine(line)) {
@@ -1357,16 +1504,9 @@ function collectSmartPasteSections(notes) {
       return;
     }
 
-    if (labelMatch) {
-      const key = getSmartPasteLabelKey(labelMatch[1]);
-
-      if (key) {
-        activeKey = key;
-        activePlanSheetIndex = -1;
-        recordSmartPasteSection(sections, key);
-        appendSmartPasteSection(sections, key, labelMatch[2]);
-        return;
-      }
+    if (textCaptureKeys.has(activeKey)) {
+      appendSmartPasteSection(sections, activeKey, line);
+      return;
     }
 
     if (activeKey === "planSheets" && activePlanSheetIndex >= 0) {
@@ -1588,13 +1728,16 @@ function getSmartPasteLabelKey(label) {
     address: "billingAddress",
     "acceptance summary": "acceptanceSummary",
     allowances: "pricingSections",
+    alternate: "pricingSections",
     alternates: "pricingSections",
+    "appendix notes": "proposalNotes",
     assumptions: "assumptions",
     "base bid includes": "baseBidIncludes",
     "change order": "changeOrders",
     "change order language": "changeOrders",
     "change orders": "changeOrders",
     client: "clientCompany",
+    "client company": "clientCompany",
     "color / finish variation": "colorFinishVariation",
     "color finish variation": "colorFinishVariation",
     "concrete specs": "concreteSpecs",
@@ -1609,6 +1752,9 @@ function getSmartPasteLabelKey(label) {
     email: "clientEmail",
     exclusions: "exclusions",
     "final payment": "finalPayment",
+    "general contractor": "gcCompany",
+    gc: "gcCompany",
+    "gc / prime": "gcCompany",
     "gc / prime notes": "gcPrimeNotes",
     "gc / prime reviewer": "gcPrimeReviewer",
     "gc / prime scope control": "gcScopeControl",
@@ -1618,23 +1764,31 @@ function getSmartPasteLabelKey(label) {
     "hidden condition": "hiddenConditions",
     "hidden conditions": "hiddenConditions",
     "hidden / unknown conditions": "hiddenConditions",
+    inclusions: "scope",
+    "included scope": "scope",
     "late payment": "latePayment",
     "late payment / collection": "latePayment",
     "line items": "lineItems",
     "line item": "lineItems",
     location: "projectLocation",
+    "location / site": "projectLocation",
     owner: "projectOwner",
     "owner / gc by others": "ownerGcByOthers",
     "owner gc by others": "ownerGcByOthers",
     "owner / public agency": "projectOwner",
     "payment terms": "paymentTerms",
     phone: "clientPhone",
+    prime: "gcCompany",
+    "prime contractor": "gcCompany",
     "attn": "contactName",
     "attention": "contactName",
     "prepared for": "clientCompany",
     "prepared for / client": "clientCompany",
     "prepared for/client": "clientCompany",
     "client / prepared for": "clientCompany",
+    "bid requested by": "clientCompany",
+    "requested from": "clientCompany",
+    "requested by": "clientCompany",
     "pricing summary": "pricingSummary",
     project: "projectName",
     "project address": "projectAddress",
@@ -1652,20 +1806,22 @@ function getSmartPasteLabelKey(label) {
     "rfi / clarification": "rfiClarifications",
     rfi: "rfiRegister",
     clarification: "rfiRegister",
+    clarifications: "rfiClarifications",
     "rfis / clarifications": "rfiClarifications",
     schedule: "schedule",
     "schedule assumptions": "scheduleAssumptions",
     "schedule of values": "scheduleOfValues",
     scope: "scope",
+    "scope notes": "scope",
     "scope summary": "description",
     "scope control": "gcScopeControl",
     "scope control summary": "scopeControlSummary",
     "shade footing estimate": "shadeFootingEstimate",
+    site: "projectLocation",
+    "site address": "projectAddress",
     "site readiness": "siteReadiness",
     "takeoff quantities": "takeoffQuantities",
     terms: "terms",
-    "total if all accepted": "pricingSections",
-    "total if all alternates accepted": "pricingSections",
     "utilities": "utilityResponsibility",
     "utility responsibility": "utilityResponsibility",
     warranty: "warranty",
@@ -1677,6 +1833,10 @@ function getSmartPasteLabelKey(label) {
 
   if (/^addendum\s+[a-z0-9.-]+$/i.test(normalizedLabel)) {
     return "addendaRegister";
+  }
+
+  if (/^(bid|proposal)\s+(to|for)\s+/i.test(normalizedLabel)) {
+    return "clientCompany";
   }
 
   if (/^(rfi|clarification)\s+[a-z0-9.-]+$/i.test(normalizedLabel)) {
@@ -1695,6 +1855,7 @@ function isSmartPasteSectionHeading(label, key) {
     "acceptance summary",
     "allowances",
     "alternates",
+    "appendix notes",
     "assumptions",
     "base bid includes",
     "change order",
@@ -1716,6 +1877,8 @@ function isSmartPasteSectionHeading(label, key) {
     "hidden condition",
     "hidden conditions",
     "hidden / unknown conditions",
+    "included scope",
+    "inclusions",
     "late payment",
     "late payment / collection",
     "line item",
@@ -1737,6 +1900,7 @@ function isSmartPasteSectionHeading(label, key) {
     "rfi / clarification",
     "rfi",
     "clarification",
+    "clarifications",
     "rfis / clarifications",
     "schedule assumptions",
     "schedule of values",
@@ -1791,6 +1955,7 @@ function getCapturedSmartPasteLabels(sections) {
     description: "Project Description",
     exclusions: "Exclusions",
     finalPayment: "Final Payment",
+    gcCompany: "GC / Prime",
     gcPrimeNotes: "GC / Prime Notes",
     gcPrimeReviewer: "GC / Prime Reviewer",
     gcScopeControl: "GC / Prime Scope Control",
@@ -2290,9 +2455,9 @@ function splitSmartPasteList(value) {
         ? textValue.split(";")
         : [textValue];
 
-  return sourceItems
+  return dedupeSmartPasteTextList(sourceItems
     .map((item) => item.replace(/^([-*\u2022]|\d+[.)])\s*/, "").trim())
-    .filter(Boolean);
+    .filter(Boolean));
 }
 
 function getSmartPasteProjectDescription(values = {}) {
@@ -2330,7 +2495,9 @@ function parseSmartPasteScopeControlSummary(value) {
         const field = fieldMap[normalizedLabel];
 
         if (field) {
-          summary[field] = [summary[field], pipeParts.slice(1).join(" | ")].filter(hasTextValue).join("\n");
+          summary[field] = dedupeSmartPasteTextBlock(
+            [summary[field], pipeParts.slice(1).join(" | ")].filter(hasTextValue).join("\n"),
+          );
         }
       }
     });
@@ -2339,11 +2506,11 @@ function parseSmartPasteScopeControlSummary(value) {
 }
 
 function sanitizeSmartPasteProposalNotes(value) {
-  return String(value || "")
+  return dedupeSmartPasteTextBlock(String(value || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line && !isScopeControlPipeLine(line))
-    .join("\n");
+    .join("\n"));
 }
 
 function isScopeControlPipeLine(line) {
@@ -2370,6 +2537,7 @@ function parseSmartPastePricingSections(lines, warnings) {
     baseBidLineItem: null,
     sections: [],
     summaryRows: [],
+    totalRows: [],
     totalIfAllAccepted: undefined,
   };
 
@@ -2396,11 +2564,13 @@ function parseSmartPastePricingSections(lines, warnings) {
     if (parsed.kind === "total_if_all") {
       result.totalIfAllAccepted = parsed.amount;
       result.summaryRows.push(createPricingSummaryRow(parsed.label || "Total if all accepted", parsed.amount, parsed.note));
+      result.totalRows.push({ label: parsed.label || "Total if all accepted", amount: parsed.amount, kind: parsed.kind });
       return;
     }
 
     if (parsed.kind === "total_presentation") {
       result.summaryRows.push(createPricingSummaryRow(parsed.label, parsed.amount, parsed.note));
+      result.totalRows.push({ label: parsed.label, amount: parsed.amount, kind: parsed.kind });
       return;
     }
 
@@ -2466,6 +2636,11 @@ function parseSmartPastePricingLine(line, warnings) {
   const numberedLabel = rawLabel.replace(/\s+/g, " ");
   const valueLabel = amountParts.length > 1 ? amountParts.slice(0, -1).join(" | ") : numberedLabel;
   const hasNumberedPrefix = /\d|[a-z]$/i.test(numberedLabel.replace(/^(add|deduct) alternate\s*/i, ""));
+  const hasClearAlternateDescription = amountParts.length > 1 || !isGenericAlternatePricingLabel(normalizedLabel);
+
+  if (type === "add_alternate" && !hasClearAlternateDescription) {
+    warnings.push(`Alternate amount found without a clear alternate description: "${line}".`);
+  }
 
   return {
     kind: type,
@@ -2477,7 +2652,7 @@ function parseSmartPastePricingLine(line, warnings) {
 }
 
 function isSmartPricingLine(line) {
-  return /^(base bid|base concrete(?:\s*\/\s*site package)?|allowance|add alternate(?:\s+\d+|\s+[a-z]+)?|additive alternate|optional support scope|deduct alternate(?:\s+\d+|\s+[a-z]+)?|unit price(?:\s+\d+|\s+[a-z]+)?|total proposal|total with alternates?|total if .+)\s*:/i.test(
+  return /^(base bid|base concrete(?:\s*\/\s*site package)?|allowance|alternate|alternates|add alternate(?:\s+\d+|\s+[a-z]+)?|additive alternate|optional alternate|alt(?:ernate)?\s*#?\s*\d+|optional support scope|deduct(?:ive)? alternate(?:\s+\d+|\s+[a-z]+)?|unit price(?:\s+\d+|\s+[a-z]+)?|total proposal|grand total|total with alternates?|total if .+)\s*:/i.test(
     String(line).trim(),
   );
 }
@@ -2498,7 +2673,7 @@ function isSmartImplicitPricingLine(line) {
 
   return (
     isBaseBidPricingLabel(normalizedLabel) ||
-    normalizedLabel.includes("alternate") ||
+    isExplicitAlternatePricingLabel(normalizedLabel) ||
     normalizedLabel.includes("optional support") ||
     isPresentationTotalPricingLabel(normalizedLabel)
   );
@@ -2509,7 +2684,7 @@ function getSmartPricingType(label) {
     return "allowance";
   }
 
-  if (label.startsWith("deduct alternate")) {
+  if (label.startsWith("deduct alternate") || label.startsWith("deductive alternate")) {
     return "deduct_alternate";
   }
 
@@ -2535,6 +2710,7 @@ function isTotalIfAllAcceptedLabel(label) {
 function isPresentationTotalPricingLabel(label) {
   return (
     label.startsWith("total proposal") ||
+    label.startsWith("grand total") ||
     label.startsWith("total with alternate") ||
     label.startsWith("total with alternates") ||
     label.startsWith("total if")
@@ -2542,11 +2718,35 @@ function isPresentationTotalPricingLabel(label) {
 }
 
 function isNoAlternatePricingLabel(label) {
-  return label.startsWith("add alternate") || label.startsWith("additive alternate") || label === "alternates" || label === "alternate";
+  return (
+    label.startsWith("add alternate") ||
+    label.startsWith("additive alternate") ||
+    label.startsWith("optional alternate") ||
+    /^alt(?:ernate)?\s*#?\s*\d+/i.test(label) ||
+    label === "alternates" ||
+    label === "alternate"
+  );
 }
 
 function isNoAlternateValue(value) {
   return /^(none|none currently|no add alternates?|no alternate(?:s)?|n\/a|not applicable|not included|currently none)$/i.test(String(value || "").trim());
+}
+
+function isExplicitAlternatePricingLabel(label) {
+  return (
+    label.startsWith("add alternate") ||
+    label.startsWith("additive alternate") ||
+    label.startsWith("deduct alternate") ||
+    label.startsWith("deductive alternate") ||
+    label.startsWith("optional alternate") ||
+    /^alt(?:ernate)?\s*#?\s*\d+/i.test(label) ||
+    label === "alternate" ||
+    label === "alternates"
+  );
+}
+
+function isGenericAlternatePricingLabel(label) {
+  return /^(add alternate|additive alternate|optional alternate|alternate|alt)$/i.test(String(label || "").trim());
 }
 
 function createPricingSummaryRow(label, amount, note = "") {

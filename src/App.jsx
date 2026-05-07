@@ -83,6 +83,16 @@ import {
 } from "./utils/smartPaste/smartPasteCoverFields.js";
 import { parseSmartPasteNotes } from "./utils/smartPaste/smartPasteParser.js";
 import {
+  cleanPrintablePlanSheets,
+  cleanPrintablePricingSections,
+  cleanPrintablePricingSummaryRows,
+  cleanPrintableScopeSections,
+  cleanPrintableStructuredRows,
+  cleanPrintableTextBlock,
+  cleanPrintableTextList,
+  hasPrintableText,
+} from "./utils/proposalPacket/printContentCleanup.js";
+import {
   activityLogStorageKey,
   createActivityRecord,
   getActivityDisplayMeta,
@@ -370,6 +380,7 @@ export default function App() {
   const [validationNotice, setValidationNotice] = useState("");
   const [smartPasteNotes, setSmartPasteNotes] = useState("");
   const [smartPasteResult, setSmartPasteResult] = useState(null);
+  const [pendingSmartPasteProposal, setPendingSmartPasteProposal] = useState(null);
   const [aiProposalNotes, setAiProposalNotes] = useState("");
   const [aiProposalResult, setAiProposalResult] = useState(null);
   const [aiProposalMessage, setAiProposalMessage] = useState("");
@@ -556,6 +567,7 @@ export default function App() {
     setValidationNotice("");
     setSmartPasteNotes("");
     setSmartPasteResult(null);
+    setPendingSmartPasteProposal(null);
     setAiProposalNotes("");
     setAiProposalResult(null);
     setAiProposalMessage("");
@@ -733,6 +745,7 @@ export default function App() {
     setValidationNotice("");
     setSmartPasteNotes("");
     setSmartPasteResult(null);
+    setPendingSmartPasteProposal(null);
     setAiProposalNotes("");
     setAiProposalResult(null);
     setAiProposalMessage("");
@@ -3946,6 +3959,15 @@ export default function App() {
     );
   }
 
+  function updateSmartPasteNotes(value) {
+    setSmartPasteNotes(value);
+
+    if (pendingSmartPasteProposal || smartPasteResult?.pendingReview) {
+      setPendingSmartPasteProposal(null);
+      setSmartPasteResult(null);
+    }
+  }
+
   function fillProposalFromNotes() {
     const extractedCoverValues = extractSmartPasteCoverFieldsFromNotes(smartPasteNotes);
     const hasExtractedCoverValues = Object.values(extractedCoverValues).some(hasTextValue);
@@ -3975,8 +3997,10 @@ export default function App() {
         pricingRowsReplaced: 0,
         parsedCoverValues: {},
         activeDraftFieldsUpdated: [],
+        pendingReview: false,
         warnings: summary.warnings.length > 0 ? summary.warnings : ["No clearly labeled proposal fields were found."],
       });
+      setPendingSmartPasteProposal(null);
       return;
     }
 
@@ -3995,13 +4019,58 @@ export default function App() {
       ...summary,
       parsedCoverValues: summarizeSmartPasteCoverValues(coverValues),
       activeDraftFieldsUpdated: getSmartPasteActiveDraftFields(nextProposal, coverValues),
+      detectedProjectInfo: {
+        projectName: nextProposal.project?.name || "",
+        clientCompany: nextProposal.client?.companyName || "",
+        contactName: nextProposal.client?.contactName || "",
+        projectLocation: nextProposal.project?.location || nextProposal.project?.address || nextProposal.client?.projectAddress || "",
+      },
+      detectedPricing: summarizeSmartPasteDetectedPricing(nextProposal),
+      detectedAlternates: (nextProposal.pricingSections || []).map((section) => ({
+        label: section.label || section.description || "Alternate / allowance",
+        amount: section.amount || 0,
+        included: section.included === true,
+      })),
+      pendingReview: true,
+      validationErrors: nextValidation.errors,
     };
 
+    setPendingSmartPasteProposal(nextProposal);
+    setValidationNotice("");
+    setSaveMessage("Smart Paste review ready. Review detected fields, then click Apply Smart Paste.");
+    setSmartPasteResult(nextSummary);
+  }
+
+  function applyPendingSmartPasteResult() {
+    if (!pendingSmartPasteProposal) {
+      setSaveMessage("Run Smart Paste review before applying.");
+      return;
+    }
+
+    const cleanedProposal = cleanProposalDraftAfterSmartPaste(pendingSmartPasteProposal);
+    const nextValidation = validateProposalCompleteness(cleanedProposal);
+
     setProposalDirty(true);
-    setProposalDraft(nextProposal);
+    setProposalDraft(cleanedProposal);
     setValidationNotice(nextValidation.errors.length === 0 ? "" : "Review required fields before save/print.");
     setSaveMessage("Smart Paste applied. Review fields before saving.");
-    setSmartPasteResult(nextSummary);
+    setSmartPasteResult((currentResult) =>
+      currentResult
+        ? {
+            ...currentResult,
+            pendingReview: false,
+            applied: true,
+            validationErrors: nextValidation.errors,
+          }
+        : currentResult,
+    );
+    setPendingSmartPasteProposal(null);
+  }
+
+  function clearPendingSmartPasteResult() {
+    setPendingSmartPasteProposal(null);
+    setSmartPasteResult(null);
+    setSaveMessage("Smart Paste review cleared.");
   }
 
   async function runAiProposalTool(mode) {
@@ -4664,8 +4733,10 @@ export default function App() {
                 onResetPacketBuilder={resetPacketBuilderOrder}
                 onRefreshTermsFromDefaults={refreshProposalTermsFromCompanyDefaults}
                 onStartBlankProposal={startBlankProposalFromTemplatePicker}
+                onSmartPasteApply={applyPendingSmartPasteResult}
+                onSmartPasteClear={clearPendingSmartPasteResult}
                 onSmartPasteFill={fillProposalFromNotes}
-                onSmartPasteNotesChange={setSmartPasteNotes}
+                onSmartPasteNotesChange={updateSmartPasteNotes}
                 onAiProposalNotesChange={setAiProposalNotes}
                 onAiProposalRun={runAiProposalTool}
                 onApplyAiProposalResult={applyAiProposalResult}
@@ -7222,6 +7293,8 @@ function ProposalEditor({
   onRefreshTermsFromDefaults,
   onResetPacketBuilder,
   onStartBlankProposal,
+  onSmartPasteApply,
+  onSmartPasteClear,
   onAiProposalNotesChange,
   onAiProposalRun,
   onApplyAiProposalResult,
@@ -7266,6 +7339,8 @@ function ProposalEditor({
       <SmartPastePanel
         notes={smartPasteNotes}
         result={smartPasteResult}
+        onApply={onSmartPasteApply}
+        onClear={onSmartPasteClear}
         onFill={onSmartPasteFill}
         onNotesChange={onSmartPasteNotesChange}
       />
@@ -7736,7 +7811,7 @@ function openEditorAccordionSection(event, targetId) {
   }
 }
 
-function SmartPastePanel({ notes, result, onFill, onNotesChange }) {
+function SmartPastePanel({ notes, result, onApply, onClear, onFill, onNotesChange }) {
   return (
     <EditorSection defaultOpen id="smart-paste-section" title="Smart Paste">
       <p className="smart-paste-help">
@@ -7753,9 +7828,9 @@ function SmartPastePanel({ notes, result, onFill, onNotesChange }) {
         />
       </label>
       <button className="editor-add-button" type="button" onClick={onFill}>
-        Fill Proposal From Notes
+        Review Proposal From Notes
       </button>
-      {result ? <SmartPasteSummary result={result} /> : null}
+      {result ? <SmartPasteSummary result={result} onApply={onApply} onClear={onClear} /> : null}
     </EditorSection>
   );
 }
@@ -7828,16 +7903,17 @@ function AiProposalPanel({ loading = "", message = "", notes = "", result = null
   );
 }
 
-function SmartPasteSummary({ result }) {
+function SmartPasteSummary({ result, onApply, onClear }) {
   return (
     <div className="smart-paste-summary" aria-live="polite">
-      <strong>Smart Paste Summary</strong>
+      <strong>{result.pendingReview ? "Smart Paste Review" : "Smart Paste Summary"}</strong>
+      {result.pendingReview ? <p>Review the detected fields below, then apply when ready. Your proposal will not change until you apply.</p> : null}
       <ul>
-        <li>{result.fields.length} fields updated</li>
-        <li>{result.lineItemCount} line items added</li>
-        <li>{result.pricingSectionCount || 0} alternates / allowances added</li>
-        <li>{result.planSheetCount || 0} plan / takeoff pages updated</li>
-        <li>{result.gcPacketTableCount || 0} structured GC tables updated</li>
+        <li>{result.fields.length} fields detected</li>
+        <li>{result.lineItemCount} line items detected</li>
+        <li>{result.pricingSectionCount || 0} alternates / allowances detected</li>
+        <li>{result.planSheetCount || 0} plan / takeoff pages detected</li>
+        <li>{result.gcPacketTableCount || 0} structured GC tables detected</li>
         <li>{(result.sectionsCaptured || []).length} sections captured</li>
         <li>{result.defaultsCleared || 0} default cleanup actions applied</li>
         <li>{result.pricingRowsReplaced || 0} pricing summary rows replaced</li>
@@ -7845,10 +7921,27 @@ function SmartPasteSummary({ result }) {
         {result.fields.length > 0 ? <li>Updated: {result.fields.join(", ")}</li> : null}
         {(result.sectionsCaptured || []).length > 0 ? <li>Captured: {result.sectionsCaptured.join(", ")}</li> : null}
         {(result.coverFieldsUpdated || []).length > 0 ? <li>Cover updated: {result.coverFieldsUpdated.join(", ")}</li> : null}
-        {result.parsedCoverValues?.projectName ? <li>Project applied: {result.parsedCoverValues.projectName}</li> : null}
-        {result.parsedCoverValues?.clientCompany ? <li>Client applied: {result.parsedCoverValues.clientCompany}</li> : null}
-        {result.parsedCoverValues?.projectLocation ? <li>Location applied: {result.parsedCoverValues.projectLocation}</li> : null}
-        {(result.activeDraftFieldsUpdated || []).length > 0 ? <li>Applied to active draft: {result.activeDraftFieldsUpdated.join(", ")}</li> : null}
+        {result.parsedCoverValues?.projectName ? <li>Project {result.pendingReview ? "ready" : "applied"}: {result.parsedCoverValues.projectName}</li> : null}
+        {result.parsedCoverValues?.clientCompany ? <li>Client {result.pendingReview ? "ready" : "applied"}: {result.parsedCoverValues.clientCompany}</li> : null}
+        {result.parsedCoverValues?.projectLocation ? <li>Location {result.pendingReview ? "ready" : "applied"}: {result.parsedCoverValues.projectLocation}</li> : null}
+        {result.detectedProjectInfo?.projectName ? <li>Detected project: {result.detectedProjectInfo.projectName}</li> : null}
+        {result.detectedProjectInfo?.clientCompany ? <li>Detected client/GC: {result.detectedProjectInfo.clientCompany}</li> : null}
+        {result.detectedProjectInfo?.projectLocation ? <li>Detected location: {result.detectedProjectInfo.projectLocation}</li> : null}
+        {result.detectedPricing ? (
+          <li>
+            Detected pricing: base {formatCurrency(result.detectedPricing.baseTotal || 0)}, total if all accepted{" "}
+            {formatCurrency(result.detectedPricing.totalIfAllAccepted || 0)}
+          </li>
+        ) : null}
+        {(result.detectedAlternates || []).length > 0 ? (
+          <li>
+            Detected alternates:{" "}
+            {result.detectedAlternates.map((alternate) => `${alternate.label} (${formatCurrency(alternate.amount || 0)})`).join(", ")}
+          </li>
+        ) : null}
+        {(result.activeDraftFieldsUpdated || []).length > 0 ? (
+          <li>{result.pendingReview ? "Will apply to draft" : "Applied to active draft"}: {result.activeDraftFieldsUpdated.join(", ")}</li>
+        ) : null}
         {(result.cleanupActions || []).length > 0 ? <li>Cleanup: {result.cleanupActions.join(" ")}</li> : null}
         {(result.defaultRowsRemoved || []).length > 0 ? <li>Removed defaults: {result.defaultRowsRemoved.join(", ")}</li> : null}
       </ul>
@@ -7860,6 +7953,16 @@ function SmartPasteSummary({ result }) {
               <li key={warning}>{warning}</li>
             ))}
           </ul>
+        </div>
+      ) : null}
+      {result.pendingReview ? (
+        <div className="pricing-action-buttons">
+          <button className="editor-add-button" type="button" onClick={onApply}>
+            Apply Smart Paste
+          </button>
+          <button className="editor-secondary-button" type="button" onClick={onClear}>
+            Clear Review
+          </button>
         </div>
       ) : null}
     </div>
@@ -11045,6 +11148,53 @@ function getSmartPasteActiveDraftFields(proposal = {}, values = {}) {
   return fields;
 }
 
+function summarizeSmartPasteDetectedPricing(proposal = {}) {
+  const toPricingNumber = (value) => {
+    const numberValue = Number.parseFloat(String(value ?? "").replace(/[$,%\s,]/g, ""));
+    return Number.isFinite(numberValue) ? numberValue : 0;
+  };
+  const totals = calculateProposalTotals(proposal);
+  const lineItemTotal = (proposal.lineItems || []).reduce(
+    (sum, item) => sum + toPricingNumber(item.quantity || 1) * toPricingNumber(item.unitPrice),
+    0,
+  );
+
+  return {
+    baseTotal: lineItemTotal,
+    currentTotal: totals.total,
+    totalIfAllAccepted: totals.totalIfAllAlternatesAccepted,
+  };
+}
+
+function cleanProposalDraftAfterSmartPaste(proposal = {}) {
+  return createEditableProposal({
+    ...proposal,
+    scopeSections: cleanPrintableScopeSections(proposal.scopeSections),
+    exclusions: cleanPrintableTextList(proposal.exclusions),
+    assumptions: cleanPrintableTextList(proposal.assumptions),
+    pricingSections: cleanPrintablePricingSections(proposal.pricingSections),
+    proposalNotes: cleanPrintableTextBlock(proposal.proposalNotes),
+    notes: cleanPrintableTextBlock(proposal.notes),
+    gcPrime: {
+      ...(proposal.gcPrime || {}),
+      rfiClarificationNotes: cleanPrintableTextBlock(proposal.gcPrime?.rfiClarificationNotes || proposal.gcPrime?.rfiNotes),
+      rfiNotes: cleanPrintableTextBlock(proposal.gcPrime?.rfiNotes),
+      addendaAcknowledged: cleanPrintableTextBlock(proposal.gcPrime?.addendaAcknowledged),
+      gcPrimeNotes: cleanPrintableTextBlock(proposal.gcPrime?.gcPrimeNotes),
+      scopeControlSummary: {
+        ...(proposal.gcPrime?.scopeControlSummary || {}),
+        includedScope: cleanPrintableTextBlock(proposal.gcPrime?.scopeControlSummary?.includedScope),
+        exclusions: cleanPrintableTextBlock(proposal.gcPrime?.scopeControlSummary?.exclusions),
+        clarifications: cleanPrintableTextBlock(proposal.gcPrime?.scopeControlSummary?.clarifications),
+        acceptedAlternates: cleanPrintableTextBlock(proposal.gcPrime?.scopeControlSummary?.acceptedAlternates),
+        allowances: cleanPrintableTextBlock(proposal.gcPrime?.scopeControlSummary?.allowances),
+        ownerGcByOthers: cleanPrintableTextBlock(proposal.gcPrime?.scopeControlSummary?.ownerGcByOthers),
+        hiddenUnshownConditionsNote: cleanPrintableTextBlock(proposal.gcPrime?.scopeControlSummary?.hiddenUnshownConditionsNote),
+      },
+    },
+  });
+}
+
 function getNextProposalNumber(proposals, date = new Date()) {
   const year = date.getFullYear();
   const nextSequence =
@@ -11659,14 +11809,14 @@ function preserveExistingImageAsset(existingAsset = {}, incomingAsset = {}) {
 
 function normalizePlanSheetNotes(notes = []) {
   if (Array.isArray(notes)) {
-    return notes.map((note) => String(note || "").trim()).filter(Boolean);
+    return cleanPrintableTextList(notes);
   }
 
-  return parseEditorList(notes);
+  return cleanPrintableTextList(parseEditorList(notes));
 }
 
 function getEnabledPlanSheets(planSheets = []) {
-  return normalizePlanSheets(planSheets).filter((sheet) => sheet.enabled);
+  return cleanPrintablePlanSheets(normalizePlanSheets(planSheets));
 }
 
 function formatEditorList(items = []) {
@@ -12578,13 +12728,7 @@ function formatQuantity(value) {
 }
 
 function getVisiblePricingSections(pricingSections = []) {
-  return normalizePricingSections(pricingSections).filter(
-    (section) =>
-      hasTextValue(section.label) ||
-      hasTextValue(section.description) ||
-      hasTextValue(section.amount) ||
-      section.included,
-  );
+  return cleanPrintablePricingSections(normalizePricingSections(pricingSections));
 }
 
 function resequencePacketBuilder(sections = []) {
@@ -12637,7 +12781,7 @@ function hasGcPacketRows(table = {}) {
     Boolean(table.enabled) &&
     Array.isArray(table.rows) &&
     table.rows.some((row) =>
-      Object.entries(row).some(([key, value]) => key !== "id" && hasTextValue(value)),
+      Object.entries(row).some(([key, value]) => key !== "id" && hasPrintableText(value)),
     )
   );
 }
@@ -12646,7 +12790,7 @@ function hasProposalNotesData(table = {}) {
   return (
     Boolean(table.enabled) &&
     ["proposalBasis", "contractScopeControl", "acceptanceSummary", "gcPrimeReviewer"].some((field) =>
-      hasTextValue(table[field]),
+      hasPrintableText(table[field]),
     )
   );
 }
@@ -12858,17 +13002,21 @@ function buildStructuredPacketPages(proposal) {
   );
 
   if (tables.proposalNotes.enabled) {
-    pages.push({
-      key: "structured-proposal-notes",
-      kind: "proposalNotes",
-      title: "Proposal Notes / Acceptance Summary",
-      sections: [
-        { title: "Proposal Basis", text: tables.proposalNotes.proposalBasis },
-        { title: "Contract Scope Control", text: tables.proposalNotes.contractScopeControl },
-        { title: "Acceptance Summary", text: tables.proposalNotes.acceptanceSummary },
-        { title: "GC / Prime Reviewer", text: tables.proposalNotes.gcPrimeReviewer },
-      ],
-    });
+    const proposalNoteSections = [
+      { title: "Proposal Basis", text: cleanPrintableTextBlock(tables.proposalNotes.proposalBasis) },
+      { title: "Contract Scope Control", text: cleanPrintableTextBlock(tables.proposalNotes.contractScopeControl) },
+      { title: "Acceptance Summary", text: cleanPrintableTextBlock(tables.proposalNotes.acceptanceSummary) },
+      { title: "GC / Prime Reviewer", text: cleanPrintableTextBlock(tables.proposalNotes.gcPrimeReviewer) },
+    ].filter((section) => hasPrintableText(section.text));
+
+    if (proposalNoteSections.length > 0) {
+      pages.push({
+        key: "structured-proposal-notes",
+        kind: "proposalNotes",
+        title: "Proposal Notes / Acceptance Summary",
+        sections: proposalNoteSections,
+      });
+    }
   }
 
   if (isFullGcPacket) {
@@ -12895,12 +13043,12 @@ function buildScopeControlSummarySections(proposal = {}) {
     (section) => section.included && section.type !== "unit_price",
   );
   const allowances = getVisiblePricingSections(proposal.pricingSections).filter((section) => section.type === "allowance");
-  const generatedIncludedScope = normalizeScopeSections(proposal.scopeSections)
+  const generatedIncludedScope = cleanPrintableScopeSections(proposal.scopeSections)
     .map((section) => `${section.title}: ${(section.items || []).join("; ")}`)
-    .filter(hasTextValue)
+    .filter(hasPrintableText)
     .join("\n");
-  const generatedExclusions = normalizeTextList(proposal.exclusions).join("\n");
-  const generatedClarifications = getAppendixTextValue(proposal.gcPrime?.rfiClarificationNotes || proposal.gcPrime?.gcPrimeNotes);
+  const generatedExclusions = cleanPrintableTextList(proposal.exclusions).join("\n");
+  const generatedClarifications = getAppendixTextValue(cleanPrintableTextBlock(proposal.gcPrime?.rfiClarificationNotes || proposal.gcPrime?.gcPrimeNotes));
   const generatedAcceptedAlternates = includedAlternates
     .map((section) => `${section.label}: ${formatPricingSectionAmount(section)}`)
     .join("\n");
@@ -12919,7 +13067,7 @@ function buildScopeControlSummarySections(proposal = {}) {
       title: "Hidden / Unshown Conditions",
       text: limitStructuredNoteText(scopeControl.hiddenUnshownConditionsNote || proposal.terms?.hiddenConditions),
     },
-  ].filter((section) => hasTextValue(section.text));
+  ].filter((section) => hasPrintableText(section.text));
 }
 
 function limitStructuredNoteText(value, maxLength = 520) {
@@ -12986,16 +13134,18 @@ function buildLegalTermsSections(terms = {}) {
   ];
 
   return legalFields
-    .filter(([, text]) => hasTextValue(text))
-    .map(([title, text]) => ({ title, text }));
+    .filter(([, text]) => hasPrintableText(text))
+    .map(([title, text]) => ({ title, text: cleanPrintableTextBlock(text) }));
 }
 
 function paginateStructuredRows(pages, kind, table, title, columns, rowsPerPage) {
-  if (!table.enabled || table.rows.length === 0) {
+  const printableRows = cleanPrintableStructuredRows(kind, table.rows);
+
+  if (!table.enabled || printableRows.length === 0) {
     return;
   }
 
-  const rowChunks = chunkArray(table.rows, rowsPerPage);
+  const rowChunks = chunkArray(printableRows, rowsPerPage);
 
   rowChunks.forEach((rows, index) => {
     pages.push({
@@ -13009,9 +13159,7 @@ function paginateStructuredRows(pages, kind, table, title, columns, rowsPerPage)
 }
 
 function buildStructuredPricingSummaryRows(proposal, customRows = []) {
-  const visibleCustomRows = normalizeGcPacketRows("pricingSummary", customRows).filter(
-    (row) => hasTextValue(row.label) || hasTextValue(row.amount) || hasTextValue(row.note),
-  );
+  const visibleCustomRows = cleanPrintablePricingSummaryRows(normalizeGcPacketRows("pricingSummary", customRows));
 
   if (visibleCustomRows.length > 0) {
     return visibleCustomRows;
@@ -13021,57 +13169,39 @@ function buildStructuredPricingSummaryRows(proposal, customRows = []) {
   const pricingSections = getVisiblePricingSections(proposal.pricingSections);
   const allowances = pricingSections.filter((section) => section.type === "allowance");
   const addAlternates = pricingSections.filter((section) => section.type === "add_alternate");
-  const shadeAllowance = findPricingSectionByText(allowances, ["shade", "footing"]);
-  const interfaceAllowance = findPricingSectionByText(allowances, ["interface", "rfi", "clarification"]);
-  const allowanceTotal = allowances.reduce((sum, section) => sum + Math.abs(toEditableNumber(section.amount)), 0);
-  const baseWithAllowances = totals.baseBid + allowanceTotal;
-
-  return [
+  const includedAlternates = addAlternates.filter((section) => section.included);
+  const rows = [
     { id: "base-concrete-work", label: "Base Concrete Work", amount: formatCurrency(totals.baseBid), note: "Base bid concrete scope." },
-    {
-      id: "estimated-shade-footings",
-      label: "Estimated Shade Footings",
-      amount: shadeAllowance ? formatPricingSectionAmount(shadeAllowance) : "",
-      note: shadeAllowance?.description || "Allowance if applicable.",
-    },
-    {
-      id: "interface-rfi-allowance",
-      label: "Interface / RFI Allowance",
-      amount: interfaceAllowance ? formatPricingSectionAmount(interfaceAllowance) : "",
-      note: interfaceAllowance?.description || "Allowance if applicable.",
-    },
-    {
-      id: "base-with-allowances",
-      label: "Base with Allowances",
-      amount: formatCurrency(baseWithAllowances),
-      note: "Base bid plus listed allowances.",
-    },
-    {
-      id: "add-alternate-01",
-      label: "Add Alternate 01",
-      amount: addAlternates[0] ? formatPricingSectionAmount(addAlternates[0]) : "",
-      note: addAlternates[0]?.label || "",
-    },
-    {
-      id: "add-alternate-02",
-      label: "Add Alternate 02",
-      amount: addAlternates[1] ? formatPricingSectionAmount(addAlternates[1]) : "",
-      note: addAlternates[1]?.label || "",
-    },
+    ...allowances.map((section) => ({
+      id: section.id || createProposalId(),
+      label: section.label || "Allowance",
+      amount: formatPricingSectionAmount(section),
+      note: [section.description, section.included ? "Included" : "Not included unless accepted in writing."].filter(hasTextValue).join(" "),
+    })),
+    ...(addAlternates.length > 0
+      ? addAlternates.map((section, index) => ({
+          id: section.id || createProposalId(),
+          label: section.label || `Add Alternate ${String(index + 1).padStart(2, "0")}`,
+          amount: formatPricingSectionAmount(section),
+          note: [section.description, section.included ? "Accepted / included" : "Optional / not included"].filter(hasTextValue).join(" "),
+        }))
+      : [
+          {
+            id: "no-alternates-accepted",
+            label: "Alternates",
+            amount: "",
+            note: "None currently accepted.",
+          },
+        ]),
     {
       id: "total-if-all-accepted",
-      label: "Total if all accepted",
+      label: includedAlternates.length > 0 ? "Total if all accepted" : "Total Proposal",
       amount: formatCurrency(totals.totalIfAllAlternatesAccepted),
       note: "For presentation only; final accepted scope controls contract total.",
     },
   ];
-}
 
-function findPricingSectionByText(sections, keywords) {
-  return sections.find((section) => {
-    const text = `${section.label || ""} ${section.description || ""}`.toLowerCase();
-    return keywords.some((keyword) => text.includes(keyword));
-  });
+  return cleanPrintablePricingSummaryRows(rows);
 }
 
 function chunkArray(items, chunkSize) {
@@ -13085,7 +13215,7 @@ function chunkArray(items, chunkSize) {
 }
 
 function formatStructuredCell(value) {
-  return hasTextValue(value) ? value : "-";
+  return hasPrintableText(value) ? value : "-";
 }
 
 function formatPricingSectionAmount(section) {
@@ -13096,14 +13226,18 @@ function formatPricingSectionAmount(section) {
 }
 
 function buildAppendixPlan(proposal) {
-  const scopeSummary = buildScopeSummary(proposal.scopeSections);
-  const exclusionsSummary = buildExclusionsSummary(proposal.exclusions, proposal.assumptions);
-  const lineItemSummary = buildLineItemSummary(proposal.lineItems);
+  const printableScopeSections = cleanPrintableScopeSections(proposal.scopeSections);
+  const printableExclusions = cleanPrintableTextList(proposal.exclusions);
+  const printableAssumptions = cleanPrintableTextList(proposal.assumptions);
+  const printableLineItems = (proposal.lineItems || []).filter((item) => hasPrintableText(item.description));
+  const scopeSummary = buildScopeSummary(printableScopeSections);
+  const exclusionsSummary = buildExclusionsSummary(printableExclusions, printableAssumptions);
+  const lineItemSummary = buildLineItemSummary(printableLineItems);
   const pricingSummary = buildPricingSectionSummary(proposal.pricingSections);
   const gcPrimeSummary = buildGcPrimeSummary(proposal.gcPrime || {});
-  const proposalNotes = getAppendixTextValue(proposal.proposalNotes || proposal.notes);
-  const concreteSpecNotes = getAppendixTextValue(proposal.concreteSpecs?.notes);
-  const takeoffBackupText = getAppendixTextValue(proposal.takeoffQuantityBackup || proposal.quantityBackup);
+  const proposalNotes = getAppendixTextValue(cleanPrintableTextBlock(proposal.proposalNotes || proposal.notes));
+  const concreteSpecNotes = getAppendixTextValue(cleanPrintableTextBlock(proposal.concreteSpecs?.notes));
+  const takeoffBackupText = getAppendixTextValue(cleanPrintableTextBlock(proposal.takeoffQuantityBackup || proposal.quantityBackup));
   const proposalTotals = calculateProposalTotals(proposal);
   const appendixSections = [];
 
@@ -13112,7 +13246,7 @@ function buildAppendixPlan(proposal) {
       key: "detailed-scope",
       kind: "scope",
       title: "Detailed Scope Backup",
-      groups: proposal.scopeSections,
+      groups: printableScopeSections,
     });
   }
 
@@ -13122,8 +13256,8 @@ function buildAppendixPlan(proposal) {
       kind: "listGroups",
       title: "Detailed Exclusions / Assumptions",
       groups: [
-        { title: "Exclusions", items: proposal.exclusions },
-        { title: "Assumptions", items: proposal.assumptions },
+        { title: "Exclusions", items: printableExclusions },
+        { title: "Assumptions", items: printableAssumptions },
       ].filter((group) => group.items.length > 0),
     });
   }
@@ -13160,7 +13294,7 @@ function buildAppendixPlan(proposal) {
       key: "takeoff-quantity-backup",
       kind: "takeoff",
       title: "Takeoff Quantity Backup",
-      lineItems: proposal.lineItems,
+      lineItems: printableLineItems,
       text: takeoffBackupText,
     });
   }
@@ -13198,20 +13332,21 @@ function buildAppendixPlan(proposal) {
 }
 
 function buildScopeSummary(scopeSections = []) {
-  const totalItems = scopeSections.reduce((sum, section) => sum + (section.items?.length || 0), 0);
-  const scopeTextLength = scopeSections.reduce(
+  const printableScopeSections = cleanPrintableScopeSections(scopeSections);
+  const totalItems = printableScopeSections.reduce((sum, section) => sum + (section.items?.length || 0), 0);
+  const scopeTextLength = printableScopeSections.reduce(
     (sum, section) => sum + String(section.title || "").length + (section.items || []).join(" ").length,
     0,
   );
-  const needsAppendix = scopeSections.length > 5 || totalItems > 22 || scopeTextLength > 950;
+  const needsAppendix = printableScopeSections.length > 5 || totalItems > 22 || scopeTextLength > 950;
 
   if (!needsAppendix) {
-    return { mainSections: scopeSections, needsAppendix: false };
+    return { mainSections: printableScopeSections, needsAppendix: false };
   }
 
   return {
     needsAppendix: true,
-    mainSections: scopeSections.slice(0, 5).map((section) => ({
+    mainSections: printableScopeSections.slice(0, 5).map((section) => ({
       ...section,
       items: [
         ...(section.items || []).slice(0, 3),
@@ -13222,21 +13357,23 @@ function buildScopeSummary(scopeSections = []) {
 }
 
 function buildExclusionsSummary(exclusions = [], assumptions = []) {
-  const exclusionsTextLength = exclusions.join(" ").length;
-  const assumptionsTextLength = assumptions.join(" ").length;
+  const printableExclusions = cleanPrintableTextList(exclusions);
+  const printableAssumptions = cleanPrintableTextList(assumptions);
+  const exclusionsTextLength = printableExclusions.join(" ").length;
+  const assumptionsTextLength = printableAssumptions.join(" ").length;
   const needsAppendix =
-    exclusions.length > 6 ||
-    assumptions.length > 4 ||
+    printableExclusions.length > 6 ||
+    printableAssumptions.length > 4 ||
     exclusionsTextLength > 520 ||
     assumptionsTextLength > 420;
 
   if (!needsAppendix) {
-    return { mainExclusions: exclusions, needsAppendix: false };
+    return { mainExclusions: printableExclusions, needsAppendix: false };
   }
 
   return {
     needsAppendix: true,
-    mainExclusions: [...exclusions.slice(0, 5), "See Appendix for detailed exclusions and assumptions."],
+    mainExclusions: [...printableExclusions.slice(0, 5), "See Appendix for detailed exclusions and assumptions."],
   };
 }
 
@@ -13275,9 +13412,9 @@ function buildPricingSectionSummary(pricingSections = []) {
 }
 
 function buildGcPrimeSummary(gcPrime = {}) {
-  const rfiText = getAppendixTextValue(gcPrime.rfiClarificationNotes || gcPrime.rfiNotes);
-  const addendaText = getAppendixTextValue(gcPrime.addendaAcknowledged);
-  const gcPrimeNotesText = getAppendixTextValue(gcPrime.gcPrimeNotes);
+  const rfiText = getAppendixTextValue(cleanPrintableTextBlock(gcPrime.rfiClarificationNotes || gcPrime.rfiNotes));
+  const addendaText = getAppendixTextValue(cleanPrintableTextBlock(gcPrime.addendaAcknowledged));
+  const gcPrimeNotesText = getAppendixTextValue(cleanPrintableTextBlock(gcPrime.gcPrimeNotes));
   const rfiNeedsAppendix = rfiText.length > 0;
   const addendaNeedsAppendix = addendaText.length > 80 || splitAppendixText(addendaText).length > 1;
   const mainGcPrime = {
@@ -13381,7 +13518,7 @@ function formatTopicList(topics) {
 }
 
 function getAppendixTextValue(value) {
-  return value === undefined || value === null ? "" : String(value).trim();
+  return cleanPrintableTextBlock(value);
 }
 
 function splitAppendixText(text) {
@@ -13408,7 +13545,7 @@ function buildTermsCopy(terms) {
     normalizedTerms.depositText,
     normalizedTerms.progressBilling,
     normalizedTerms.acceptance,
-  ].filter(hasTextValue);
+  ].filter(hasPrintableText);
 
   return copyParts.length > 0 ? `Payment terms: ${copyParts.join(" ")}` : "";
 }
@@ -13446,7 +13583,7 @@ function hasSpecValue(value) {
     return true;
   }
 
-  return value !== undefined && value !== null && String(value).trim() !== "";
+  return hasPrintableText(value);
 }
 
 function buildGcPrimeRows(gcPrime = {}) {
