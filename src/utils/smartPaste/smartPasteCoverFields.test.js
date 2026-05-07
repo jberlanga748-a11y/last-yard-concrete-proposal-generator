@@ -41,6 +41,27 @@ Base Concrete / Site Package: $695,000`);
   assert.equal(fields.clientPhone, undefined);
 });
 
+test("does not let project location or address overwrite project name", () => {
+  const fields = extractSmartPasteCoverFieldsFromNotes(`Project:
+Costco #682 Albany POS Boxes Remodel
+
+Project Name:
+Costco #682 Albany POS Boxes Remodel
+
+Location:
+3130 Killdeer Ave SE, Albany, OR
+
+Project Location:
+3130 Killdeer Ave SE, Albany, Oregon
+
+Project Address:
+3130 Killdeer Ave SE, Albany, OR`);
+
+  assert.equal(fields.projectName, "Costco #682 Albany POS Boxes Remodel");
+  assert.equal(fields.projectLocation, "3130 Killdeer Ave SE, Albany, OR");
+  assert.equal(fields.projectAddress, "3130 Killdeer Ave SE, Albany, OR");
+});
+
 test("raw Smart Paste cover fields win when merged with parser values", () => {
   const merged = mergeSmartPasteCoverValues(
     {

@@ -1,6 +1,11 @@
 ﻿import { LINE_ITEM_UNITS } from "../../proposalData.js";
 
 import { PACKET_BUILDER_SECTIONS } from "../../proposalData.js";
+import {
+  extractSmartPasteCoverFieldsFromNotes,
+  isLikelySmartPasteStreetAddress,
+  mergeSmartPasteCoverValues,
+} from "./smartPasteCoverFields.js";
 
 const PLAN_SHEET_PAGE_TYPES = ["plan_takeoff_sheet", "detail_notes", "shade_footing_estimate", "general_backup"];
 
@@ -633,6 +638,8 @@ function parseProjectNotes(notes) {
   setTextValue("gcPrimeNotes", "gcPrimeNotes", "GC / Prime notes");
   setTextValue("concreteSpecNotes", "concreteSpecs", "concrete specs");
 
+  mergeDirectSmartPasteCoverValues(notes, values, fields);
+
   if (values.proposalNotes) {
     values.proposalNotes = sanitizeSmartPasteProposalNotes(values.proposalNotes);
 
@@ -776,6 +783,45 @@ function parseProjectNotes(notes) {
     values,
     warnings: [...new Set(warnings)],
   };
+}
+
+function mergeDirectSmartPasteCoverValues(notes, values, fields) {
+  const extractedCoverValues = extractSmartPasteCoverFieldsFromNotes(notes);
+  const mergedCoverValues = mergeSmartPasteCoverValues(values, extractedCoverValues);
+  const labels = {
+    clientCompany: "client/company",
+    clientEmail: "client email",
+    clientPhone: "client phone",
+    contactName: "contact name",
+    projectAddress: "project address",
+    projectLocation: "project location",
+    projectName: "project name",
+  };
+
+  Object.entries(labels).forEach(([key, label]) => {
+    if (hasTextValue(mergedCoverValues[key]) && mergedCoverValues[key] !== values[key]) {
+      fields.push(label);
+    }
+  });
+
+  Object.assign(values, mergedCoverValues);
+
+  if (
+    isLikelySmartPasteStreetAddress(values.projectName) &&
+    (hasTextValue(values.projectLocation) || hasTextValue(values.projectAddress))
+  ) {
+    if (!hasTextValue(values.projectAddress)) {
+      values.projectAddress = values.projectName;
+      fields.push("project address");
+    }
+
+    if (!hasTextValue(values.projectLocation)) {
+      values.projectLocation = values.projectName;
+      fields.push("project location");
+    }
+
+    delete values.projectName;
+  }
 }
 
 function applyParsedNotesToProposal(proposal, parsedNotes) {
@@ -1169,12 +1215,8 @@ function applySmartPasteCleanup(proposal, cleanupPlan) {
       rfiClarificationNotes: "",
       gcPrimeNotes: "",
     };
-    proposal.projectPhotos = [
-      { label: "Architectural Steps", src: "" },
-      { label: "Finished Flatwork", src: "" },
-      { label: "Control Joints", src: "" },
-    ];
-    proposal.planSheets = normalizePlanSheets([]);
+    proposal.projectPhotos = [];
+    proposal.planSheets = [];
     proposal.submittedPacketRecords = [];
     proposal.sendRecords = [];
   }
@@ -1725,7 +1767,7 @@ function getSmartPasteLabelKey(label) {
     "addenda acknowledged": "addendaAcknowledged",
     "addendum acknowledged": "addendaAcknowledged",
     "addendum date": "addendaRegister",
-    address: "billingAddress",
+    address: "projectAddress",
     "acceptance summary": "acceptanceSummary",
     allowances: "pricingSections",
     alternate: "pricingSections",
@@ -1766,6 +1808,12 @@ function getSmartPasteLabelKey(label) {
     "hidden / unknown conditions": "hiddenConditions",
     inclusions: "scope",
     "included scope": "scope",
+    job: "projectName",
+    "job name": "projectName",
+    jobsite: "projectLocation",
+    "job site": "projectLocation",
+    "jobsite address": "projectAddress",
+    "job site address": "projectAddress",
     "late payment": "latePayment",
     "late payment / collection": "latePayment",
     "line items": "lineItems",
@@ -1790,12 +1838,15 @@ function getSmartPasteLabelKey(label) {
     "requested from": "clientCompany",
     "requested by": "clientCompany",
     "pricing summary": "pricingSummary",
+    bid: "projectName",
+    "bid name": "projectName",
     project: "projectName",
     "project address": "projectAddress",
     "project description": "description",
     "project location": "projectLocation",
     "project location / address": "projectLocation",
     "project name": "projectName",
+    "proposal project": "projectName",
     "progress billing": "progressBilling",
     "proposal expiration": "proposalExpiration",
     "proposal notes / acceptance summary": "proposalNotes",

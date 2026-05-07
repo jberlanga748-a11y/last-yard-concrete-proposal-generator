@@ -63,6 +63,45 @@ Schedule: June 3 - June 28, 2026`,
   assert.ok(result.summary.fields.includes("proposal type"));
 });
 
+test("keeps Costco project name separate from project location and address labels", () => {
+  const result = parseSmartPasteNotes(
+    `Project:
+Costco #682 Albany POS Boxes Remodel
+
+Project Name:
+Costco #682 Albany POS Boxes Remodel
+
+Location:
+3130 Killdeer Ave SE, Albany, OR
+
+Project Location:
+3130 Killdeer Ave SE, Albany, Oregon
+
+Project Address:
+3130 Killdeer Ave SE, Albany, OR
+
+Prepared for: Faison Construction
+Base Bid: $325,000
+Add Alternate: None currently
+Total Proposal: $325,000`,
+    blankProposalFixture(),
+  );
+
+  const totals = calculateProposalTotals(result.proposal);
+
+  assert.equal(result.proposal.project.name, "Costco #682 Albany POS Boxes Remodel");
+  assert.equal(result.proposal.project.location, "3130 Killdeer Ave SE, Albany, OR");
+  assert.equal(result.proposal.project.address, "3130 Killdeer Ave SE, Albany, OR");
+  assert.equal(result.proposal.client.projectAddress, "3130 Killdeer Ave SE, Albany, OR");
+  assert.equal(result.proposal.client.companyName, "Faison Construction");
+  assert.doesNotMatch(result.proposal.project.name, /3130 Killdeer/i);
+  assert.equal(result.proposal.lineItems.length, 1);
+  assert.equal(result.proposal.lineItems[0].unitPrice, 325000);
+  assert.equal(result.proposal.pricingSections.length, 0);
+  assert.equal(totals.total, 325000);
+  assert.equal(totals.totalIfAllAlternatesAccepted, 325000);
+});
+
 test("parses pipe-delimited line items", () => {
   const result = parseSmartPasteNotes(
     `Line items:
