@@ -635,6 +635,7 @@ function parseProjectNotes(notes) {
   setTextValue("addendaAcknowledged", "addendaAcknowledged", "addenda acknowledged");
   setTextValue("proposalNotes", "proposalNotes", "proposal notes");
   setTextValue("proposalStatus", "proposalStatus", "proposal status");
+  setTextValue("packetPrintOrder", "packetPrintOrder", "packet print order");
   setTextValue("gcPrimeNotes", "gcPrimeNotes", "GC / Prime notes");
   setTextValue("concreteSpecNotes", "concreteSpecs", "concrete specs");
 
@@ -692,6 +693,15 @@ function parseProjectNotes(notes) {
   if (Object.keys(scopeControlSummary).length > 0) {
     values.scopeControlSummary = scopeControlSummary;
     fields.push("scope control summary");
+  }
+
+  const loosePricingLines = getLooseSmartPastePricingLines(notes);
+
+  if (loosePricingLines.length > 0) {
+    sections.pricingSections = [...(sections.pricingSections || []), ...loosePricingLines].filter(
+      (line, index, list) => list.indexOf(line) === index,
+    );
+    recordSmartPasteSection(sections, "pricingSections");
   }
 
   const lineItems = parseSmartPasteLineItems(sections.lineItems || [], warnings);
@@ -773,6 +783,8 @@ function parseProjectNotes(notes) {
     warnings.push("Use clear labels like Project:, Prepared for:, Scope:, or Line items: for best results.");
   }
 
+  values.packetSectionsPrepared = getSmartPastePreparedPacketSectionCount(values);
+
   return {
     fields: [...new Set(fields)],
     lineItems,
@@ -840,7 +852,8 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
   parsedNotes.coverFieldsUpdated = getSmartPasteCoverFieldsUpdated(values);
   parsedNotes.defaultsCleared = cleanupPlan.actions.length;
   parsedNotes.defaultRowsRemoved = cleanupPlan.defaultRowsRemoved;
-  parsedNotes.packetSectionsCreated = values.subcontractorPacketDetected ? getSubcontractorPacketBuilder().filter((section) => section.included).length : 0;
+  parsedNotes.packetSectionsCreated =
+    values.packetSectionsPrepared || (values.subcontractorPacketDetected ? getSubcontractorPacketBuilder().filter((section) => section.included).length : 0);
   parsedNotes.pricingRowsReplaced = values.gcPacketTables?.pricingSummary?.rows?.length || 0;
 
   if (values.projectName) {
@@ -906,6 +919,12 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
   if (values.proposalType) {
     nextProposal.proposalType = values.proposalType;
     nextProposal.type = values.proposalType;
+  }
+
+  if (values.packetPrintOrder && values.packetSectionsPrepared > 0) {
+    nextProposal.proposalType = nextProposal.proposalType || "gc_prime";
+    nextProposal.type = nextProposal.type || nextProposal.proposalType;
+    nextProposal.packetMode = "full_gc_packet";
   }
 
   if (values.scopeItems) {
@@ -1403,6 +1422,7 @@ function collectSmartPasteSections(notes) {
     "rfiRegister",
     "addendaAcknowledged",
     "addendaRegister",
+    "packetPrintOrder",
     "proposalNotes",
     "gcPrimeNotes",
     "concreteSpecs",
@@ -1461,6 +1481,27 @@ function collectSmartPasteSections(notes) {
     const line = rawLine.trim();
 
     if (!line) {
+      return;
+    }
+
+    if (isSmartPasteStructuredSectionKey(activeKey) && isSmartPasteStructuredBlockLine(activeKey, line)) {
+      appendSmartPasteSection(sections, activeKey, line);
+      return;
+    }
+
+    if (isLooseSmartPastePricingValueLine(line)) {
+      activeKey = "pricingSections";
+      recordSmartPasteSection(sections, "pricingSections");
+      appendSmartPasteSection(sections, "pricingSections", line);
+      return;
+    }
+
+    const standaloneSectionKey = getSmartPasteStandaloneSectionKey(line);
+
+    if (standaloneSectionKey) {
+      activeKey = standaloneSectionKey;
+      activePlanSheetIndex = -1;
+      recordSmartPasteSection(sections, standaloneSectionKey);
       return;
     }
 
@@ -1585,6 +1626,63 @@ function shouldBreakSmartPasteTextCapture(activeKey, label, line) {
   const key = getSmartPasteLabelKey(label);
 
   return Boolean(key) || isSmartPricingLine(line) || isSmartImplicitPricingLine(line);
+}
+
+function getSmartPasteStandaloneSectionKey(line = "") {
+  const normalizedLine = normalizeSmartPasteSectionLabel(line);
+  const hasColon = /[:：]/.test(String(line || ""));
+
+  if (!normalizedLine || normalizedLine.includes("|") || /\$[\d,]/.test(normalizedLine) || isSmartPasteRowMarker(line)) {
+    return "";
+  }
+
+  if (
+    hasColon &&
+    !/^rfi\s*\/\s*clarification\s+[a-z0-9.-]+$/i.test(normalizedLine) &&
+    !/^(structured\s+)?addenda?\s+(acknowledgement|acknowledgment|acknowledged)$/i.test(normalizedLine)
+  ) {
+    return "";
+  }
+
+  if (/^rfi\s*\/\s*clarification\s+[a-z0-9.-]+$/i.test(normalizedLine)) {
+    return "rfiRegister";
+  }
+
+  if (/^(structured\s+)?addenda?\s+(acknowledgement|acknowledgment|acknowledged)$/i.test(normalizedLine)) {
+    return "addendaAcknowledged";
+  }
+
+  const headings = {
+    "acceptance summary": "acceptanceSummary",
+    addenda: "addendaAcknowledged",
+    "addenda acknowledged": "addendaAcknowledged",
+    assumptions: "assumptions",
+    clarifications: "rfiClarifications",
+    cover: "projectInfo",
+    exclusions: "exclusions",
+    "final gc packet print order": "packetPrintOrder",
+    "legal / terms": "terms",
+    "legal terms": "terms",
+    "line items": "lineItems",
+    pricing: "pricingSections",
+    "pricing summary": "pricingSummary",
+    "plan sheet notes": "planSheets",
+    "plan sheets / takeoff pages": "planSheets",
+    "project description": "description",
+    "project info": "projectInfo",
+    "proposal notes": "proposalNotes",
+    "proposal status": "proposalStatus",
+    rfis: "rfiClarifications",
+    "rfi / clarification register": "rfiRegister",
+    scope: "scope",
+    "scope control summary": "scopeControlSummary",
+    "scope of work": "scope",
+    "schedule of values": "scheduleOfValues",
+    sov: "scheduleOfValues",
+    "takeoff quantities": "takeoffQuantities",
+  };
+
+  return headings[normalizedLine] || "";
 }
 
 function getSmartPlanSheetHeading(label) {
@@ -1762,13 +1860,15 @@ function normalizePlanSheetMatchCode(value) {
 }
 
 function getSmartPasteLabelKey(label) {
-  const normalizedLabel = label.trim().toLowerCase().replace(/\s+/g, " ");
+  const normalizedLabel = normalizeSmartPasteSectionLabel(label);
   const labels = {
     "addenda acknowledged": "addendaAcknowledged",
     "addendum acknowledged": "addendaAcknowledged",
+    "addenda": "addendaAcknowledged",
     "addendum date": "addendaRegister",
     address: "projectAddress",
     "acceptance summary": "acceptanceSummary",
+    "accepted alternates": "pricingSections",
     allowances: "pricingSections",
     alternate: "pricingSections",
     alternates: "pricingSections",
@@ -1838,6 +1938,7 @@ function getSmartPasteLabelKey(label) {
     "requested from": "clientCompany",
     "requested by": "clientCompany",
     "pricing summary": "pricingSummary",
+    pricing: "pricingSections",
     bid: "projectName",
     "bid name": "projectName",
     project: "projectName",
@@ -1854,16 +1955,20 @@ function getSmartPasteLabelKey(label) {
     "proposal basis": "proposalBasis",
     "proposal status": "proposalStatus",
     "proposal type": "proposalType",
+    "rfi / clarification register": "rfiRegister",
     "rfi / clarification": "rfiClarifications",
     rfi: "rfiRegister",
     clarification: "rfiRegister",
     clarifications: "rfiClarifications",
     "rfis / clarifications": "rfiClarifications",
+    rfis: "rfiClarifications",
     schedule: "schedule",
     "schedule assumptions": "scheduleAssumptions",
     "schedule of values": "scheduleOfValues",
+    sov: "scheduleOfValues",
     scope: "scope",
     "scope notes": "scope",
+    "scope of work": "scope",
     "scope summary": "description",
     "scope control": "gcScopeControl",
     "scope control summary": "scopeControlSummary",
@@ -1872,6 +1977,11 @@ function getSmartPasteLabelKey(label) {
     "site address": "projectAddress",
     "site readiness": "siteReadiness",
     "takeoff quantities": "takeoffQuantities",
+    "plan sheets / takeoff pages": "planSheets",
+    "plan sheet notes": "planSheets",
+    "legal / terms": "terms",
+    "legal terms": "terms",
+    "final gc packet print order": "packetPrintOrder",
     terms: "terms",
     "utilities": "utilityResponsibility",
     "utility responsibility": "utilityResponsibility",
@@ -1886,6 +1996,10 @@ function getSmartPasteLabelKey(label) {
     return "addendaRegister";
   }
 
+  if (/^rfi\s*\/\s*clarification\s+[a-z0-9.-]+$/i.test(normalizedLabel)) {
+    return "rfiRegister";
+  }
+
   if (/^(bid|proposal)\s+(to|for)\s+/i.test(normalizedLabel)) {
     return "clientCompany";
   }
@@ -1898,12 +2012,14 @@ function getSmartPasteLabelKey(label) {
 }
 
 function isSmartPasteSectionHeading(label, key) {
-  const normalizedLabel = label.trim().toLowerCase().replace(/\s+/g, " ");
+  const normalizedLabel = normalizeSmartPasteSectionLabel(label);
   const sectionHeadingLabels = new Set([
     "addenda acknowledged",
     "addendum acknowledged",
+    "addenda",
     "addendum date",
     "acceptance summary",
+    "accepted alternates",
     "allowances",
     "alternates",
     "appendix notes",
@@ -1938,6 +2054,7 @@ function isSmartPasteSectionHeading(label, key) {
     "owner gc by others",
     "payment terms",
     "pricing summary",
+    "pricing",
     "project description",
     "progress billing",
     "proposal expiration",
@@ -1949,20 +2066,29 @@ function isSmartPasteSectionHeading(label, key) {
     "gc / prime reviewer",
     "gc prime reviewer",
     "rfi / clarification",
+    "rfi / clarification register",
     "rfi",
     "clarification",
     "clarifications",
     "rfis / clarifications",
+    "rfis",
     "schedule assumptions",
     "schedule of values",
+    "sov",
     "scope",
     "scope summary",
+    "scope of work",
     "scope control",
     "scope control summary",
     "shade footing estimate",
     "site readiness",
     "takeoff quantities",
+    "plan sheets / takeoff pages",
+    "plan sheet notes",
     "terms",
+    "legal / terms",
+    "legal terms",
+    "final gc packet print order",
     "utilities",
     "utility responsibility",
     "warranty",
@@ -1972,7 +2098,12 @@ function isSmartPasteSectionHeading(label, key) {
     "weather / site readiness",
   ]);
 
-  return sectionHeadingLabels.has(normalizedLabel) || /^addendum\s+[a-z0-9.-]+$/i.test(normalizedLabel) || key === "lineItems";
+  return (
+    sectionHeadingLabels.has(normalizedLabel) ||
+    /^addendum\s+[a-z0-9.-]+$/i.test(normalizedLabel) ||
+    /^rfi\s*\/\s*clarification\s+[a-z0-9.-]+$/i.test(normalizedLabel) ||
+    key === "lineItems"
+  );
 }
 
 function recordSmartPasteSection(sections, key) {
@@ -2014,6 +2145,7 @@ function getCapturedSmartPasteLabels(sections) {
     latePayment: "Late Payment",
     lineItems: "Line Items",
     ownerGcByOthers: "Owner / GC By Others",
+    packetPrintOrder: "Final GC Packet Print Order",
     paymentTerms: "Payment Terms",
     planSheets: "Plan Sheets / Takeoff Pages",
     pricingSummary: "Pricing Summary",
@@ -2065,6 +2197,19 @@ function appendSmartPasteSection(sections, key, value) {
 
 function getSectionText(sections, key) {
   return (sections[key] || []).join("\n").trim();
+}
+
+function normalizeSmartPasteSectionLabel(label = "") {
+  return String(label || "")
+    .trim()
+    .replace(/[:：]\s*$/, "")
+    .replace(/[–—]/g, "-")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function isSmartPasteRowMarker(value = "") {
+  return /^row\s+\d+\b/i.test(String(value || "").trim());
 }
 
 function parseSmartPasteGcPacketTables(sections, warnings) {
@@ -2191,15 +2336,43 @@ function parseSmartPasteStructuredRows(sectionKey, lines = [], warnings) {
   const fields = gcPacketRowFields[sectionKey] || [];
   const rows = [];
   const sectionNotes = [];
+  let currentRow = null;
+  let lastField = "";
+  let skippedCount = 0;
 
-  lines.forEach((line) => {
+  function flushCurrentRow() {
+    if (!currentRow) {
+      return;
+    }
+
+    if (hasSmartPasteStructuredRowData(sectionKey, currentRow)) {
+      rows.push(currentRow);
+    }
+
+    currentRow = null;
+    lastField = "";
+  }
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = String(lines[index] || "").trim();
+
+    if (!line || isSmartPasteTableHeaderLine(line)) {
+      continue;
+    }
+
     const metadata = getSmartPasteStructuredMetadata(sectionKey, line);
 
     if (metadata.isMetadata) {
       if (hasTextValue(metadata.note)) {
         sectionNotes.push(metadata.note);
       }
-      return;
+      continue;
+    }
+
+    if (isSmartPasteRowMarker(line)) {
+      flushCurrentRow();
+      currentRow = { id: createProposalId() };
+      continue;
     }
 
     const parts = String(line || "")
@@ -2207,24 +2380,76 @@ function parseSmartPasteStructuredRows(sectionKey, lines = [], warnings) {
       .map((part) => part.trim())
       .filter(Boolean);
 
-    if (parts.length < fields.length) {
-      if (hasTextValue(line)) {
-        warnings.push(`Skipped ${gcPacketTableLabels[sectionKey]} row "${line}" because it did not include ${fields.length} pipe-separated values.`);
-      }
-
-      return;
+    if (parts.length >= fields.length) {
+      flushCurrentRow();
+      rows.push(
+        fields.reduce(
+          (row, [field], fieldIndex) => ({
+            ...row,
+            [field]: parts[fieldIndex] || "",
+          }),
+          { id: createProposalId() },
+        ),
+      );
+      continue;
     }
 
-    rows.push(
-      fields.reduce(
-        (row, [field], index) => ({
-          ...row,
-          [field]: parts[index] || "",
-        }),
-        { id: createProposalId() },
-      ),
-    );
-  });
+    const fieldBlock = parseSmartPasteStructuredFieldBlockLine(sectionKey, line, lines, index);
+
+    if (fieldBlock.field) {
+      if (!currentRow) {
+        currentRow = { id: createProposalId() };
+      }
+
+      if (hasTextValue(currentRow[fieldBlock.field]) && isFirstStructuredRowField(sectionKey, fieldBlock.field)) {
+        flushCurrentRow();
+        currentRow = { id: createProposalId() };
+      }
+
+      currentRow[fieldBlock.field] = [currentRow[fieldBlock.field], fieldBlock.value].filter(hasTextValue).join(" ").trim();
+      lastField = fieldBlock.field;
+      index = fieldBlock.nextIndex;
+      continue;
+    }
+
+    if (sectionKey === "scheduleOfValues" && isLikelyScheduleOfValuesItemLine(line)) {
+      if (currentRow && hasSmartPasteStructuredRowData(sectionKey, currentRow)) {
+        flushCurrentRow();
+      }
+
+      currentRow = {
+        id: createProposalId(),
+        item: line.replace(/^\d+[.)]\s*/, "").trim(),
+      };
+      lastField = "item";
+      continue;
+    }
+
+    if (sectionKey === "scheduleOfValues" && currentRow) {
+      const inferredField = getInferredScheduleOfValuesField(currentRow, line);
+
+      if (inferredField) {
+        currentRow[inferredField] = [currentRow[inferredField], line].filter(hasTextValue).join(" ").trim();
+        lastField = inferredField;
+        continue;
+      }
+    }
+
+    if (currentRow && lastField && !getSmartPasteStandaloneSectionKey(line)) {
+      currentRow[lastField] = [currentRow[lastField], line].filter(hasTextValue).join(" ").trim();
+      continue;
+    }
+
+    if (hasTextValue(line) && !isSmartPasteIgnorableStructuredLine(line)) {
+      skippedCount += 1;
+    }
+  }
+
+  flushCurrentRow();
+
+  if (skippedCount > 0 && rows.length > 0) {
+    warnings.push(`Skipped ${skippedCount} malformed ${gcPacketTableLabels[sectionKey]} line${skippedCount === 1 ? "" : "s"} that did not match a row format.`);
+  }
 
   if (sectionKey === "shadeFootingEstimate" && rows.length > 0 && sectionNotes.length > 0) {
     const lastRow = rows[rows.length - 1];
@@ -2248,6 +2473,183 @@ function getSmartPasteStructuredMetadata(sectionKey, line) {
   }
 
   return { isMetadata: false, note: "" };
+}
+
+function parseSmartPasteStructuredFieldBlockLine(sectionKey, line, lines, index) {
+  const match = String(line || "").trim().match(/^([^:]+):\s*(.*)$/);
+
+  if (!match) {
+    return { field: "", value: "", nextIndex: index };
+  }
+
+  const field = getSmartPasteStructuredField(sectionKey, match[1]);
+
+  if (!field) {
+    return { field: "", value: "", nextIndex: index };
+  }
+
+  let value = match[2].trim();
+  let nextIndex = index;
+
+  if (!hasTextValue(value)) {
+    const nextValue = getNextSmartPasteStructuredFieldValue(lines, index);
+
+    if (nextValue.value) {
+      value = nextValue.value;
+      nextIndex = nextValue.index;
+    }
+  }
+
+  return { field, value, nextIndex };
+}
+
+function getNextSmartPasteStructuredFieldValue(lines, index) {
+  for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex += 1) {
+    const value = String(lines[nextIndex] || "").trim();
+
+    if (!value) {
+      continue;
+    }
+
+    if (isSmartPasteRowMarker(value) || getSmartPasteStandaloneSectionKey(value)) {
+      return { value: "", index };
+    }
+
+    const labelMatch = value.match(/^([^:]+):\s*(.*)$/);
+
+    if (labelMatch && getSmartPasteStructuredField("", labelMatch[1])) {
+      return { value: "", index };
+    }
+
+    if (labelMatch && getSmartPasteStructuredField("scheduleOfValues", labelMatch[1])) {
+      return { value: "", index };
+    }
+
+    if (labelMatch && getSmartPasteStructuredField("takeoffQuantities", labelMatch[1])) {
+      return { value: "", index };
+    }
+
+    if (labelMatch && getSmartPasteStructuredField("shadeFootingEstimate", labelMatch[1])) {
+      return { value: "", index };
+    }
+
+    return { value, index: nextIndex };
+  }
+
+  return { value: "", index };
+}
+
+function getSmartPasteStructuredField(sectionKey, label) {
+  const normalizedLabel = normalizeSmartPasteSectionLabel(label);
+  const commonFields = {
+    amount: "amount",
+    description: "description",
+    item: "item",
+    "pricing basis": "pricingBasis",
+  };
+  const sectionFields = {
+    scheduleOfValues: commonFields,
+    takeoffQuantities: {
+      item: "item",
+      quantity: "quantity",
+      qty: "quantity",
+      "detail / size": "detailSize",
+      detail: "detailSize",
+      size: "detailSize",
+      "net cy": "netCy",
+      "net cubic yards": "netCy",
+      "cy with 10%": "cyWithTenPercent",
+      "cy with 10 percent": "cyWithTenPercent",
+      "cy with waste": "cyWithTenPercent",
+      "cy with 10": "cyWithTenPercent",
+      "price / status": "priceStatus",
+      "price status": "priceStatus",
+      status: "priceStatus",
+    },
+    shadeFootingEstimate: {
+      column: "column",
+      "column size": "columnSize",
+      "estimated spread footing": "estimatedSpreadFooting",
+      "net cy": "netCy",
+      "estimated subtotal": "estimatedSubtotal",
+      "estimated cy with 10%": "estimatedCyWithTenPercent",
+      "estimated cy with 10 percent": "estimatedCyWithTenPercent",
+      "allowance amount": "allowanceAmount",
+      "allowance note": "allowanceNote",
+    },
+  };
+
+  if (!sectionKey) {
+    return commonFields[normalizedLabel] || sectionFields.takeoffQuantities[normalizedLabel] || sectionFields.shadeFootingEstimate[normalizedLabel] || "";
+  }
+
+  return sectionFields[sectionKey]?.[normalizedLabel] || "";
+}
+
+function isFirstStructuredRowField(sectionKey, field) {
+  const firstField = gcPacketRowFields[sectionKey]?.[0]?.[0];
+
+  return field === firstField;
+}
+
+function hasSmartPasteStructuredRowData(sectionKey, row = {}) {
+  const fields = gcPacketRowFields[sectionKey] || [];
+
+  return fields.some(([field]) => hasTextValue(row[field]));
+}
+
+function isLikelyScheduleOfValuesItemLine(line = "") {
+  const textValue = String(line || "").trim();
+
+  return /^\d+[.)]\s+/.test(textValue) && !textValue.includes("|") && !/:\s*/.test(textValue);
+}
+
+function getInferredScheduleOfValuesField(row = {}, line = "") {
+  const textValue = String(line || "").trim();
+
+  if (!textValue) {
+    return "";
+  }
+
+  if (!hasTextValue(row.amount) && /^\$?\s*\d[\d,]*(?:\.\d{2})?$/.test(textValue)) {
+    return "amount";
+  }
+
+  if (!hasTextValue(row.pricingBasis) && /^(\d+(?:\.\d+)?%|ls|lump sum|base|base bid)$/i.test(textValue)) {
+    return "pricingBasis";
+  }
+
+  if (!hasTextValue(row.description)) {
+    return "description";
+  }
+
+  return "";
+}
+
+function isSmartPasteTableHeaderLine(line = "") {
+  const normalizedLine = normalizeSmartPasteSectionLabel(line);
+
+  return /^(row|item|description|qty|quantity|unit|unit price|amount|pricing basis|detail \/ size|net cy|cy with 10%|cy with 10 percent|price \/ status|price status)$/.test(
+    normalizedLine,
+  );
+}
+
+function isSmartPasteIgnorableStructuredLine(line = "") {
+  return isSmartPasteTableHeaderLine(line) || isSmartPasteRowMarker(line);
+}
+
+function isSmartPasteStructuredSectionKey(key = "") {
+  return ["scheduleOfValues", "takeoffQuantities", "shadeFootingEstimate"].includes(key);
+}
+
+function isSmartPasteStructuredBlockLine(sectionKey, line = "") {
+  if (isSmartPasteRowMarker(line) || isSmartPasteTableHeaderLine(line)) {
+    return true;
+  }
+
+  const match = String(line || "").trim().match(/^([^:]+):/);
+
+  return Boolean(match && getSmartPasteStructuredField(sectionKey, match[1]));
 }
 
 function mergeGcPacketTables(currentTables = {}, parsedTables = {}) {
@@ -2360,12 +2762,13 @@ function parseSmartPasteRfiRegister(notes) {
     .map((line) => line.trim())
     .filter(Boolean)
     .forEach((line) => {
-      const rfiMatch = line.match(/^(rfi|clarification)\s*([a-z0-9.-]+)?\s*:\s*(.*)$/i);
+      const rfiMatch = line.match(/^(rfi\s*\/\s*clarification|rfi|clarification)\s*([0-9][a-z0-9.-]*|[a-z]+-\d+)?\s*:\s*(.*)$/i);
 
       if (rfiMatch) {
+        const prefix = rfiMatch[1].replace(/\s*\/\s*/g, " / ").toUpperCase();
         currentRow = {
           ...createEmptyRfiRecord(),
-          rfiNumber: rfiMatch[2] ? `${rfiMatch[1].toUpperCase()} ${rfiMatch[2]}` : rfiMatch[1].toUpperCase(),
+          rfiNumber: rfiMatch[2] ? `${prefix} ${rfiMatch[2]}` : prefix,
           question: rfiMatch[3].trim(),
           includedInPacket: true,
         };
@@ -2373,7 +2776,7 @@ function parseSmartPasteRfiRegister(notes) {
         return;
       }
 
-      if (isRegisterBoundaryLine(line, "rfi")) {
+      if (isRegisterBoundaryLine(line, "rfi") || (getSmartPasteStandaloneSectionKey(line) && getSmartPasteStandaloneSectionKey(line) !== "rfiRegister")) {
         currentRow = null;
         return;
       }
@@ -2392,15 +2795,17 @@ function parseSmartPasteRfiRegister(notes) {
       const label = fieldMatch[1].trim().toLowerCase().replace(/\s+/g, " ");
       const value = fieldMatch[2].trim();
 
-      if (label === "date asked") {
+      if (label === "rfi / clarification number" || label === "rfi number" || label === "clarification number") {
+        currentRow.rfiNumber = value;
+      } else if (label === "date asked") {
         currentRow.dateAsked = value;
       } else if (label === "date answered") {
         currentRow.dateAnswered = value;
       } else if (label === "source") {
         currentRow.source = value;
-      } else if (label === "question" || label === "clarification needed") {
+      } else if (label === "question" || label === "clarification needed" || label === "question / clarification needed") {
         currentRow.question = value;
-      } else if (label === "answer" || label === "proposal treatment") {
+      } else if (label === "answer" || label === "proposal treatment" || label === "answer / proposal treatment") {
         currentRow.answerTreatment = value;
       } else if (label === "price impact") {
         currentRow.priceImpact = value;
@@ -2424,13 +2829,18 @@ function isRegisterBoundaryLine(line, registerType) {
   const label = fieldMatch[1].trim().toLowerCase().replace(/\s+/g, " ");
   const addendaFields = new Set(["addendum date", "date", "title", "description", "acknowledged", "included in packet", "notes", "note"]);
   const rfiFields = new Set([
+    "rfi / clarification number",
+    "rfi number",
+    "clarification number",
     "date asked",
     "date answered",
     "source",
     "question",
     "clarification needed",
+    "question / clarification needed",
     "answer",
     "proposal treatment",
+    "answer / proposal treatment",
     "price impact",
     "scope impact",
     "included in packet",
@@ -2519,6 +2929,70 @@ function getSmartPasteProjectDescription(values = {}) {
     .join("\n");
 }
 
+function getSmartPastePreparedPacketSectionCount(values = {}) {
+  const preparedSections = new Set();
+  const tables = normalizeGcPacketTables(values.gcPacketTables);
+
+  if (tables.pricingSummary.enabled && (tables.pricingSummary.rows?.length > 0 || hasTextValue(tables.pricingSummary.presentationNotes))) {
+    preparedSections.add("pricingSummary");
+  }
+
+  if (tables.scheduleOfValues.enabled && tables.scheduleOfValues.rows?.length > 0) {
+    preparedSections.add("scheduleOfValues");
+  }
+
+  if (tables.takeoffQuantities.enabled && tables.takeoffQuantities.rows?.length > 0) {
+    preparedSections.add("takeoffQuantities");
+  }
+
+  if (tables.shadeFootingEstimate.enabled && tables.shadeFootingEstimate.rows?.length > 0) {
+    preparedSections.add("shadeFootingEstimate");
+  }
+
+  if (
+    tables.proposalNotes.enabled &&
+    [tables.proposalNotes.proposalBasis, tables.proposalNotes.contractScopeControl, tables.proposalNotes.acceptanceSummary].some(hasTextValue)
+  ) {
+    preparedSections.add("proposalNotes");
+  }
+
+  if (values.planSheets?.length > 0) {
+    preparedSections.add("planSheets");
+  }
+
+  if (values.scopeControlSummary && Object.values(values.scopeControlSummary).some(hasTextValue)) {
+    preparedSections.add("scopeControlSummary");
+  }
+
+  if (values.rfiRegister?.length > 0 || hasTextValue(values.rfiClarificationNotes)) {
+    preparedSections.add("rfiRegister");
+  }
+
+  if (values.addendaRegister?.length > 0 || hasTextValue(values.addendaAcknowledged)) {
+    preparedSections.add("addendaAcknowledged");
+  }
+
+  if (
+    [
+      values.terms,
+      values.proposalExpiration,
+      values.paymentTerms,
+      values.changeOrderLanguage,
+      values.hiddenConditions,
+      values.warrantyLimitation,
+      values.gcScopeControl,
+    ].some(hasTextValue)
+  ) {
+    preparedSections.add("legalTerms");
+  }
+
+  if (hasTextValue(values.proposalNotes) || hasTextValue(values.scheduleAssumptions)) {
+    preparedSections.add("proposalNotes");
+  }
+
+  return preparedSections.size;
+}
+
 function parseSmartPasteScopeControlSummary(value) {
   const summary = {};
   const fieldMap = {
@@ -2593,6 +3067,21 @@ function parseSmartPastePricingSections(lines, warnings) {
   };
 
   lines.forEach((line) => {
+    if (isSmartPastePricingHeaderLine(line)) {
+      return;
+    }
+
+    const pipeLineItem = parseSmartPastePricingPipeLineItem(line);
+
+    if (pipeLineItem) {
+      result.baseBidLineItem = {
+        ...pipeLineItem,
+        itemNumber: "1",
+      };
+      result.summaryRows.push(createPricingSummaryRow(pipeLineItem.description || "Base Bid", pipeLineItem.unitPrice, ""));
+      return;
+    }
+
     const parsed = parseSmartPastePricingLine(line, warnings);
 
     if (!parsed) {
@@ -2602,13 +3091,13 @@ function parseSmartPastePricingSections(lines, warnings) {
     if (parsed.kind === "base_bid") {
       result.baseBidLineItem = {
         itemNumber: "1",
-        description: parsed.label || "Base Bid",
-        quantity: 1,
-        unit: "LS",
+        description: parsed.description || parsed.label || "Base Bid",
+        quantity: parsed.quantity || 1,
+        unit: parsed.unit || "LS",
         unitPrice: parsed.amount,
         taxable: true,
       };
-      result.summaryRows.push(createPricingSummaryRow(parsed.label || "Base Bid", parsed.amount, parsed.note));
+      result.summaryRows.push(createPricingSummaryRow(parsed.description || parsed.label || "Base Bid", parsed.amount, parsed.note));
       return;
     }
 
@@ -2640,10 +3129,38 @@ function parseSmartPastePricingSections(lines, warnings) {
     result.summaryRows.push(createPricingSummaryRow(parsed.label, parsed.amount, parsed.note || parsed.description));
   });
 
+  if (!result.baseBidLineItem && result.sections.length === 0) {
+    const totalProposalRow = result.totalRows.find((row) => isPresentationTotalPricingLabel(String(row.label || "").toLowerCase()) && row.amount > 0);
+
+    if (totalProposalRow) {
+      result.baseBidLineItem = {
+        itemNumber: "1",
+        description: "Base Bid",
+        quantity: 1,
+        unit: "LS",
+        unitPrice: totalProposalRow.amount,
+        taxable: true,
+      };
+      result.summaryRows.unshift(createPricingSummaryRow("Base Bid", totalProposalRow.amount, "Created from total proposal because no accepted alternates were found."));
+    }
+  }
+
   return result;
 }
 
 function parseSmartPastePricingLine(line, warnings) {
+  const looseTotal = parseLooseSmartPasteTotalLine(line);
+
+  if (looseTotal) {
+    return looseTotal;
+  }
+
+  const looseBaseBid = parseLooseSmartPasteBaseBidLine(line);
+
+  if (looseBaseBid) {
+    return looseBaseBid;
+  }
+
   const match = String(line).match(/^([^:]+):\s*(.+)$/i);
 
   if (!match) {
@@ -2655,6 +3172,10 @@ function parseSmartPastePricingLine(line, warnings) {
   const normalizedLabel = rawLabel.toLowerCase();
   const amountParts = rawValue.split("|").map((part) => part.trim()).filter(Boolean);
   const amount = toEditableNumber(amountParts[amountParts.length - 1]);
+
+  if (isSmartPastePricingTableHeaderLabel(normalizedLabel)) {
+    return null;
+  }
 
   if (isNoAlternatePricingLabel(normalizedLabel) && isNoAlternateValue(rawValue)) {
     return { kind: "no_alternate", label: rawLabel, amount: 0, note: rawValue };
@@ -2674,19 +3195,26 @@ function parseSmartPastePricingLine(line, warnings) {
   }
 
   if (isBaseBidPricingLabel(normalizedLabel)) {
+    const description = getSmartPasteBaseBidDescription(rawLabel, amountParts);
+
     return {
       kind: "base_bid",
-      label: amountParts.length > 1 ? amountParts[0] : rawLabel,
-      description: "",
+      label: rawLabel,
+      description,
       amount,
       note: "",
     };
   }
 
   const type = getSmartPricingType(normalizedLabel);
+
+  if (!type) {
+    return null;
+  }
+
   const numberedLabel = rawLabel.replace(/\s+/g, " ");
   const valueLabel = amountParts.length > 1 ? amountParts.slice(0, -1).join(" | ") : numberedLabel;
-  const hasNumberedPrefix = /\d|[a-z]$/i.test(numberedLabel.replace(/^(add|deduct) alternate\s*/i, ""));
+  const hasNumberedPrefix = /\d|[a-z]$/i.test(numberedLabel.replace(/^(add|deduct|deductive|additive|optional) alternate\s*/i, ""));
   const hasClearAlternateDescription = amountParts.length > 1 || !isGenericAlternatePricingLabel(normalizedLabel);
 
   if (type === "add_alternate" && !hasClearAlternateDescription) {
@@ -2703,7 +3231,7 @@ function parseSmartPastePricingLine(line, warnings) {
 }
 
 function isSmartPricingLine(line) {
-  return /^(base bid|base concrete(?:\s*\/\s*site package)?|allowance|alternate|alternates|add alternate(?:\s+\d+|\s+[a-z]+)?|additive alternate|optional alternate|alt(?:ernate)?\s*#?\s*\d+|optional support scope|deduct(?:ive)? alternate(?:\s+\d+|\s+[a-z]+)?|unit price(?:\s+\d+|\s+[a-z]+)?|total proposal|grand total|total with alternates?|total if .+)\s*:/i.test(
+  return /^(base bid|base concrete(?:\s*\/\s*site package)?|base concrete work|allowance|accepted alternates|alternate|alternates|add alternate(?:\s+\d+|\s+[a-z]+)?|additive alternate|optional alternate|alt(?:ernate)?\s*#?\s*\d+|optional support scope|deduct(?:ive)? alternate(?:\s+\d+|\s+[a-z]+)?|total proposal|grand total|total with alternates?|total if .+|base with allowances)\s*:/i.test(
     String(line).trim(),
   );
 }
@@ -2739,15 +3267,15 @@ function getSmartPricingType(label) {
     return "deduct_alternate";
   }
 
-  if (label.startsWith("unit price")) {
-    return "unit_price";
+  if (isExplicitAlternatePricingLabel(label) || label.includes("optional support")) {
+    return "add_alternate";
   }
 
-  return "add_alternate";
+  return "";
 }
 
 function isBaseBidPricingLabel(label) {
-  return label === "base bid" || label.includes("base concrete") || label.includes("base concrete / site package");
+  return label === "base bid" || label.includes("base bid") || label.includes("base concrete") || label.includes("base concrete / site package");
 }
 
 function isTotalIfAllAcceptedLabel(label) {
@@ -2764,7 +3292,8 @@ function isPresentationTotalPricingLabel(label) {
     label.startsWith("grand total") ||
     label.startsWith("total with alternate") ||
     label.startsWith("total with alternates") ||
-    label.startsWith("total if")
+    label.startsWith("total if") ||
+    label.startsWith("base with allowances")
   );
 }
 
@@ -2774,13 +3303,16 @@ function isNoAlternatePricingLabel(label) {
     label.startsWith("additive alternate") ||
     label.startsWith("optional alternate") ||
     /^alt(?:ernate)?\s*#?\s*\d+/i.test(label) ||
+    label === "accepted alternates" ||
     label === "alternates" ||
     label === "alternate"
   );
 }
 
 function isNoAlternateValue(value) {
-  return /^(none|none currently|no add alternates?|no alternate(?:s)?|n\/a|not applicable|not included|currently none)$/i.test(String(value || "").trim());
+  return /^(none|none currently|none currently accepted|no add alternates?|no alternate(?:s)?|n\/a|not applicable|not included|currently none)$/i.test(
+    String(value || "").trim(),
+  );
 }
 
 function isExplicitAlternatePricingLabel(label) {
@@ -2791,6 +3323,7 @@ function isExplicitAlternatePricingLabel(label) {
     label.startsWith("deductive alternate") ||
     label.startsWith("optional alternate") ||
     /^alt(?:ernate)?\s*#?\s*\d+/i.test(label) ||
+    label === "accepted alternates" ||
     label === "alternate" ||
     label === "alternates"
   );
@@ -2809,6 +3342,135 @@ function createPricingSummaryRow(label, amount, note = "") {
   };
 }
 
+function parseSmartPastePricingPipeLineItem(line) {
+  const textValue = String(line || "").trim();
+
+  if (!textValue.includes("|") || isSmartPastePricingHeaderLine(textValue)) {
+    return null;
+  }
+
+  return parseSmartPasteLineItem(textValue, null);
+}
+
+function parseLooseSmartPasteBaseBidLine(line) {
+  const textValue = String(line || "").trim();
+
+  if (!textValue || textValue.includes("|") || !/\$?\d[\d,]*(?:\.\d{2})?\s*$/.test(textValue)) {
+    return null;
+  }
+
+  const amount = getTrailingSmartPasteAmount(textValue);
+
+  if (amount <= 0) {
+    return null;
+  }
+
+  const label = textValue.replace(/\s*\$?[\d,]+(?:\.\d{2})?\s*$/, "").replace(/[:\-–—]\s*$/, "").trim();
+
+  if (!isBaseBidPricingLabel(label.toLowerCase())) {
+    return null;
+  }
+
+  return {
+    kind: "base_bid",
+    label: "Base Bid",
+    description: getSmartPasteBaseBidDescription(label, []),
+    amount,
+    note: "",
+  };
+}
+
+function parseLooseSmartPasteTotalLine(line) {
+  const textValue = String(line || "").trim();
+
+  if (!textValue || textValue.includes("|") || !/\$?\d[\d,]*(?:\.\d{2})?\s*$/.test(textValue)) {
+    return null;
+  }
+
+  const amount = getTrailingSmartPasteAmount(textValue);
+
+  if (amount <= 0) {
+    return null;
+  }
+
+  const label = textValue.replace(/\s*\$?[\d,]+(?:\.\d{2})?\s*$/, "").replace(/[:\-–—]\s*$/, "").trim();
+  const normalizedLabel = label.toLowerCase();
+
+  if (isTotalIfAllAcceptedLabel(normalizedLabel)) {
+    return { kind: "total_if_all", label, amount, note: "" };
+  }
+
+  if (isPresentationTotalPricingLabel(normalizedLabel)) {
+    return { kind: "total_presentation", label, amount, note: "" };
+  }
+
+  return null;
+}
+
+function isLooseSmartPastePricingValueLine(line = "") {
+  const textValue = String(line || "").trim();
+  const normalizedText = textValue.toLowerCase();
+  const amount = getTrailingSmartPasteAmount(textValue);
+
+  if (amount <= 0 || textValue.includes("|")) {
+    return false;
+  }
+
+  return (
+    normalizedText.includes("base bid") ||
+    normalizedText.includes("base concrete") ||
+    normalizedText.startsWith("total proposal") ||
+    normalizedText.startsWith("grand total") ||
+    normalizedText.startsWith("total if") ||
+    normalizedText.startsWith("total with alternate") ||
+    normalizedText.startsWith("base with allowances")
+  );
+}
+
+function getLooseSmartPastePricingLines(notes = "") {
+  return String(notes || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => isLooseSmartPastePricingValueLine(line));
+}
+
+function getTrailingSmartPasteAmount(value = "") {
+  const match = String(value || "").trim().match(/(\$?\s*\d[\d,]*(?:\.\d{2})?)\s*$/);
+
+  return match ? toEditableNumber(match[1]) : 0;
+}
+
+function getSmartPasteBaseBidDescription(rawLabel = "", amountParts = []) {
+  const valueDescription = amountParts.length > 1 ? amountParts.slice(0, -1).join(" | ").trim() : "";
+
+  if (hasTextValue(valueDescription)) {
+    return valueDescription;
+  }
+
+  const labelText = String(rawLabel || "").trim();
+  const dashMatch = labelText.match(/^base\s+bid\s*[-–—]\s*(.+)$/i);
+
+  if (dashMatch?.[1]) {
+    return dashMatch[1].trim();
+  }
+
+  if (/^base\s+bid$/i.test(labelText)) {
+    return "Base Bid";
+  }
+
+  return labelText.replace(/^base\s+bid\s*[:\-–—]?\s*/i, "").trim() || "Base Bid";
+}
+
+function isSmartPastePricingHeaderLine(line = "") {
+  const normalizedLine = normalizeSmartPasteSectionLabel(line);
+
+  return /^(item|description|qty|quantity|unit|unit price|amount|pricing basis|total)$/.test(normalizedLine);
+}
+
+function isSmartPastePricingTableHeaderLabel(label = "") {
+  return /^(unit price|amount|item|description|qty|quantity|unit|pricing basis|total)$/.test(normalizeSmartPasteSectionLabel(label));
+}
+
 function parseSmartPasteLineItem(line, warnings) {
   const parts = String(line)
     .split("|")
@@ -2817,7 +3479,7 @@ function parseSmartPasteLineItem(line, warnings) {
 
   if (parts.length < 4) {
     if (hasTextValue(line)) {
-      warnings.push(`Skipped line item "${line}" because it does not use Description | Quantity | Unit | Unit Price.`);
+      warnings?.push(`Skipped line item "${line}" because it does not use Description | Quantity | Unit | Unit Price.`);
     }
 
     return null;
@@ -2830,7 +3492,7 @@ function parseSmartPasteLineItem(line, warnings) {
   const unit = String(unitText || "").trim().toUpperCase();
 
   if (!hasTextValue(description) || quantity <= 0 || !LINE_ITEM_UNITS.includes(unit) || unitPrice < 0) {
-    warnings.push(`Skipped line item "${line}" because quantity, unit, or unit price could not be parsed.`);
+    warnings?.push(`Skipped line item "${line}" because quantity, unit, or unit price could not be parsed.`);
     return null;
   }
 

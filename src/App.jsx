@@ -93,6 +93,11 @@ import {
   hasPrintableText,
 } from "./utils/proposalPacket/printContentCleanup.js";
 import {
+  cleanSmartPasteBaseProposal,
+  cleanTrueBlankProposalState,
+  getSmartPasteFieldChangeSummary,
+} from "./utils/proposals/proposalDraftCleanup.js";
+import {
   activityLogStorageKey,
   createActivityRecord,
   getActivityDisplayMeta,
@@ -541,7 +546,10 @@ export default function App() {
 
       if (isProposalRouteView(nextRoute.view)) {
         resetProposalTransientState();
-        setProposalDraft(getInitialProposalForRoute(nextRoute, savedProposals, companySettings));
+        if (nextRoute.blank) {
+          clearTransientProposalDraftStorage();
+        }
+        setProposalDraft(getProposalDraftForRoute(nextRoute, savedProposals, companySettings));
       }
     }
 
@@ -732,9 +740,11 @@ export default function App() {
 
     if (isProposalRouteView(nextRoute.view)) {
       resetProposalTransientState();
-      setProposalDraft(
-        options.proposal ? createEditableProposal(options.proposal) : getInitialProposalForRoute(nextRoute, savedProposals, companySettings),
-      );
+      if (nextRoute.blank) {
+        clearTransientProposalDraftStorage();
+      }
+
+      setProposalDraft(getProposalDraftForRoute(nextRoute, savedProposals, companySettings, options.proposal));
     }
 
     return true;
@@ -3971,7 +3981,9 @@ export default function App() {
   function fillProposalFromNotes() {
     const extractedCoverValues = extractSmartPasteCoverFieldsFromNotes(smartPasteNotes);
     const hasExtractedCoverValues = Object.values(extractedCoverValues).some(hasTextValue);
-    const { proposal: parsedProposal, parsedNotes, summary } = parseSmartPasteNotes(smartPasteNotes, proposalDraft);
+    const replaceStarterContent = isBlankProposalSmartPasteMode(route, proposalDraft);
+    const smartPasteBaseProposal = cleanSmartPasteBaseProposal(proposalDraft, { replaceStarterContent });
+    const { proposal: parsedProposal, parsedNotes, summary } = parseSmartPasteNotes(smartPasteNotes, smartPasteBaseProposal);
 
     if (
       summary.fields.length === 0 &&
@@ -4007,7 +4019,7 @@ export default function App() {
     const coverValues = mergeSmartPasteCoverValues(parsedNotes?.values, extractedCoverValues);
     const parsedProposalWithRawCover = forceApplySmartPasteCoverFields(parsedProposal, parsedProposal, coverValues);
     const contactLinkedProposal = linkProposalToMatchingContact(parsedProposalWithRawCover, savedContacts);
-    const nextProposal = createEditableProposal(
+    const nextProposal = cleanProposalDraftAfterSmartPaste(
       forceApplySmartPasteCoverFields(
         createEditableProposal(contactLinkedProposal),
         parsedProposalWithRawCover,
@@ -4015,8 +4027,11 @@ export default function App() {
       ),
     );
     const nextValidation = validateProposalCompleteness(nextProposal);
+    const existingFieldChanges = getSmartPasteFieldChangeSummary(proposalDraft, nextProposal);
     const nextSummary = {
       ...summary,
+      applyMode: replaceStarterContent ? "Replace starter content" : "Merge into existing proposal",
+      existingFieldChanges,
       parsedCoverValues: summarizeSmartPasteCoverValues(coverValues),
       activeDraftFieldsUpdated: getSmartPasteActiveDraftFields(nextProposal, coverValues),
       detectedProjectInfo: {
@@ -4037,7 +4052,11 @@ export default function App() {
 
     setPendingSmartPasteProposal(nextProposal);
     setValidationNotice("");
-    setSaveMessage("Smart Paste review ready. Review detected fields, then click Apply Smart Paste.");
+    setSaveMessage(
+      replaceStarterContent
+        ? "Smart Paste review ready. Blank draft starter content will be replaced when you apply."
+        : "Smart Paste review ready. Review detected fields, then click Apply Smart Paste.",
+    );
     setSmartPasteResult(nextSummary);
   }
 
@@ -7918,6 +7937,7 @@ function SmartPasteSummary({ result, onApply, onClear }) {
         <li>{result.defaultsCleared || 0} default cleanup actions applied</li>
         <li>{result.pricingRowsReplaced || 0} pricing summary rows replaced</li>
         <li>{result.packetSectionsCreated || 0} packet sections prepared</li>
+        {result.applyMode ? <li>Apply mode: {result.applyMode}</li> : null}
         {result.fields.length > 0 ? <li>Updated: {result.fields.join(", ")}</li> : null}
         {(result.sectionsCaptured || []).length > 0 ? <li>Captured: {result.sectionsCaptured.join(", ")}</li> : null}
         {(result.coverFieldsUpdated || []).length > 0 ? <li>Cover updated: {result.coverFieldsUpdated.join(", ")}</li> : null}
@@ -7941,6 +7961,9 @@ function SmartPasteSummary({ result, onApply, onClear }) {
         ) : null}
         {(result.activeDraftFieldsUpdated || []).length > 0 ? (
           <li>{result.pendingReview ? "Will apply to draft" : "Applied to active draft"}: {result.activeDraftFieldsUpdated.join(", ")}</li>
+        ) : null}
+        {(result.existingFieldChanges || []).length > 0 ? (
+          <li>Existing real fields flagged for review: {result.existingFieldChanges.join("; ")}</li>
         ) : null}
         {(result.cleanupActions || []).length > 0 ? <li>Cleanup: {result.cleanupActions.join(" ")}</li> : null}
         {(result.defaultRowsRemoved || []).length > 0 ? <li>Removed defaults: {result.defaultRowsRemoved.join(", ")}</li> : null}
@@ -9346,6 +9369,10 @@ function getDraftRouteLabel(route = {}) {
   return route.blank ? "Blank Draft" : "New Draft";
 }
 
+function isBlankProposalSmartPasteMode(route = {}, proposal = {}) {
+  return Boolean(route.view === "new" && route.blank) || proposal.templateId === "blank";
+}
+
 function createCloudSyncState() {
   const localMessage = isSupabaseConfigured ? cloudSignInLabel : "Cloud save is not configured. Proposals, contacts, and settings are stored locally.";
 
@@ -9499,6 +9526,12 @@ function getInitialProposalForRoute(route, proposals, companySettings = getDefau
   return createEditableProposal(proposals[0] || createSeedProposal(companySettings));
 }
 
+function getProposalDraftForRoute(route, proposals, companySettings = getDefaultCompanySettings(), proposalOverride = null) {
+  const draft = proposalOverride ? createEditableProposal(proposalOverride) : getInitialProposalForRoute(route, proposals, companySettings);
+
+  return route.blank ? cleanTrueBlankProposalState(draft) : draft;
+}
+
 function loadSavedProposals(companySettings = getDefaultCompanySettings()) {
   try {
     const storedValue = window.localStorage.getItem(storageKey);
@@ -9538,6 +9571,25 @@ function saveStoredProposals(proposals) {
   } catch {
     // Local saving is best-effort for this phase.
   }
+}
+
+function clearTransientProposalDraftStorage() {
+  const transientKeys = [
+    "last-yard-active-proposal-draft-v1",
+    "last-yard-current-proposal-draft-v1",
+    "last-yard-last-opened-proposal-v1",
+    "last-yard-smart-paste-draft-v1",
+    "last-yard-unsaved-proposal-draft-v1",
+  ];
+
+  transientKeys.forEach((key) => {
+    try {
+      window.sessionStorage?.removeItem(key);
+      window.localStorage?.removeItem(key);
+    } catch {
+      // Transient cleanup is best-effort and must never block blank draft creation.
+    }
+  });
 }
 
 function loadCompanySettings() {
@@ -10154,11 +10206,11 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
 }
 
 function createBlankProposalDraft(existingProposals, companySettings = getDefaultCompanySettings()) {
-  const baseProposal = createNewProposalDraft(existingProposals, companySettings);
-
-  return createEditableProposal({
+  const baseProposal = cleanTrueBlankProposalState(createNewProposalDraft(existingProposals, companySettings));
+  const blankProposal = createEditableProposal({
     ...baseProposal,
     templateId: "blank",
+    templateName: "Blank Proposal",
     contactId: "",
     client: {
       companyName: "",
@@ -10199,6 +10251,8 @@ function createBlankProposalDraft(existingProposals, companySettings = getDefaul
     sendRecords: [],
     proposalNotes: "",
   });
+
+  return cleanTrueBlankProposalState(blankProposal);
 }
 
 function createNewGcPacketDraft(existingProposals, companySettings = getDefaultCompanySettings()) {
@@ -11167,14 +11221,19 @@ function summarizeSmartPasteDetectedPricing(proposal = {}) {
 }
 
 function cleanProposalDraftAfterSmartPaste(proposal = {}) {
-  return createEditableProposal({
+  const gcPacketTables = normalizeGcPacketTables(proposal.gcPacketTables);
+  const editableProposal = createEditableProposal({
     ...proposal,
     scopeSections: cleanPrintableScopeSections(proposal.scopeSections),
     exclusions: cleanPrintableTextList(proposal.exclusions),
     assumptions: cleanPrintableTextList(proposal.assumptions),
     pricingSections: cleanPrintablePricingSections(proposal.pricingSections),
+    projectPhotos: cleanProjectPhotosAfterSmartPaste(proposal.projectPhotos),
+    planSheets: cleanPrintablePlanSheets(proposal.planSheets),
     proposalNotes: cleanPrintableTextBlock(proposal.proposalNotes),
     notes: cleanPrintableTextBlock(proposal.notes),
+    takeoffQuantityBackup: cleanPrintableTextBlock(proposal.takeoffQuantityBackup),
+    quantityBackup: cleanPrintableTextBlock(proposal.quantityBackup),
     gcPrime: {
       ...(proposal.gcPrime || {}),
       rfiClarificationNotes: cleanPrintableTextBlock(proposal.gcPrime?.rfiClarificationNotes || proposal.gcPrime?.rfiNotes),
@@ -11192,6 +11251,71 @@ function cleanProposalDraftAfterSmartPaste(proposal = {}) {
         hiddenUnshownConditionsNote: cleanPrintableTextBlock(proposal.gcPrime?.scopeControlSummary?.hiddenUnshownConditionsNote),
       },
     },
+    gcPacketTables: {
+      ...gcPacketTables,
+      pricingSummary: {
+        ...gcPacketTables.pricingSummary,
+        presentationNotes: cleanPrintableTextBlock(gcPacketTables.pricingSummary.presentationNotes),
+        rows: cleanPrintablePricingSummaryRows(gcPacketTables.pricingSummary.rows),
+      },
+      scheduleOfValues: {
+        ...gcPacketTables.scheduleOfValues,
+        rows: cleanPrintableStructuredRows("scheduleOfValues", gcPacketTables.scheduleOfValues.rows),
+      },
+      takeoffQuantities: {
+        ...gcPacketTables.takeoffQuantities,
+        rows: cleanPrintableStructuredRows("takeoffQuantities", gcPacketTables.takeoffQuantities.rows),
+      },
+      shadeFootingEstimate: {
+        ...gcPacketTables.shadeFootingEstimate,
+        rows: cleanPrintableStructuredRows("shadeFootingEstimate", gcPacketTables.shadeFootingEstimate.rows),
+      },
+      proposalNotes: {
+        ...gcPacketTables.proposalNotes,
+        proposalBasis: cleanPrintableTextBlock(gcPacketTables.proposalNotes.proposalBasis),
+        contractScopeControl: cleanPrintableTextBlock(gcPacketTables.proposalNotes.contractScopeControl),
+        acceptanceSummary: cleanPrintableTextBlock(gcPacketTables.proposalNotes.acceptanceSummary),
+        gcPrimeReviewer: cleanPrintableTextBlock(gcPacketTables.proposalNotes.gcPrimeReviewer),
+      },
+    },
+  });
+
+  return {
+    ...editableProposal,
+    scopeSections: cleanPrintableScopeSections(editableProposal.scopeSections),
+    exclusions: cleanPrintableTextList(editableProposal.exclusions),
+    assumptions: cleanPrintableTextList(editableProposal.assumptions),
+    pricingSections: cleanPrintablePricingSections(editableProposal.pricingSections),
+    projectPhotos: cleanProjectPhotosAfterSmartPaste(editableProposal.projectPhotos),
+    planSheets: cleanPrintablePlanSheets(editableProposal.planSheets),
+    gcPacketTables: {
+      ...editableProposal.gcPacketTables,
+      pricingSummary: {
+        ...editableProposal.gcPacketTables.pricingSummary,
+        rows: cleanPrintablePricingSummaryRows(editableProposal.gcPacketTables.pricingSummary.rows),
+      },
+      scheduleOfValues: {
+        ...editableProposal.gcPacketTables.scheduleOfValues,
+        rows: cleanPrintableStructuredRows("scheduleOfValues", editableProposal.gcPacketTables.scheduleOfValues.rows),
+      },
+      takeoffQuantities: {
+        ...editableProposal.gcPacketTables.takeoffQuantities,
+        rows: cleanPrintableStructuredRows("takeoffQuantities", editableProposal.gcPacketTables.takeoffQuantities.rows),
+      },
+      shadeFootingEstimate: {
+        ...editableProposal.gcPacketTables.shadeFootingEstimate,
+        rows: cleanPrintableStructuredRows("shadeFootingEstimate", editableProposal.gcPacketTables.shadeFootingEstimate.rows),
+      },
+    },
+  };
+}
+
+function cleanProjectPhotosAfterSmartPaste(photos = []) {
+  return (Array.isArray(photos) ? photos : []).filter((photo) => {
+    const hasImage = getImageAssetSource(photo);
+    const label = cleanPrintableTextBlock(photo?.label || photo?.caption);
+
+    return Boolean(hasImage || label);
   });
 }
 

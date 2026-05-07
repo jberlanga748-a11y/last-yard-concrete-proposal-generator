@@ -461,6 +461,124 @@ Draft proposal for review. Verify customer, GC, contact, final phasing, and nigh
   assert.equal(validation.isValid, true);
 });
 
+test("parses Costco contractor-style full prompt with field-block SOV takeoff and RFI rows", () => {
+  const result = parseSmartPasteNotes(
+    `Project Info
+Project Name: Costco #682 Albany POS Boxes Remodel
+Location: 3130 Killdeer Ave SE, Albany, OR
+Project Location: 3130 Killdeer Ave SE, Albany, Oregon
+Project Address: 3130 Killdeer Ave SE, Albany, OR
+Prepared for: Faison Construction
+Owner: Costco Wholesale
+Proposal Status: Draft internal review
+
+Project Description
+Interior concrete / night work freezer slab package for freezer POS boxes remodel.
+
+Pricing
+Base Concrete Work $350,000
+Total Proposal $350,000
+Accepted Alternates: None currently accepted
+
+Schedule of Values
+Item:
+1. Mobilization / Material Procurement / Setup
+Description:
+Mobilization, coordination, material procurement, layout/prep, night-work setup, equipment coordination, and project startup.
+Pricing Basis:
+10%
+Amount:
+$35,000
+
+Item:
+2. Night Work / Phased Freezer Slab Package
+Description:
+Sawcut, slab demo, haul-off, freezer slab prep, vapor barrier, insulation, reinforcement, new freezer slab placement, and cleanup.
+Pricing Basis:
+90%
+Amount:
+$315,000
+
+Takeoff Quantities
+Row 1
+Item: Freezer 1 slab demo
+Quantity: 1,440.86 SF
+Detail / Size: Existing slab demo
+Net CY: 26.68 CY demo volume, assumes 6" slab
+CY With 10%: 29.35 CY demo volume
+Price / Status: Base Bid
+
+RFI / CLARIFICATION 1:
+RFI / Clarification Number: RFI-01
+Date Asked: May 6, 2026
+Date Answered: Pending
+Source: Field discussion / A102 / proposal assumptions
+Question / Clarification Needed: Confirm final freezer slab layout and phased work limits.
+Answer / Proposal Treatment: Proposal is based on current listed takeoff quantities.
+Price Impact: Any added slab beyond listed quantities is excluded unless accepted by change order.
+Scope Impact: Layout change may affect demo, prep, and placement quantities.
+
+STRUCTURED ADDENDA ACKNOWLEDGEMENT
+Addendum 01: Pending confirmation
+
+Scope Control Summary
+Included Scope | Interior freezer slab demo, prep, vapor barrier, insulation, reinforcement, placement, and cleanup.
+Exclusions | Refrigeration, electrical, permits, testing, and store operations protection by others.
+Clarifications | Night work and phased access assumed.
+
+Legal / Terms
+Payment Terms: Progress billing by approved pay application.
+Change Orders: Written approval required before added work.
+Hidden Conditions: Unknown utilities and unsuitable soils excluded.
+
+Proposal Notes
+Acceptance Summary: Draft for internal review before sending.
+
+Final GC Packet Print Order
+Cover / Proposal Summary
+Pricing Summary
+Schedule of Values
+Takeoff Quantities
+RFI / Clarification Register
+Legal / Terms`,
+    blankProposalFixture(),
+  );
+
+  const totals = calculateProposalTotals(result.proposal);
+  const sovRows = result.proposal.gcPacketTables.scheduleOfValues.rows;
+  const takeoffRows = result.proposal.gcPacketTables.takeoffQuantities.rows;
+  const rfiRows = result.proposal.gcPrime.rfiRegister;
+
+  assert.equal(result.proposal.project.name, "Costco #682 Albany POS Boxes Remodel");
+  assert.equal(result.proposal.project.location, "3130 Killdeer Ave SE, Albany, OR");
+  assert.equal(result.proposal.project.address, "3130 Killdeer Ave SE, Albany, OR");
+  assert.equal(result.proposal.client.companyName, "Faison Construction");
+  assert.doesNotMatch(result.proposal.project.name, /3130 Killdeer/);
+  assert.equal(result.proposal.lineItems.length, 1);
+  assert.equal(result.proposal.lineItems[0].description, "Base Concrete Work");
+  assert.equal(result.proposal.lineItems[0].unitPrice, 350000);
+  assert.equal(totals.total, 350000);
+  assert.equal(totals.totalIfAllAlternatesAccepted, 350000);
+  assert.equal(result.proposal.pricingSections.length, 0);
+  assert.doesNotMatch(JSON.stringify(result.proposal.pricingSections), /Unit Price|Amount|Total Proposal/);
+  assert.equal(sovRows.length, 2);
+  assert.equal(sovRows[0].item, "Mobilization / Material Procurement / Setup");
+  assert.match(sovRows[0].description, /Mobilization, coordination/);
+  assert.equal(sovRows[0].pricingBasis, "10%");
+  assert.equal(sovRows[0].amount, "$35,000");
+  assert.equal(takeoffRows.length, 1);
+  assert.equal(takeoffRows[0].item, "Freezer 1 slab demo");
+  assert.equal(takeoffRows[0].quantity, "1,440.86 SF");
+  assert.equal(takeoffRows[0].cyWithTenPercent, "29.35 CY demo volume");
+  assert.equal(rfiRows.length, 1);
+  assert.equal(rfiRows[0].rfiNumber, "RFI-01");
+  assert.match(rfiRows[0].question, /Confirm final freezer slab layout/);
+  assert.doesNotMatch(JSON.stringify(takeoffRows), /RFI|Addendum|Legal|Final GC Packet Print Order|Payment Terms/);
+  assert.ok(result.summary.packetSectionsCreated > 0);
+  assert.ok(result.summary.warnings.length <= 2);
+  assert.doesNotMatch(warningText(result), /Unit Price|Amount|pipe-separated|Schedule of Values section was found/);
+});
+
 test("treats Total Proposal and Grand Total lines as summary totals, not alternates", () => {
   const result = parseSmartPasteNotes(
     `Project: Total Proposal Trap
