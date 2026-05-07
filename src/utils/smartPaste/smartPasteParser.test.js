@@ -579,6 +579,240 @@ Legal / Terms`,
   assert.doesNotMatch(warningText(result), /Unit Price|Amount|pipe-separated|Schedule of Values section was found/);
 });
 
+test("normalizes a full Costco contractor prompt before applying to proposal fields", () => {
+  const sovFixture = Array.from({ length: 5 }, (_, index) => {
+    const rowNumber = index + 1;
+    const amounts = [35000, 70000, 95000, 80000, 70000];
+
+    return `Item:
+${rowNumber}. SOV Phase ${rowNumber}
+
+Pricing Basis:
+${rowNumber * 10}%
+
+Description:
+Costco freezer slab phase ${rowNumber} work scope, coordination, material handling, and closeout.
+
+Amount:
+$${amounts[index].toLocaleString()}`;
+  }).join("\n\n");
+  const takeoffFixture = Array.from({ length: 38 }, (_, index) => {
+    const rowNumber = index + 1;
+
+    return `Row ${rowNumber}
+Item: Freezer ${rowNumber} slab demo
+Quantity: ${100 + rowNumber}.00 SF
+Detail / Size: Existing freezer slab work area ${rowNumber}
+Net CY: ${rowNumber}.25 CY demo volume
+CY With 10%: ${rowNumber}.38 CY demo volume
+Price / Status: Base Bid`;
+  }).join("\n\n");
+  const rfiFixture = Array.from({ length: 10 }, (_, index) => {
+    const rowNumber = index + 1;
+    const rfiNumber = String(rowNumber).padStart(2, "0");
+
+    return `RFI / CLARIFICATION ${rowNumber}:
+RFI / Clarification Number: RFI-${rfiNumber}
+Date Asked: May ${5 + rowNumber}, 2026
+Date Answered: Pending
+Source: A10${rowNumber} / proposal assumptions
+Question / Clarification Needed: Confirm freezer slab scope item ${rowNumber}.
+Answer / Proposal Treatment: Proposal carries current listed quantity for item ${rowNumber}.
+Price Impact: Added work beyond listed scope is excluded unless accepted.
+Scope Impact: Change may affect phasing, demo, prep, or placement.`;
+  }).join("\n\n");
+  const result = parseSmartPasteNotes(
+    `PROJECT INFO:
+Project Name:
+Costco #682 Albany POS Boxes Remodel
+Project Location:
+3130 Killdeer Ave SE, Albany, OR
+Project Address:
+3130 Killdeer Ave SE, Albany, OR
+Customer / GC:
+Faison Construction
+Attention:
+Maize
+Email:
+maize@faisonconstruction.com
+Phone:
+503-555-1212
+Proposal Status:
+Draft
+Bid Package Number:
+POS-FREEZER-682
+Spec Section:
+03 30 00 Cast-in-Place Concrete
+Drawing References:
+A101, A102, A103
+Estimated Duration:
+Night work only, phased freezer slab package
+Schedule Restrictions:
+One freezer area at a time around active store operations.
+Special Requirements:
+Coordinate night access, cold storage protection, and store operations.
+
+PRICING LINE ITEM 1:
+Item #: 1
+Unit: LS
+Description: Night Work / Phased Freezer Slab Package
+Quantity: 1
+Unit Price: 350000
+Taxable: No / Unchecked
+Amount: $350,000.00
+
+PRICING SUMMARY / PRESENTATION NOTES:
+Base Bid - Night Work / Phased Freezer Slab Package:
+$350,000
+Add Alternates:
+None currently
+Accepted Alternates: None currently accepted
+Total Proposal:
+$350,000
+
+SCOPE OF WORK - SECTION 1 TITLE:
+Interior freezer slab night work
+SCOPE OF WORK - SECTION 1 BULLETS:
+- Sawcut and remove existing freezer slab areas.
+- Prep freezer slab substrate, vapor barrier, insulation, reinforcement, and placement.
+- Coordinate cleanup and phased access around store operations.
+
+CONCRETE SPECIFICATIONS - THICKNESS:
+6 in freezer slabs unless noted otherwise
+CONCRETE SPECIFICATIONS - CONCRETE STRENGTH:
+4,000 PSI
+CONCRETE SPECIFICATIONS - SLUMP:
+4 in +/- 1 in
+CONCRETE SPECIFICATIONS - REBAR / MESH:
+Per plans and listed freezer slab assumptions
+CONCRETE SPECIFICATIONS - FINISHES:
+Trowel finish suitable for freezer slab use
+
+Schedule of Values
+${sovFixture}
+
+PLAN TAKEOFF SHEET - SHEET TITLE:
+Costco Freezer Slab Takeoff Overview
+PLAN TAKEOFF SHEET - SHEET SUBTITLE:
+POS Boxes Remodel
+PLAN TAKEOFF SHEET - CALCULATION BOX TITLE:
+Freezer Slab Quantity Basis
+PLAN TAKEOFF SHEET - CALCULATION NOTES:
+- Quantities are based on current marked takeoff areas.
+PLAN TAKEOFF SHEET - CLARIFICATION NOTES:
+- Confirm exact freezer slab limits before final release.
+
+A101 - SHEET TITLE:
+A101 Freezer Area 1
+A101 - SHEET SUBTITLE:
+Existing slab demo and replacement
+A101 - CALCULATION BOX TITLE:
+A101 Takeoff Basis
+A101 - CALCULATION NOTES:
+- Area 1 quantity backup.
+A101 - CLARIFICATION NOTES:
+- Confirm sawcut limits.
+A101 - PICTURE CAPTION:
+Area 1 marked takeoff.
+
+A102 - SHEET TITLE:
+A102 Freezer Area 2
+A102 - SHEET SUBTITLE:
+Existing slab demo and replacement
+A102 - CALCULATION BOX TITLE:
+A102 Takeoff Basis
+A102 - CALCULATION NOTES:
+- Area 2 quantity backup.
+A102 - CLARIFICATION NOTES:
+- Confirm access and phasing.
+A102 - PICTURE CAPTION:
+Area 2 marked takeoff.
+
+Takeoff Quantities
+${takeoffFixture}
+
+RFI / Clarification Register
+${rfiFixture}
+
+SCOPE CONTROL SUMMARY - INCLUDED SCOPE:
+Interior freezer slab demo, prep, vapor barrier, insulation, reinforcement, placement, and cleanup.
+SCOPE CONTROL SUMMARY - EXCLUSIONS:
+Refrigeration, electrical, permits, testing, and store operations protection by others.
+SCOPE CONTROL SUMMARY - CLARIFICATIONS:
+Night work and phased access assumed.
+SCOPE CONTROL SUMMARY - ACCEPTED ALTERNATES:
+None currently accepted.
+SCOPE CONTROL SUMMARY - OWNER / GC BY OTHERS:
+Store access, refrigeration, electrical, and protection by others.
+
+LEGAL / TERMS - PAYMENT TERMS:
+Progress billing by approved pay application.
+LEGAL / TERMS - PROPOSAL EXPIRATION:
+Pricing valid for 30 days unless otherwise stated.
+LEGAL / TERMS - CHANGE ORDER LANGUAGE:
+Written approval required before added work.
+LEGAL / TERMS - SITE READINESS:
+Work depends on access and prepared conditions by others.
+LEGAL / TERMS - WARRANTY LIMITATION:
+Warranty applies to included workmanship only.
+
+Proposal Notes:
+Draft freezer slab package for internal review before sending.
+Acceptance Summary:
+Review base scope, exclusions, RFIs, and phased night-work assumptions before final release.
+
+FINAL GC PACKET PRINT ORDER:
+10 - Cover / Proposal Summary - Included
+20 - Details / Pricing Summary - Included
+30 - Pricing Summary - Included
+40 - Schedule of Values - Included
+50 - Scope Control Summary - Included
+60 - Takeoff Quantities - Included
+70 - Plan Sheet Pages - Included
+80 - RFI / Clarification Register - Included
+90 - Legal / Terms - Included
+100 - Proposal Notes / Acceptance Summary - Included
+110 - Shade Footing Estimate - Not Included / Exclude`,
+    blankProposalFixture(),
+  );
+
+  const totals = calculateProposalTotals(result.proposal);
+  const enabledPlanSheets = result.proposal.planSheets.filter((sheet) => sheet.enabled);
+
+  assert.equal(result.proposal.project.name, "Costco #682 Albany POS Boxes Remodel");
+  assert.equal(result.proposal.project.location, "3130 Killdeer Ave SE, Albany, OR");
+  assert.doesNotMatch(result.proposal.project.name, /3130 Killdeer/i);
+  assert.equal(result.proposal.client.companyName, "Faison Construction");
+  assert.equal(result.proposal.lineItems.length, 1);
+  assert.equal(result.proposal.lineItems[0].description, "Night Work / Phased Freezer Slab Package");
+  assert.equal(result.proposal.lineItems[0].quantity, 1);
+  assert.equal(result.proposal.lineItems[0].unit, "LS");
+  assert.equal(result.proposal.lineItems[0].unitPrice, 350000);
+  assert.equal(totals.baseBid, 350000);
+  assert.equal(totals.total, 350000);
+  assert.equal(totals.totalIfAllAlternatesAccepted, 350000);
+  assert.equal(result.proposal.pricingSections.length, 0);
+  assert.doesNotMatch(JSON.stringify(result.proposal.pricingSections), /Unit Price|Amount|Total Proposal/);
+  assert.equal(result.proposal.gcPacketTables.scheduleOfValues.rows.length, 5);
+  assert.equal(result.proposal.gcPacketTables.takeoffQuantities.rows.length, 38);
+  assert.equal(result.proposal.gcPrime.rfiRegister.length, 10);
+  assert.ok(enabledPlanSheets.length >= 3);
+  assert.ok(result.proposal.scopeSections.length >= 1);
+  assert.match(result.proposal.terms.payment, /Progress billing/);
+  assert.equal(result.summary.lineItemCount, 1);
+  assert.equal(result.summary.scheduleOfValuesCount, 5);
+  assert.equal(result.summary.takeoffQuantityCount, 38);
+  assert.equal(result.summary.rfiCount, 10);
+  assert.ok(result.summary.packetSectionsCreated > 8);
+  assert.ok(result.summary.applyTargets.includes("Line Items"));
+  assert.ok(result.summary.applyTargets.includes("Schedule of Values"));
+  assert.ok(result.summary.applyTargets.includes("Takeoff Quantities"));
+  assert.ok(result.summary.applyTargets.includes("RFI Register"));
+  assert.doesNotMatch(JSON.stringify(result.proposal), /New scope item|UPLOAD PLAN IMAGE/);
+  assert.ok(result.summary.warnings.length <= 3);
+  assert.doesNotMatch(warningText(result), /Row 1|Item:|Quantity:|Unit Price|Amount:|Pricing Basis/);
+});
+
 test("treats Total Proposal and Grand Total lines as summary totals, not alternates", () => {
   const result = parseSmartPasteNotes(
     `Project: Total Proposal Trap

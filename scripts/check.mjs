@@ -17,6 +17,7 @@ const filesToCheck = [
   "src/utils/smartPaste/bidSmartPasteParser.test.js",
   "src/utils/smartPaste/smartPasteCoverFields.js",
   "src/utils/smartPaste/smartPasteCoverFields.test.js",
+  "src/utils/smartPaste/smartPasteNormalizer.js",
   "src/utils/smartPaste/smartPasteParser.js",
   "src/utils/smartPaste/smartPasteParser.test.js",
   "src/utils/proposalPacket/printContentCleanup.js",

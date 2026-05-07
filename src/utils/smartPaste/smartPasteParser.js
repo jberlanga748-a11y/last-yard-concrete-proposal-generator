@@ -6,6 +6,7 @@ import {
   isLikelySmartPasteStreetAddress,
   mergeSmartPasteCoverValues,
 } from "./smartPasteCoverFields.js";
+import { normalizeSmartPasteNotes } from "./smartPasteNormalizer.js";
 
 const PLAN_SHEET_PAGE_TYPES = ["plan_takeoff_sheet", "detail_notes", "shade_footing_estimate", "general_backup"];
 
@@ -175,9 +176,80 @@ export function parseSmartPasteNotes(notes, currentProposal = {}) {
       defaultRowsRemoved: parsedNotes.defaultRowsRemoved || [],
       packetSectionsCreated: parsedNotes.packetSectionsCreated || 0,
       pricingRowsReplaced: parsedNotes.pricingRowsReplaced || 0,
+      scheduleOfValuesCount: parsedNotes.values?.gcPacketTables?.scheduleOfValues?.rows?.length || 0,
+      takeoffQuantityCount: parsedNotes.values?.gcPacketTables?.takeoffQuantities?.rows?.length || 0,
+      rfiCount: parsedNotes.values?.rfiRegister?.length || 0,
+      scopeSectionCount: parsedNotes.values?.scopeSections?.length || 0,
+      concreteSpecCount: parsedNotes.values?.concreteSpecs ? Object.values(parsedNotes.values.concreteSpecs).filter(hasTextValue).length : 0,
+      packetPrintOrderCount: parsedNotes.values?.packetBuilder?.length || 0,
+      applyTargets: getSmartPasteApplyTargets(parsedNotes.values || {}),
       warnings: parsedNotes.warnings || [],
     },
   };
+}
+
+function getSmartPasteApplyTargets(values = {}) {
+  const targets = [];
+
+  if ([values.projectName, values.projectLocation, values.clientCompany, values.contactName, values.clientEmail, values.clientPhone].some(hasTextValue)) {
+    targets.push("Project Name", "Project Location", "Client / Contact");
+  }
+
+  if (values.baseBidLineItem || values.pricingTotalRows?.length > 0 || values.pricingSections) {
+    targets.push("Pricing");
+  }
+
+  if (values.normalizedSmartPaste?.pricing?.lineItems?.length > 0) {
+    targets.push("Line Items");
+  }
+
+  if (values.gcPacketTables?.scheduleOfValues?.rows?.length > 0) {
+    targets.push("Schedule of Values");
+  }
+
+  if (values.scopeSections?.length > 0 || values.scopeItems?.length > 0) {
+    targets.push("Scope Sections");
+  }
+
+  if (values.concreteSpecs && Object.values(values.concreteSpecs).some(hasTextValue)) {
+    targets.push("Concrete Specifications");
+  }
+
+  if (values.gcPacketTables?.takeoffQuantities?.rows?.length > 0) {
+    targets.push("Takeoff Quantities");
+  }
+
+  if (values.planSheets?.length > 0) {
+    targets.push("Plan Sheets");
+  }
+
+  if (values.rfiRegister?.length > 0) {
+    targets.push("RFI Register");
+  }
+
+  if (values.scopeControlSummary && Object.values(values.scopeControlSummary).some(hasTextValue)) {
+    targets.push("Scope Control Summary");
+  }
+
+  if (
+    [
+      values.paymentTerms,
+      values.proposalExpiration,
+      values.changeOrderLanguage,
+      values.siteReadiness,
+      values.hiddenConditions,
+      values.warrantyLimitation,
+      values.gcScopeControl,
+    ].some(hasTextValue)
+  ) {
+    targets.push("Legal Terms");
+  }
+
+  if (values.packetBuilder?.length > 0 || hasTextValue(values.packetPrintOrder)) {
+    targets.push("Packet Print Order");
+  }
+
+  return [...new Set(targets)];
 }
 
 export { parseProjectNotes, applyParsedNotesToProposal };
@@ -583,6 +655,7 @@ function hasRfiRowData(row = {}) {
 }
 function parseProjectNotes(notes) {
   const sections = collectSmartPasteSections(notes);
+  const normalizedSmartPaste = normalizeSmartPasteNotes(notes);
   const values = {};
   const fields = [];
   const warnings = [];
@@ -704,10 +777,10 @@ function parseProjectNotes(notes) {
     recordSmartPasteSection(sections, "pricingSections");
   }
 
-  const lineItems = parseSmartPasteLineItems(sections.lineItems || [], warnings);
+  let lineItems = parseSmartPasteLineItems(sections.lineItems || [], warnings);
   const pricingParse = parseSmartPastePricingSections(sections.pricingSections || [], warnings);
-  const planSheetParse = normalizeSmartPastePlanSheets(sections.planSheets || []);
-  const gcPacketTableParse = parseSmartPasteGcPacketTables(sections, warnings);
+  let planSheetParse = normalizeSmartPastePlanSheets(sections.planSheets || []);
+  let gcPacketTableParse = parseSmartPasteGcPacketTables(sections, warnings);
   const addendaRegister = parseSmartPasteAddendaRegister(notes);
   const rfiRegister = parseSmartPasteRfiRegister(notes);
   const subcontractorPacketDetected = isSubcontractorPacketNotes(notes);
@@ -771,6 +844,21 @@ function parseProjectNotes(notes) {
     fields.push("structured GC packet tables");
   }
 
+  const normalizedMerge = mergeNormalizedSmartPasteIntoParseState(normalizedSmartPaste, {
+    fields,
+    lineItems,
+    planSheetParse,
+    sections,
+    values,
+    warnings,
+  });
+  lineItems = normalizedMerge.lineItems;
+  planSheetParse = normalizedMerge.planSheetParse;
+  gcPacketTableParse = {
+    ...gcPacketTableParse,
+    count: countEnabledSmartPasteGcPacketTables(values.gcPacketTables),
+  };
+
   if ((sections.__capturedKeys || []).includes("scheduleOfValues") && !values.gcPacketTables?.scheduleOfValues?.rows?.length) {
     warnings.push("Schedule of Values section was found, but no complete SOV rows were parsed.");
   }
@@ -788,13 +876,395 @@ function parseProjectNotes(notes) {
   return {
     fields: [...new Set(fields)],
     lineItems,
-    pricingSectionCount: pricingParse.sections.length,
+    pricingSectionCount: values.pricingSections?.length ?? pricingParse.sections.length,
     planSheetCount: planSheetParse.length,
-    gcPacketTableCount: gcPacketTableParse.count + (pricingParse.summaryRows.length > 0 ? 1 : 0),
+    gcPacketTableCount: gcPacketTableParse.count || countEnabledSmartPasteGcPacketTables(values.gcPacketTables),
     sectionsCaptured: getCapturedSmartPasteLabels(sections),
     values,
     warnings: [...new Set(warnings)],
+    normalizedSmartPaste,
   };
+}
+
+function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
+  const values = state.values || {};
+  const fields = state.fields || [];
+  const warnings = state.warnings || [];
+  const sections = state.sections || {};
+  let lineItems = state.lineItems || [];
+  let planSheetParse = state.planSheetParse || [];
+
+  if (!normalized || !normalized.cover) {
+    return { lineItems, planSheetParse };
+  }
+
+  const cover = normalized.cover || {};
+  const pricing = normalized.pricing || {};
+  const scope = normalized.scope || {};
+  const packet = normalized.packet || {};
+
+  setNormalizedTextValue(values, fields, "projectName", cover.projectName, "project name");
+  setNormalizedTextValue(values, fields, "projectLocation", cover.projectLocation, "project location");
+  setNormalizedTextValue(values, fields, "projectAddress", cover.projectAddress, "project address");
+  setNormalizedTextValue(values, fields, "projectOwner", cover.owner, "owner");
+  setNormalizedTextValue(values, fields, "clientCompany", cover.clientName, "client/company");
+  setNormalizedTextValue(values, fields, "contactName", cover.contactName, "contact name");
+  setNormalizedTextValue(values, fields, "clientPhone", cover.phone, "client phone");
+  setNormalizedTextValue(values, fields, "clientEmail", cover.email, "client email");
+  setNormalizedTextValue(values, fields, "proposalStatus", cover.proposalStatus, "proposal status");
+  setNormalizedTextValue(values, fields, "bidPackageNumber", cover.bidPackageNumber, "bid package number");
+  setNormalizedTextValue(values, fields, "specSections", cover.specSections, "spec sections");
+  setNormalizedTextValue(values, fields, "drawingReferences", cover.drawingReferences, "drawing references");
+  setNormalizedTextValue(values, fields, "duration", cover.duration, "duration");
+  setNormalizedTextValue(values, fields, "scheduleRestrictions", cover.scheduleRestrictions, "schedule restrictions");
+  setNormalizedTextValue(values, fields, "specialRequirements", cover.specialRequirements, "special requirements");
+
+  if (pricing.lineItems?.length > 0) {
+    lineItems = pricing.lineItems.map((item, index) => ({
+      itemNumber: String(item.itemNumber || index + 1),
+      description: item.description || `Line Item ${index + 1}`,
+      quantity: toEditableNumber(item.quantity || 1) || 1,
+      unit: item.unit || "LS",
+      unitPrice: toEditableNumber(item.unitPrice || item.amount),
+      taxable: item.taxable === true,
+    }));
+    delete values.baseBidLineItem;
+    fields.push("line items");
+    recordSmartPasteSection(sections, "lineItems");
+  } else if (pricing.baseBid > 0 && !values.baseBidLineItem) {
+    values.baseBidLineItem = {
+      itemNumber: "1",
+      description: "Base Bid",
+      quantity: 1,
+      unit: "LS",
+      unitPrice: pricing.baseBid,
+      taxable: false,
+    };
+    fields.push("base bid");
+  }
+
+  const normalizedPricingSections = [
+    ...(pricing.allowances || []).map((row) => ({
+      id: createProposalId(),
+      type: "allowance",
+      label: row.label || row.description || "Allowance",
+      description: row.description || "",
+      amount: toEditableNumber(row.amount),
+      included: true,
+    })),
+    ...(pricing.alternates || []).map((row) => ({
+      id: createProposalId(),
+      type: "add_alternate",
+      label: row.label || row.description || "Alternate",
+      description: row.description || "",
+      amount: toEditableNumber(row.amount),
+      included: false,
+    })),
+  ].filter((row) => row.amount > 0);
+
+  if (normalizedPricingSections.length > 0 || pricing.acceptedAlternatesNone) {
+    values.pricingSections = normalizedPricingSections;
+    fields.push("alternates / allowances");
+  }
+
+  if (pricing.totalProposal > 0) {
+    values.totalIfAllAccepted = pricing.totalProposal;
+    values.pricingTotalRows = [
+      ...(values.pricingTotalRows || []),
+      { label: "Total Proposal", amount: pricing.totalProposal, kind: "total_presentation" },
+    ];
+    fields.push("total proposal");
+  }
+
+  const normalizedTables = buildNormalizedSmartPasteGcPacketTables(normalized);
+
+  if (countEnabledSmartPasteGcPacketTables(normalizedTables) > 0) {
+    values.gcPacketTables = mergeGcPacketTables(values.gcPacketTables, normalizedTables);
+    fields.push("structured GC packet tables");
+  }
+
+  if (scope.projectDescription) {
+    values.description = scope.projectDescription;
+    fields.push("project description");
+  }
+
+  if (scope.scopeSections?.length > 0) {
+    values.scopeSections = scope.scopeSections.map((section) => ({
+      title: section.title,
+      items: section.bullets || [],
+    }));
+    fields.push("scope");
+    recordSmartPasteSection(sections, "scope");
+  }
+
+  if (scope.includedScope?.length > 0 && !values.scopeItems) {
+    values.scopeItems = scope.includedScope;
+    fields.push("included scope");
+  }
+
+  if (scope.exclusions?.length > 0) {
+    values.exclusions = scope.exclusions;
+    fields.push("exclusions");
+  }
+
+  if (scope.assumptions?.length > 0) {
+    values.assumptions = scope.assumptions;
+    fields.push("assumptions");
+  }
+
+  if (Object.keys(scope.concreteSpecifications || {}).length > 0) {
+    values.concreteSpecs = scope.concreteSpecifications;
+    fields.push("concrete specs");
+  }
+
+  if (packet.planSheets?.length > 0) {
+    values.planSheets = packet.planSheets.map(mapNormalizedSmartPastePlanSheet);
+    planSheetParse = normalizeSmartPastePlanSheets(values.planSheets);
+    fields.push("plan sheets / takeoff pages");
+    recordSmartPasteSection(sections, "planSheets");
+  }
+
+  if (packet.rfiRegister?.length > 0) {
+    values.rfiRegister = packet.rfiRegister.map((row) => ({
+      ...createEmptyRfiRecord(),
+      rfiNumber: row.number || "",
+      dateAsked: row.asked || "",
+      dateAnswered: row.answered || "",
+      source: row.source || "",
+      question: row.question || "",
+      answerTreatment: row.treatment || "",
+      priceImpact: row.priceImpact || "",
+      scopeImpact: row.scopeImpact || "",
+      includedInPacket: true,
+    }));
+    fields.push("structured RFI / clarification register");
+    recordSmartPasteSection(sections, "rfiRegister");
+  }
+
+  if (packet.addendaAcknowledgement?.length > 0) {
+    values.addendaRegister = packet.addendaAcknowledgement.map((row) => ({
+      ...createEmptyAddendumRecord(),
+      addendumNumber: row.number || "",
+      addendumDate: row.date || "",
+      titleDescription: row.titleDescription || "",
+      acknowledged: row.acknowledged !== false,
+      notes: row.notes || "",
+      includedInPacket: row.includedInPacket !== false,
+    }));
+    fields.push("structured addenda");
+    recordSmartPasteSection(sections, "addendaRegister");
+  }
+
+  if (Object.keys(packet.scopeControlSummary || {}).length > 0) {
+    values.scopeControlSummary = {
+      ...(values.scopeControlSummary || {}),
+      ...packet.scopeControlSummary,
+    };
+    fields.push("scope control summary");
+    recordSmartPasteSection(sections, "scopeControlSummary");
+  }
+
+  mergeNormalizedLegalTerms(values, fields, packet.legalTerms || {});
+
+  if (packet.finalPacketPrintOrder?.length > 0) {
+    values.packetPrintOrder = packet.finalPacketPrintOrder.map((row) => `${row.order} - ${row.label} - ${row.status}`).join("\n");
+    values.packetBuilder = mapNormalizedPacketPrintOrder(packet.finalPacketPrintOrder);
+    fields.push("packet print order");
+    recordSmartPasteSection(sections, "packetPrintOrder");
+  }
+
+  (normalized.sectionsCaptured || []).forEach((sectionKey) => recordSmartPasteSection(sections, sectionKey));
+  warnings.push(...(normalized.warnings || []));
+  values.normalizedSmartPaste = normalized;
+  values.packetSectionsPrepared = getSmartPastePreparedPacketSectionCount(values);
+
+  return { lineItems, planSheetParse };
+}
+
+function setNormalizedTextValue(values, fields, key, value, label) {
+  if (!hasTextValue(value)) {
+    return;
+  }
+
+  values[key] = value;
+  fields.push(label);
+}
+
+function buildNormalizedSmartPasteGcPacketTables(normalized = {}) {
+  const pricing = normalized.pricing || {};
+  const packet = normalized.packet || {};
+  const tables = normalizeGcPacketTables();
+  const pricingRows = [];
+
+  (pricing.lineItems || []).forEach((item) => {
+    pricingRows.push(createPricingSummaryRow(item.description || "Base Bid", item.amount || item.unitPrice, ""));
+  });
+
+  (pricing.allowances || []).forEach((row) => pricingRows.push(createPricingSummaryRow(row.label || "Allowance", row.amount, row.description || "")));
+  (pricing.alternates || []).forEach((row) => pricingRows.push(createPricingSummaryRow(row.label || "Alternate", row.amount, row.description || "")));
+
+  if (pricing.totalRows?.length > 0) {
+    pricing.totalRows.forEach((row) => {
+      pricingRows.push(createPricingSummaryRow(row.label || "Total Proposal", row.amount, pricing.pricingSummaryNotes || ""));
+    });
+  } else if (pricing.totalProposal > 0) {
+    pricingRows.push(createPricingSummaryRow("Total Proposal", pricing.totalProposal, pricing.pricingSummaryNotes || ""));
+  }
+
+  if (pricingRows.length > 0 || hasTextValue(pricing.pricingSummaryNotes)) {
+    tables.pricingSummary = {
+      ...tables.pricingSummary,
+      enabled: true,
+      rows: pricingRows,
+      presentationNotes: pricing.pricingSummaryNotes || "",
+    };
+  }
+
+  if (packet.scheduleOfValues?.length > 0) {
+    tables.scheduleOfValues = {
+      ...tables.scheduleOfValues,
+      enabled: true,
+      rows: packet.scheduleOfValues.map((row) => ({
+        id: createProposalId(),
+        item: row.item || "",
+        description: row.description || "",
+        pricingBasis: row.pricingBasis || "",
+        amount: row.amount || "",
+      })),
+    };
+  }
+
+  if (packet.takeoffQuantities?.length > 0) {
+    tables.takeoffQuantities = {
+      ...tables.takeoffQuantities,
+      enabled: true,
+      rows: packet.takeoffQuantities.map((row) => ({
+        id: createProposalId(),
+        item: row.item || "",
+        quantity: row.quantity || "",
+        detailSize: row.detailSize || "",
+        netCy: row.netCy || "",
+        cyWithTenPercent: row.cyWithWaste || row.cyWithTenPercent || "",
+        priceStatus: row.priceStatus || "",
+      })),
+    };
+  }
+
+  const proposalNotes = packet.proposalNotes || {};
+
+  if ([proposalNotes.proposalBasis, proposalNotes.contractScopeControl, proposalNotes.acceptanceSummary, proposalNotes.notes].some(hasTextValue)) {
+    tables.proposalNotes = {
+      ...tables.proposalNotes,
+      enabled: true,
+      proposalBasis: proposalNotes.proposalBasis || proposalNotes.notes || "",
+      contractScopeControl: proposalNotes.contractScopeControl || "",
+      acceptanceSummary: proposalNotes.acceptanceSummary || "",
+    };
+  }
+
+  return tables;
+}
+
+function mapNormalizedSmartPastePlanSheet(sheet = {}) {
+  const title = sheet.title || sheet.sheetId || "Plan Takeoff Sheet";
+
+  return {
+    id: createProposalId(),
+    matchKey: createPlanSheetMatchKey(sheet.sheetId || title),
+    enabled: true,
+    pageType: "plan_takeoff_sheet",
+    title,
+    subtitle: sheet.subtitle || "",
+    imageSrc: "",
+    calculationTitle: sheet.calculationBoxTitle || "Calculation Notes",
+    calculationNotes: sheet.calculationNotes || [],
+    clarificationNotes: sheet.clarificationNotes || [],
+  };
+}
+
+function mergeNormalizedLegalTerms(values, fields, legalTerms = {}) {
+  const map = {
+    acceptanceLanguage: "acceptanceLanguage",
+    changeOrderLanguage: "changeOrderLanguage",
+    colorFinishVariationDisclaimer: "colorFinishVariationDisclaimer",
+    concreteCrackingDisclaimer: "concreteCrackingDisclaimer",
+    depositText: "depositText",
+    finalPayment: "finalPayment",
+    gcScopeControl: "gcScopeControl",
+    hiddenConditions: "hiddenConditions",
+    latePayment: "latePayment",
+    paymentTerms: "paymentTerms",
+    progressBilling: "progressBilling",
+    proposalExpiration: "proposalExpiration",
+    siteReadiness: "siteReadiness",
+    utilityResponsibility: "utilityResponsibility",
+    warrantyLimitation: "warrantyLimitation",
+    weatherDelay: "weatherDelay",
+  };
+
+  Object.entries(map).forEach(([sourceKey, valueKey]) => {
+    if (hasTextValue(legalTerms[sourceKey])) {
+      values[valueKey] = legalTerms[sourceKey];
+      fields.push("legal terms");
+    }
+  });
+}
+
+function mapNormalizedPacketPrintOrder(rows = []) {
+  const rowsBySectionId = new Map();
+
+  rows.forEach((row) => {
+    const sectionId = getPacketBuilderSectionId(row.label);
+
+    if (!sectionId) {
+      return;
+    }
+
+    rowsBySectionId.set(sectionId, row);
+  });
+
+  return PACKET_BUILDER_SECTIONS.map((section) => {
+    const row = rowsBySectionId.get(section.id);
+    const status = String(row?.status || "").toLowerCase();
+
+    return {
+      id: section.id,
+      title: section.title,
+      included: row ? !/(not included|exclude|excluded|hidden)/i.test(status) : section.defaultIncluded,
+      order: row?.order || section.defaultOrder,
+    };
+  }).sort((a, b) => a.order - b.order);
+}
+
+function getPacketBuilderSectionId(label = "") {
+  const normalizedLabel = normalizeSmartPasteFingerprint(label);
+
+  const directMatch = PACKET_BUILDER_SECTIONS.find((section) => normalizeSmartPasteFingerprint(section.title) === normalizedLabel);
+
+  if (directMatch) {
+    return directMatch.id;
+  }
+
+  if (normalizedLabel.includes("cover")) return "cover_summary";
+  if (normalizedLabel.includes("details") || normalizedLabel.includes("pricing summary")) return "details_pricing";
+  if (normalizedLabel.includes("scope control")) return "scope_control_summary";
+  if (normalizedLabel.includes("schedule of values") || normalizedLabel === "sov") return "schedule_of_values";
+  if (normalizedLabel.includes("takeoff")) return "takeoff_quantities";
+  if (normalizedLabel.includes("addenda")) return "addenda_acknowledgement";
+  if (normalizedLabel.includes("rfi") || normalizedLabel.includes("clarification")) return "rfi_clarification_register";
+  if (normalizedLabel.includes("legal") || normalizedLabel.includes("terms")) return "legal_terms";
+  if (normalizedLabel.includes("appendix")) return "appendix_overflow";
+  if (normalizedLabel.includes("plan sheet")) return "plan_sheet_pages";
+  if (normalizedLabel.includes("shade footing")) return "shade_footing_estimate";
+  if (normalizedLabel.includes("proposal notes") || normalizedLabel.includes("acceptance")) return "proposal_notes_acceptance_summary";
+
+  return "";
+}
+
+function countEnabledSmartPasteGcPacketTables(tables = {}) {
+  const normalizedTables = normalizeGcPacketTables(tables);
+
+  return Object.values(normalizedTables).filter((table) => table.enabled).length;
 }
 
 function mergeDirectSmartPasteCoverValues(notes, values, fields) {
@@ -906,14 +1376,35 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
   }
 
   const scheduleText = [values.schedule, values.scheduleAssumptions].filter(hasTextValue).join("\n");
+  const durationText = [values.duration, values.scheduleRestrictions].filter(hasTextValue).join("\n");
 
-  if (scheduleText) {
-    nextProposal.project.estimatedDuration = scheduleText;
+  if (scheduleText || durationText) {
+    const resolvedScheduleText = scheduleText || durationText;
+    nextProposal.project.estimatedDuration = resolvedScheduleText;
     nextProposal.project.proposedSchedule = {
       ...(nextProposal.project.proposedSchedule || {}),
-      display: scheduleText,
+      display: resolvedScheduleText,
     };
-    nextProposal.project.scheduleRestrictions = values.scheduleAssumptions || nextProposal.project.scheduleRestrictions || "";
+    nextProposal.project.scheduleRestrictions = values.scheduleRestrictions || values.scheduleAssumptions || nextProposal.project.scheduleRestrictions || "";
+  }
+
+  if (values.bidPackageNumber) {
+    nextProposal.gcPrime.bidPackageNumber = values.bidPackageNumber;
+  }
+
+  if (values.specSections) {
+    nextProposal.gcPrime.specSection = values.specSections;
+  }
+
+  if (values.drawingReferences) {
+    nextProposal.gcPrime.drawingReferences = values.drawingReferences;
+  }
+
+  if (values.specialRequirements) {
+    nextProposal.project.specialRequirements = values.specialRequirements;
+    nextProposal.gcPrime.gcPrimeNotes = dedupeSmartPasteTextBlock(
+      [nextProposal.gcPrime.gcPrimeNotes, "Special requirements: " + values.specialRequirements].filter(hasTextValue).join("\n"),
+    );
   }
 
   if (values.proposalType) {
@@ -927,7 +1418,9 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     nextProposal.packetMode = "full_gc_packet";
   }
 
-  if (values.scopeItems) {
+  if (values.scopeSections) {
+    nextProposal.scopeSections = values.scopeSections;
+  } else if (values.scopeItems) {
     nextProposal.scopeSections = [
       {
         title: "Scope of Work",
@@ -1068,6 +1561,13 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     nextProposal.concreteSpecs.notes = values.concreteSpecNotes;
   }
 
+  if (values.concreteSpecs) {
+    nextProposal.concreteSpecs = {
+      ...(nextProposal.concreteSpecs || {}),
+      ...values.concreteSpecs,
+    };
+  }
+
   if (values.subcontractorPacketDetected) {
     nextProposal.proposalType = "gc_prime";
     nextProposal.type = "gc_prime";
@@ -1106,6 +1606,13 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
 
   if (values.gcPacketTables) {
     nextProposal.gcPacketTables = mergeGcPacketTables(nextProposal.gcPacketTables, values.gcPacketTables);
+  }
+
+  if (values.packetBuilder) {
+    nextProposal.packetBuilder = values.packetBuilder;
+    nextProposal.proposalType = "gc_prime";
+    nextProposal.type = "gc_prime";
+    nextProposal.packetMode = "full_gc_packet";
   }
 
   if (values.subcontractorPacketDetected) {
@@ -2960,6 +3467,14 @@ function getSmartPastePreparedPacketSectionCount(values = {}) {
     preparedSections.add("planSheets");
   }
 
+  if (values.scopeSections?.length > 0 || values.scopeItems?.length > 0) {
+    preparedSections.add("scopeSections");
+  }
+
+  if (values.concreteSpecs && Object.values(values.concreteSpecs).some(hasTextValue)) {
+    preparedSections.add("concreteSpecs");
+  }
+
   if (values.scopeControlSummary && Object.values(values.scopeControlSummary).some(hasTextValue)) {
     preparedSections.add("scopeControlSummary");
   }
@@ -2988,6 +3503,10 @@ function getSmartPastePreparedPacketSectionCount(values = {}) {
 
   if (hasTextValue(values.proposalNotes) || hasTextValue(values.scheduleAssumptions)) {
     preparedSections.add("proposalNotes");
+  }
+
+  if (values.packetBuilder?.length > 0 || hasTextValue(values.packetPrintOrder)) {
+    preparedSections.add("packetPrintOrder");
   }
 
   return preparedSections.size;

@@ -4007,6 +4007,13 @@ export default function App() {
         defaultRowsRemoved: [],
         packetSectionsCreated: 0,
         pricingRowsReplaced: 0,
+        scheduleOfValuesCount: 0,
+        takeoffQuantityCount: 0,
+        rfiCount: 0,
+        scopeSectionCount: 0,
+        concreteSpecCount: 0,
+        packetPrintOrderCount: 0,
+        applyTargets: [],
         parsedCoverValues: {},
         activeDraftFieldsUpdated: [],
         pendingReview: false,
@@ -4033,7 +4040,7 @@ export default function App() {
       applyMode: replaceStarterContent ? "Replace starter content" : "Merge into existing proposal",
       existingFieldChanges,
       parsedCoverValues: summarizeSmartPasteCoverValues(coverValues),
-      activeDraftFieldsUpdated: getSmartPasteActiveDraftFields(nextProposal, coverValues),
+      activeDraftFieldsUpdated: [...new Set([...getSmartPasteActiveDraftFields(nextProposal, coverValues), ...(summary.applyTargets || [])])],
       detectedProjectInfo: {
         projectName: nextProposal.project?.name || "",
         clientCompany: nextProposal.client?.companyName || "",
@@ -7933,6 +7940,12 @@ function SmartPasteSummary({ result, onApply, onClear }) {
         <li>{result.pricingSectionCount || 0} alternates / allowances detected</li>
         <li>{result.planSheetCount || 0} plan / takeoff pages detected</li>
         <li>{result.gcPacketTableCount || 0} structured GC tables detected</li>
+        {result.scheduleOfValuesCount !== undefined ? <li>{result.scheduleOfValuesCount || 0} SOV rows detected</li> : null}
+        {result.takeoffQuantityCount !== undefined ? <li>{result.takeoffQuantityCount || 0} takeoff rows detected</li> : null}
+        {result.rfiCount !== undefined ? <li>{result.rfiCount || 0} RFI rows detected</li> : null}
+        {result.scopeSectionCount !== undefined ? <li>{result.scopeSectionCount || 0} scope sections detected</li> : null}
+        {result.concreteSpecCount !== undefined ? <li>{result.concreteSpecCount || 0} concrete spec fields detected</li> : null}
+        {result.packetPrintOrderCount !== undefined ? <li>{result.packetPrintOrderCount || 0} packet order rows detected</li> : null}
         <li>{(result.sectionsCaptured || []).length} sections captured</li>
         <li>{result.defaultsCleared || 0} default cleanup actions applied</li>
         <li>{result.pricingRowsReplaced || 0} pricing summary rows replaced</li>
