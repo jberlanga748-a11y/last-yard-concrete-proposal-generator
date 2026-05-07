@@ -2860,10 +2860,8 @@ h4 {
 }
 
 .print-route-view .first-page .logo-seal img {
-  box-sizing: border-box;
-  padding: 8px;
-  object-fit: contain;
-  transform: scale(1.08);
+  object-fit: cover;
+  transform: scale(1.14);
 }
 
 .print-route-view .first-page .page-one-feature-block {
@@ -4254,7 +4252,7 @@ h4 {
   display: block;
   object-fit: cover;
   object-position: center;
-  transform: scale(1.55);
+  transform: scale(1.14);
   transform-origin: center;
 }
 
@@ -4265,7 +4263,7 @@ h4 {
 }
 
 .logo-seal-small img {
-  transform: scale(1.62);
+  transform: scale(1.14);
 }
 
 .logo-fallback {
@@ -6269,10 +6267,8 @@ h4 {
 
   .cover-header .logo-seal img,
   .compact-footer .logo-seal-small img {
-    box-sizing: border-box;
-    padding: 7px;
-    object-fit: contain;
-    transform: scale(1.08);
+    object-fit: cover;
+    transform: scale(1.14);
   }
 
   .logo-seal-small {
@@ -6631,8 +6627,8 @@ h4 {
   }
 
   .compact-footer .logo-seal-small {
-    width: 24px;
-    height: 24px;
+    width: 34px;
+    height: 34px;
     margin-left: auto;
   }
 

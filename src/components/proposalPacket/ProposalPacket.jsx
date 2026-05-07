@@ -9,7 +9,9 @@ import {
   hasPrintableText,
 } from "../../utils/proposalPacket/printContentCleanup.js";
 
-const logoSrc = "/assets/last-yard-logo.jpg";
+const logoSrc = "/assets/last-yard/last-yard-concrete-logo.png";
+const legacyLogoSrc = "/assets/last-yard-logo.jpg";
+const fallbackLogoSources = ["/last-yard-concrete-logo.png", legacyLogoSrc];
 const PacketRenderContext = createContext(null);
 
 const defaultProjectPhotos = [
@@ -662,7 +664,21 @@ function ProposalPage({ children, className = "" }) {
 }
 
 function LogoSeal({ companyName, logoPath = logoSrc, small = false }) {
+  const isCustomLogo = logoPath && ![logoSrc, legacyLogoSrc, ...fallbackLogoSources].includes(logoPath);
+  const logoCandidates = isCustomLogo ? [logoPath, logoSrc, ...fallbackLogoSources] : [logoSrc, ...fallbackLogoSources];
+  const uniqueLogoCandidates = [...new Set(logoCandidates)];
+  const [logoIndex, setLogoIndex] = useState(0);
   const [logoFailed, setLogoFailed] = useState(false);
+  const currentLogoSrc = uniqueLogoCandidates[logoIndex] || logoSrc;
+
+  function handleLogoError() {
+    if (logoIndex < uniqueLogoCandidates.length - 1) {
+      setLogoIndex((index) => index + 1);
+      return;
+    }
+
+    setLogoFailed(true);
+  }
 
   return (
     <div className={`logo-seal ${small ? "logo-seal-small" : ""}`}>
@@ -672,7 +688,7 @@ function LogoSeal({ companyName, logoPath = logoSrc, small = false }) {
           <strong>Concrete</strong>
         </div>
       ) : (
-        <img src={logoPath || logoSrc} alt={`${companyName} logo`} onError={() => setLogoFailed(true)} />
+        <img src={currentLogoSrc} alt={`${companyName} logo`} onError={handleLogoError} />
       )}
     </div>
   );
