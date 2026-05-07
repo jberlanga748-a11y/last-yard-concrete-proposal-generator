@@ -6,7 +6,7 @@ import {
   isLikelySmartPasteStreetAddress,
   mergeSmartPasteCoverValues,
 } from "./smartPasteCoverFields.js";
-import { normalizeSmartPasteNotes } from "./smartPasteNormalizer.js";
+import { isSmartPasteJsonImportNotes, normalizeSmartPasteNotes } from "./smartPasteNormalizer.js";
 
 const PLAN_SHEET_PAGE_TYPES = ["plan_takeoff_sheet", "detail_notes", "shade_footing_estimate", "general_backup"];
 
@@ -154,6 +154,15 @@ const gcPacketRowFields = {
 
 export function parseSmartPasteNotes(notes, currentProposal = {}) {
   const parsedNotes = parseProjectNotes(notes);
+
+  if (parsedNotes.jsonImportInvalid) {
+    return {
+      proposal: cloneObject(currentProposal),
+      parsedNotes,
+      summary: createSmartPasteSummary(parsedNotes),
+    };
+  }
+
   const proposal = applyParsedNotesToProposal(currentProposal, parsedNotes);
   const lineItemCount = parsedNotes.lineItems.length + (parsedNotes.values.baseBidLineItem ? 1 : 0);
   parsedNotes.warnings = [
@@ -163,28 +172,37 @@ export function parseSmartPasteNotes(notes, currentProposal = {}) {
   return {
     proposal,
     parsedNotes,
-    summary: {
-      fields: parsedNotes.fields,
-      lineItemCount,
-      pricingSectionCount: parsedNotes.pricingSectionCount || 0,
-      planSheetCount: parsedNotes.planSheetCount || 0,
-      gcPacketTableCount: parsedNotes.gcPacketTableCount || 0,
-      sectionsCaptured: parsedNotes.sectionsCaptured || [],
-      cleanupActions: parsedNotes.cleanupActions || [],
-      coverFieldsUpdated: parsedNotes.coverFieldsUpdated || [],
-      defaultsCleared: parsedNotes.defaultsCleared || 0,
-      defaultRowsRemoved: parsedNotes.defaultRowsRemoved || [],
-      packetSectionsCreated: parsedNotes.packetSectionsCreated || 0,
-      pricingRowsReplaced: parsedNotes.pricingRowsReplaced || 0,
-      scheduleOfValuesCount: parsedNotes.values?.gcPacketTables?.scheduleOfValues?.rows?.length || 0,
-      takeoffQuantityCount: parsedNotes.values?.gcPacketTables?.takeoffQuantities?.rows?.length || 0,
-      rfiCount: parsedNotes.values?.rfiRegister?.length || 0,
-      scopeSectionCount: parsedNotes.values?.scopeSections?.length || 0,
-      concreteSpecCount: parsedNotes.values?.concreteSpecs ? Object.values(parsedNotes.values.concreteSpecs).filter(hasTextValue).length : 0,
-      packetPrintOrderCount: parsedNotes.values?.packetBuilder?.length || 0,
-      applyTargets: getSmartPasteApplyTargets(parsedNotes.values || {}),
-      warnings: parsedNotes.warnings || [],
-    },
+    summary: createSmartPasteSummary(parsedNotes, lineItemCount),
+  };
+}
+
+function createSmartPasteSummary(parsedNotes = {}, explicitLineItemCount) {
+  const values = parsedNotes.values || {};
+  const lineItemCount = explicitLineItemCount ?? (parsedNotes.lineItems?.length || 0) + (values.baseBidLineItem ? 1 : 0);
+
+  return {
+    fields: parsedNotes.fields || [],
+    lineItemCount,
+    pricingSectionCount: parsedNotes.pricingSectionCount || 0,
+    planSheetCount: parsedNotes.planSheetCount || 0,
+    gcPacketTableCount: parsedNotes.gcPacketTableCount || 0,
+    sectionsCaptured: parsedNotes.sectionsCaptured || [],
+    cleanupActions: parsedNotes.cleanupActions || [],
+    coverFieldsUpdated: parsedNotes.coverFieldsUpdated || [],
+    defaultsCleared: parsedNotes.defaultsCleared || 0,
+    defaultRowsRemoved: parsedNotes.defaultRowsRemoved || [],
+    packetSectionsCreated: parsedNotes.packetSectionsCreated || values.packetSectionsPrepared || 0,
+    pricingRowsReplaced: parsedNotes.pricingRowsReplaced || 0,
+    scheduleOfValuesCount: values.gcPacketTables?.scheduleOfValues?.rows?.length || 0,
+    takeoffQuantityCount: values.gcPacketTables?.takeoffQuantities?.rows?.length || 0,
+    rfiCount: values.rfiRegister?.length || 0,
+    scopeSectionCount: values.scopeSections?.length || 0,
+    concreteSpecCount: values.concreteSpecs ? Object.values(values.concreteSpecs).filter(hasTextValue).length : 0,
+    packetPrintOrderCount: values.packetBuilder?.length || 0,
+    applyTargets: getSmartPasteApplyTargets(values),
+    jsonImportMode: parsedNotes.jsonImportMode || false,
+    invalidJsonImport: parsedNotes.jsonImportInvalid || false,
+    warnings: parsedNotes.warnings || [],
   };
 }
 
@@ -654,8 +672,13 @@ function hasRfiRowData(row = {}) {
   ].some((field) => hasTextValue(row[field]));
 }
 function parseProjectNotes(notes) {
-  const sections = collectSmartPasteSections(notes);
   const normalizedSmartPaste = normalizeSmartPasteNotes(notes);
+
+  if (isSmartPasteJsonImportNotes(notes)) {
+    return parseNormalizedSmartPasteImport(normalizedSmartPaste);
+  }
+
+  const sections = collectSmartPasteSections(notes);
   const values = {};
   const fields = [];
   const warnings = [];
@@ -882,6 +905,49 @@ function parseProjectNotes(notes) {
     sectionsCaptured: getCapturedSmartPasteLabels(sections),
     values,
     warnings: [...new Set(warnings)],
+    normalizedSmartPaste,
+  };
+}
+
+function parseNormalizedSmartPasteImport(normalizedSmartPaste = {}) {
+  if (normalizedSmartPaste.invalid) {
+    return {
+      fields: [],
+      lineItems: [],
+      pricingSectionCount: 0,
+      planSheetCount: 0,
+      gcPacketTableCount: 0,
+      sectionsCaptured: [],
+      values: {},
+      warnings: normalizedSmartPaste.warnings || ["Smart Paste JSON import is invalid."],
+      jsonImportMode: true,
+      jsonImportInvalid: true,
+      normalizedSmartPaste,
+    };
+  }
+
+  const state = {
+    fields: [],
+    lineItems: [],
+    planSheetParse: [],
+    sections: {},
+    values: {},
+    warnings: [],
+  };
+  const normalizedMerge = mergeNormalizedSmartPasteIntoParseState(normalizedSmartPaste, state);
+  const values = state.values;
+  values.packetSectionsPrepared = getSmartPastePreparedPacketSectionCount(values);
+
+  return {
+    fields: [...new Set(state.fields)],
+    lineItems: normalizedMerge.lineItems,
+    pricingSectionCount: values.pricingSections?.length || 0,
+    planSheetCount: normalizedMerge.planSheetParse.length,
+    gcPacketTableCount: countEnabledSmartPasteGcPacketTables(values.gcPacketTables),
+    sectionsCaptured: getCapturedSmartPasteLabels(state.sections),
+    values,
+    warnings: [...new Set(state.warnings)],
+    jsonImportMode: true,
     normalizedSmartPaste,
   };
 }
@@ -1463,6 +1529,7 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     ["utilityResponsibility", "utilityResponsibility"],
     ["concreteCrackingDisclaimer", "concreteCrackingDisclaimer"],
     ["colorFinishVariationDisclaimer", "colorFinishVariationDisclaimer"],
+    ["acceptanceLanguage", "acceptanceLanguage"],
   ];
 
   termFieldMap.forEach(([valueKey, termKey]) => {

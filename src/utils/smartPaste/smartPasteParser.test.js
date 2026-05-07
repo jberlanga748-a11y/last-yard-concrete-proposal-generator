@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { calculateProposalTotals, SEED_PROPOSAL, validateProposalCompleteness } from "../../proposalData.js";
+import { SMART_PASTE_JSON_MARKER, isSmartPasteJsonImportNotes } from "./smartPasteNormalizer.js";
 import { parseSmartPasteNotes } from "./smartPasteParser.js";
 
 function proposalFixture(overrides = {}) {
@@ -811,6 +812,171 @@ FINAL GC PACKET PRINT ORDER:
   assert.doesNotMatch(JSON.stringify(result.proposal), /New scope item|UPLOAD PLAN IMAGE/);
   assert.ok(result.summary.warnings.length <= 3);
   assert.doesNotMatch(warningText(result), /Row 1|Item:|Quantity:|Unit Price|Amount:|Pricing Basis/);
+});
+
+test("detects and imports strict Smart Paste JSON without rough-note parsing", () => {
+  const jsonNotes = `${SMART_PASTE_JSON_MARKER}
+${JSON.stringify(
+  {
+    project: {
+      name: "Costco JSON Import",
+      location: "3130 Killdeer Ave SE, Albany, OR",
+      owner: "Costco Wholesale",
+      clientGc: "Faison Construction",
+      contactName: "Maize",
+      phone: "503-555-1212",
+      email: "maize@faisonconstruction.com",
+      description: "JSON freezer slab package.",
+    },
+    pricing: {
+      lineItems: [
+        {
+          itemNumber: 1,
+          description: "Night Work / Phased Freezer Slab Package",
+          quantity: 1,
+          unit: "LS",
+          unitPrice: 350000,
+          amount: 350000,
+          taxable: false,
+        },
+      ],
+    },
+    scheduleOfValues: [
+      {
+        item: "1. Mobilization",
+        description: "Mobilization and setup.",
+        pricingBasis: "10%",
+        amount: "$35,000",
+      },
+    ],
+    scopeSections: [
+      {
+        title: "Interior freezer slab night work",
+        bullets: ["Sawcut and remove freezer slab.", "Place new freezer slab."],
+      },
+      {
+        title: "New scope item",
+        bullets: ["UPLOAD PLAN IMAGE"],
+      },
+    ],
+    concreteSpecifications: {
+      thickness: "6 in freezer slabs",
+      psi: "4,000 PSI",
+      finishType: "Trowel finish",
+    },
+    takeoffQuantities: [
+      {
+        item: "Freezer 1 slab demo",
+        quantity: "1,440.86 SF",
+        detailSize: "Existing slab demo",
+        netCy: "26.68 CY",
+        cyWithWaste: "29.35 CY",
+        priceStatus: "Base Bid",
+      },
+    ],
+    planSheets: [
+      {
+        sheetId: "A101",
+        title: "A101 Freezer Area 1",
+        subtitle: "Existing slab demo",
+        calculationBoxTitle: "A101 Takeoff Basis",
+        calculationNotes: ["Area 1 quantity backup."],
+        clarificationNotes: ["Confirm sawcut limits."],
+      },
+      {
+        sheetId: "BAD",
+        title: "UPLOAD PLAN IMAGE",
+      },
+    ],
+    rfiRegister: [
+      {
+        number: "RFI-01",
+        asked: "May 6, 2026",
+        answered: "Pending",
+        source: "A101",
+        question: "Confirm freezer slab limits.",
+        treatment: "Proposal carries listed quantity.",
+        priceImpact: "Added work excluded.",
+        scopeImpact: "Scope may change.",
+      },
+    ],
+    addendaAcknowledgement: [
+      {
+        number: "Addendum 01",
+        date: "May 7, 2026",
+        titleDescription: "Bid clarifications",
+      },
+    ],
+    scopeControlSummary: {
+      includedScope: "Interior freezer slab package only.",
+      exclusions: "Refrigeration and electrical by others.",
+      clarifications: "Night work assumed.",
+    },
+    legalTerms: {
+      paymentTerms: "Progress billing by approved pay application.",
+      proposalExpiration: "Pricing valid for 30 days.",
+      changeOrderLanguage: "Written approval required before added work.",
+      warrantyLimitation: "Warranty applies to included workmanship only.",
+    },
+    finalPacketPrintOrder: [
+      { order: 10, label: "Cover / Proposal Summary", status: "Included" },
+      { order: 20, label: "Pricing Summary", status: "Included" },
+      { order: 30, label: "Schedule of Values", status: "Included" },
+      { order: 40, label: "Takeoff Quantities", status: "Included" },
+      { order: 50, label: "RFI / Clarification Register", status: "Included" },
+      { order: 60, label: "Legal / Terms", status: "Included" },
+    ],
+    proposalNotes: ["Review JSON import before sending."],
+  },
+  null,
+  2,
+)}`;
+  const result = parseSmartPasteNotes(jsonNotes, blankProposalFixture());
+  const totals = calculateProposalTotals(result.proposal);
+
+  assert.equal(isSmartPasteJsonImportNotes(jsonNotes), true);
+  assert.equal(result.summary.jsonImportMode, true);
+  assert.equal(result.summary.invalidJsonImport, false);
+  assert.equal(result.proposal.project.name, "Costco JSON Import");
+  assert.equal(result.proposal.project.location, "3130 Killdeer Ave SE, Albany, OR");
+  assert.equal(result.proposal.client.companyName, "Faison Construction");
+  assert.equal(result.proposal.client.contactName, "Maize");
+  assert.equal(result.proposal.lineItems.length, 1);
+  assert.equal(result.proposal.lineItems[0].description, "Night Work / Phased Freezer Slab Package");
+  assert.equal(totals.baseBid, 350000);
+  assert.equal(totals.total, 350000);
+  assert.equal(result.proposal.pricingSections.length, 0);
+  assert.equal(result.proposal.gcPacketTables.scheduleOfValues.rows.length, 1);
+  assert.equal(result.proposal.gcPacketTables.takeoffQuantities.rows.length, 1);
+  assert.equal(result.proposal.gcPrime.rfiRegister.length, 1);
+  assert.equal(result.proposal.planSheets.filter((sheet) => sheet.enabled).length, 1);
+  assert.match(result.proposal.terms.payment, /Progress billing/);
+  assert.equal(result.summary.lineItemCount, 1);
+  assert.equal(result.summary.scheduleOfValuesCount, 1);
+  assert.equal(result.summary.takeoffQuantityCount, 1);
+  assert.equal(result.summary.rfiCount, 1);
+  assert.ok(result.summary.packetSectionsCreated > 5);
+  assert.ok(result.summary.applyTargets.includes("Packet Print Order"));
+  assert.doesNotMatch(JSON.stringify(result.proposal), /New scope item|UPLOAD PLAN IMAGE/);
+});
+
+test("invalid Smart Paste JSON shows a warning and does not fall back to rough-note parsing", () => {
+  const result = parseSmartPasteNotes(
+    `${SMART_PASTE_JSON_MARKER}
+Project: Rough Parser Should Not Apply
+Location: Albany, Oregon
+Base Bid: $350,000`,
+    blankProposalFixture(),
+  );
+
+  assert.equal(result.summary.jsonImportMode, true);
+  assert.equal(result.summary.invalidJsonImport, true);
+  assert.match(warningText(result), /invalid JSON/i);
+  assert.equal(result.proposal.project.name, "");
+  assert.equal(result.proposal.project.location, "");
+  assert.equal(result.proposal.lineItems.length, 0);
+  assert.equal(result.summary.lineItemCount, 0);
+  assert.equal(result.summary.sectionsCaptured.length, 0);
 });
 
 test("treats Total Proposal and Grand Total lines as summary totals, not alternates", () => {

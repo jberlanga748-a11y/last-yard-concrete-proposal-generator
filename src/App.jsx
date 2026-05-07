@@ -3985,6 +3985,16 @@ export default function App() {
     const smartPasteBaseProposal = cleanSmartPasteBaseProposal(proposalDraft, { replaceStarterContent });
     const { proposal: parsedProposal, parsedNotes, summary } = parseSmartPasteNotes(smartPasteNotes, smartPasteBaseProposal);
 
+    if (summary.invalidJsonImport) {
+      setSmartPasteResult({
+        ...summary,
+        pendingReview: false,
+      });
+      setPendingSmartPasteProposal(null);
+      setSaveMessage("Smart Paste JSON import could not be parsed.");
+      return;
+    }
+
     if (
       summary.fields.length === 0 &&
       summary.lineItemCount === 0 &&

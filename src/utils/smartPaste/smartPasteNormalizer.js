@@ -1,3 +1,5 @@
+export const SMART_PASTE_JSON_MARKER = "LAST_YARD_SMART_PASTE_JSON_V1";
+
 const EMPTY_NORMALIZED_SMART_PASTE = {
   cover: {
     projectName: "",
@@ -173,8 +175,17 @@ export function createEmptyNormalizedSmartPaste() {
   return cloneObject(EMPTY_NORMALIZED_SMART_PASTE);
 }
 
+export function isSmartPasteJsonImportNotes(notes = "") {
+  return String(notes || "").trimStart().startsWith(SMART_PASTE_JSON_MARKER);
+}
+
 export function normalizeSmartPasteNotes(notes = "") {
+  if (isSmartPasteJsonImportNotes(notes)) {
+    return normalizeSmartPasteJsonImport(notes);
+  }
+
   const normalized = createEmptyNormalizedSmartPaste();
+  normalized.mode = "rough_notes";
   const lines = splitSmartPasteLines(notes);
 
   parseCover(lines, normalized);
@@ -193,6 +204,452 @@ export function normalizeSmartPasteNotes(notes = "") {
   finalizeNormalizedSmartPaste(normalized);
 
   return normalized;
+}
+
+function normalizeSmartPasteJsonImport(notes = "") {
+  const normalized = createEmptyNormalizedSmartPaste();
+  normalized.mode = "json_import";
+  normalized.jsonImport = true;
+  normalized.confidence = 1;
+
+  const rawJson = String(notes || "").trimStart().slice(SMART_PASTE_JSON_MARKER.length).trim();
+
+  if (!rawJson) {
+    return markInvalidJsonImport(normalized, "Smart Paste JSON import marker was found, but no JSON was provided.");
+  }
+
+  let source;
+
+  try {
+    source = JSON.parse(rawJson);
+  } catch (error) {
+    return markInvalidJsonImport(normalized, `Smart Paste JSON import is invalid JSON: ${error.message}`);
+  }
+
+  if (!source || Array.isArray(source) || typeof source !== "object") {
+    return markInvalidJsonImport(normalized, "Smart Paste JSON import must be a JSON object.");
+  }
+
+  const project = getObject(source.project || source.cover, "project", normalized);
+  const pricing = getObject(source.pricing, "pricing", normalized);
+  const packet = getObject(source.packet, "packet", normalized);
+  const scope = getObject(source.scope, "scope", normalized);
+
+  normalizeJsonCover(project, source.cover, normalized);
+  normalizeJsonPricing(pricing, source, normalized);
+  normalizeJsonScope(scope, source, normalized);
+  normalizeJsonPacket(packet, source, normalized);
+  finalizeNormalizedSmartPaste(normalized);
+
+  return normalized;
+}
+
+function markInvalidJsonImport(normalized, warning) {
+  normalized.invalid = true;
+  normalized.warnings = [warning];
+  normalized.confidence = 0;
+  return normalized;
+}
+
+function normalizeJsonCover(project = {}, coverSource = {}, normalized) {
+  const cover = normalized.cover;
+  const source = { ...(coverSource || {}), ...(project || {}) };
+
+  setCoverValue(cover, "projectName", firstJsonText(source.name, source.projectName, source.project), "project name");
+  setCoverValue(cover, "projectLocation", firstJsonText(source.location, source.projectLocation), "project location");
+  setCoverValue(cover, "projectAddress", firstJsonText(source.address, source.projectAddress), "project address");
+  setCoverValue(cover, "owner", firstJsonText(source.owner, source.ownerName), "owner");
+  setCoverValue(cover, "clientName", firstJsonText(source.clientGc, source.clientName, source.client, source.gc, source.customerGc, source.preparedFor), "client");
+  setCoverValue(cover, "contactName", firstJsonText(source.contactName, source.contact, source.attention, source.attn), "contact");
+  setCoverValue(cover, "phone", firstJsonText(source.phone, source.contactPhone), "phone");
+  setCoverValue(cover, "email", firstJsonText(source.email, source.contactEmail), "email");
+  setCoverValue(cover, "proposalStatus", firstJsonText(source.proposalStatus, source.status), "proposal status");
+  setCoverValue(cover, "bidPackageNumber", firstJsonText(source.bidPackageNumber), "bid package number");
+  setCoverValue(cover, "specSections", firstJsonText(source.specSections, source.specSection), "spec section");
+  setCoverValue(cover, "drawingReferences", firstJsonText(source.drawingReferences), "drawing references");
+  setCoverValue(cover, "duration", firstJsonText(source.duration, source.estimatedDuration), "estimated duration");
+  setCoverValue(cover, "scheduleRestrictions", firstJsonText(source.scheduleRestrictions), "schedule restrictions");
+  setCoverValue(cover, "specialRequirements", firstJsonText(source.specialRequirements), "special requirements");
+
+  if (Object.values(cover).some(hasText)) {
+    capture(normalized, "cover");
+  }
+
+  if (hasText(source.description)) {
+    normalized.scope.projectDescription = cleanJsonText(source.description);
+    capture(normalized, "projectDescription");
+  }
+}
+
+function normalizeJsonPricing(pricing = {}, root = {}, normalized) {
+  const lineItems = getArray(pricing.lineItems ?? root.lineItems, "pricing.lineItems", normalized);
+  normalized.pricing.lineItems = lineItems.map(normalizeJsonLineItem).filter(Boolean);
+  normalized.pricing.allowances = getArray(pricing.allowances, "pricing.allowances", normalized).map(normalizeJsonPricingBucket).filter(Boolean);
+  normalized.pricing.alternates = getArray(pricing.alternates, "pricing.alternates", normalized).map(normalizeJsonPricingBucket).filter(Boolean);
+  normalized.pricing.baseBid = toNumber(pricing.baseBid);
+  normalized.pricing.totalProposal = toNumber(pricing.totalProposal);
+  normalized.pricing.pricingSummaryNotes = cleanJsonText(pricing.pricingSummaryNotes);
+
+  const lineItemTotal = sumLineItemAmounts(normalized.pricing.lineItems);
+
+  if (normalized.pricing.baseBid <= 0 && lineItemTotal > 0) {
+    normalized.pricing.baseBid = lineItemTotal;
+  }
+
+  if (normalized.pricing.totalProposal <= 0 && lineItemTotal > 0 && normalized.pricing.alternates.length === 0) {
+    normalized.pricing.totalProposal = lineItemTotal;
+  }
+
+  if (normalized.pricing.totalProposal > 0) {
+    normalized.pricing.totalRows.push({
+      label: "Total Proposal",
+      amount: normalized.pricing.totalProposal,
+    });
+  }
+
+  if (normalized.pricing.lineItems.length > 0 || normalized.pricing.baseBid > 0 || normalized.pricing.totalProposal > 0) {
+    capture(normalized, "pricing");
+  }
+}
+
+function normalizeJsonLineItem(item = {}) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const description = cleanJsonText(item.description || item.name || item.label);
+
+  if (isPlaceholderText(description)) {
+    return null;
+  }
+
+  const quantity = toNumber(item.quantity) || 1;
+  const unitPrice = toNumber(item.unitPrice ?? item.price);
+  const amount = toNumber(item.amount) || quantity * unitPrice;
+
+  if (!description || amount <= 0) {
+    return null;
+  }
+
+  return {
+    itemNumber: cleanJsonText(item.itemNumber || item.item || item.itemNumberText),
+    description,
+    quantity,
+    unit: cleanJsonText(item.unit || "LS").toUpperCase(),
+    unitPrice: unitPrice || amount / quantity,
+    amount,
+    taxable: item.taxable === true,
+  };
+}
+
+function normalizeJsonPricingBucket(row = {}) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const label = cleanJsonText(row.label || row.name || row.description);
+  const description = cleanJsonText(row.description || row.notes);
+  const amount = toNumber(row.amount);
+
+  if (!label || isPlaceholderText(label) || amount <= 0) {
+    return null;
+  }
+
+  return { label, description, amount, included: row.included === true };
+}
+
+function normalizeJsonScope(scope = {}, root = {}, normalized) {
+  const scopeSections = getArray(scope.scopeSections ?? root.scopeSections, "scopeSections", normalized);
+  normalized.scope.scopeSections = scopeSections.map(normalizeJsonScopeSection).filter(Boolean);
+  normalized.scope.projectDescription = cleanJsonText(scope.projectDescription || root.project?.description || normalized.scope.projectDescription);
+  normalized.scope.includedScope = normalizeJsonTextList(scope.includedScope ?? root.includedScope);
+  normalized.scope.exclusions = normalizeJsonTextList(scope.exclusions ?? root.exclusions);
+  normalized.scope.assumptions = normalizeJsonTextList(scope.assumptions ?? root.assumptions);
+  normalized.scope.clarifications = normalizeJsonTextList(scope.clarifications ?? root.clarifications);
+  normalized.scope.changeOrderTriggers = normalizeJsonTextList(scope.changeOrderTriggers ?? root.changeOrderTriggers);
+  normalized.scope.concreteSpecifications = getObject(scope.concreteSpecifications ?? root.concreteSpecifications, "concreteSpecifications", normalized);
+  normalized.scope.gcNotes = cleanJsonText(scope.gcNotes);
+
+  if (
+    normalized.scope.scopeSections.length > 0 ||
+    normalized.scope.includedScope.length > 0 ||
+    normalized.scope.exclusions.length > 0 ||
+    normalized.scope.assumptions.length > 0 ||
+    Object.values(normalized.scope.concreteSpecifications || {}).some(hasText)
+  ) {
+    capture(normalized, "scope");
+  }
+}
+
+function normalizeJsonScopeSection(section = {}) {
+  if (typeof section === "string") {
+    const text = cleanJsonText(section);
+    return text && !isPlaceholderText(text) ? { title: "Scope of Work", bullets: [text] } : null;
+  }
+
+  if (!section || typeof section !== "object") {
+    return null;
+  }
+
+  const title = cleanJsonText(section.title || section.name || "Scope of Work");
+  const bullets = normalizeJsonTextList(section.bullets ?? section.items ?? section.scope);
+
+  if ((!title || isPlaceholderText(title)) && bullets.length === 0) {
+    return null;
+  }
+
+  return {
+    title: isPlaceholderText(title) ? "Scope of Work" : title,
+    bullets,
+  };
+}
+
+function normalizeJsonPacket(packet = {}, root = {}, normalized) {
+  normalized.packet.scheduleOfValues = getArray(packet.scheduleOfValues ?? root.scheduleOfValues, "scheduleOfValues", normalized)
+    .map(normalizeJsonSovRow)
+    .filter(Boolean);
+  normalized.packet.takeoffQuantities = getArray(packet.takeoffQuantities ?? root.takeoffQuantities, "takeoffQuantities", normalized)
+    .map(normalizeJsonTakeoffRow)
+    .filter(Boolean);
+  normalized.packet.planSheets = getArray(packet.planSheets ?? root.planSheets, "planSheets", normalized).map(normalizeJsonPlanSheet).filter(Boolean);
+  normalized.packet.rfiRegister = getArray(packet.rfiRegister ?? root.rfiRegister, "rfiRegister", normalized).map(normalizeJsonRfiRow).filter(Boolean);
+  normalized.packet.addendaAcknowledgement = normalizeJsonAddenda(packet.addendaAcknowledgement ?? root.addendaAcknowledgement);
+  normalized.packet.scopeControlSummary = getObject(packet.scopeControlSummary ?? root.scopeControlSummary, "scopeControlSummary", normalized);
+  normalized.packet.legalTerms = getObject(packet.legalTerms ?? root.legalTerms, "legalTerms", normalized);
+  normalized.packet.finalPacketPrintOrder = getArray(packet.finalPacketPrintOrder ?? root.finalPacketPrintOrder, "finalPacketPrintOrder", normalized)
+    .map(normalizeJsonPacketOrderRow)
+    .filter(Boolean);
+  normalized.packet.proposalNotes = normalizeJsonProposalNotes(packet.proposalNotes ?? root.proposalNotes);
+
+  if (
+    normalized.packet.scheduleOfValues.length > 0 ||
+    normalized.packet.takeoffQuantities.length > 0 ||
+    normalized.packet.planSheets.length > 0 ||
+    normalized.packet.rfiRegister.length > 0 ||
+    normalized.packet.addendaAcknowledgement.length > 0 ||
+    Object.values(normalized.packet.scopeControlSummary || {}).some(hasText) ||
+    Object.values(normalized.packet.legalTerms || {}).some(hasText) ||
+    normalized.packet.finalPacketPrintOrder.length > 0 ||
+    Object.values(normalized.packet.proposalNotes || {}).some(hasText)
+  ) {
+    capture(normalized, "packet");
+  }
+}
+
+function normalizeJsonSovRow(row = {}) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const item = cleanJsonText(row.item || row.name);
+  const description = cleanJsonText(row.description);
+  const pricingBasis = cleanJsonText(row.pricingBasis || row.basis);
+  const amount = cleanJsonText(row.amount);
+
+  if ([item, description, pricingBasis, amount].every((value) => !value || isPlaceholderText(value))) {
+    return null;
+  }
+
+  return { item, description, pricingBasis, amount };
+}
+
+function normalizeJsonTakeoffRow(row = {}) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const normalized = {
+    item: cleanJsonText(row.item || row.name),
+    quantity: cleanJsonText(row.quantity || row.qty),
+    detailSize: cleanJsonText(row.detailSize || row.detail || row.size),
+    netCy: cleanJsonText(row.netCy),
+    cyWithWaste: cleanJsonText(row.cyWithWaste || row.cyWithTenPercent),
+    priceStatus: cleanJsonText(row.priceStatus || row.status),
+  };
+
+  return Object.values(normalized).some((value) => value && !isPlaceholderText(value)) ? normalized : null;
+}
+
+function normalizeJsonPlanSheet(sheet = {}) {
+  if (!sheet || typeof sheet !== "object") {
+    return null;
+  }
+
+  const title = cleanJsonText(sheet.title || sheet.sheetTitle || sheet.sheetId);
+
+  if (!title || isPlaceholderText(title)) {
+    return null;
+  }
+
+  return {
+    sheetId: cleanJsonText(sheet.sheetId || sheet.id || title),
+    title,
+    subtitle: cleanJsonText(sheet.subtitle),
+    calculationBoxTitle: cleanJsonText(sheet.calculationBoxTitle || sheet.calculationTitle),
+    calculationNotes: normalizeJsonTextList(sheet.calculationNotes || sheet.notes),
+    clarificationNotes: normalizeJsonTextList(sheet.clarificationNotes),
+    pictureCaption: cleanJsonText(sheet.pictureCaption),
+  };
+}
+
+function normalizeJsonRfiRow(row = {}) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const normalized = {
+    number: cleanJsonText(row.number || row.rfiNumber),
+    asked: cleanJsonText(row.asked || row.dateAsked),
+    answered: cleanJsonText(row.answered || row.dateAnswered),
+    source: cleanJsonText(row.source),
+    question: cleanJsonText(row.question || row.clarificationNeeded),
+    treatment: cleanJsonText(row.treatment || row.answerTreatment || row.answer),
+    priceImpact: cleanJsonText(row.priceImpact),
+    scopeImpact: cleanJsonText(row.scopeImpact),
+  };
+
+  return Object.values(normalized).some((value) => value && !isPlaceholderText(value)) ? normalized : null;
+}
+
+function normalizeJsonAddenda(value) {
+  if (typeof value === "string") {
+    const text = cleanJsonText(value);
+    return text && !isPlaceholderText(text)
+      ? [{ number: text, date: "", titleDescription: "", acknowledged: true, notes: "", includedInPacket: true }]
+      : [];
+  }
+
+  return (Array.isArray(value) ? value : [])
+    .map((row) => {
+      if (typeof row === "string") {
+        return { number: row, date: "", titleDescription: "", acknowledged: true, notes: "", includedInPacket: true };
+      }
+
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+
+      return {
+        number: cleanJsonText(row.number || row.addendumNumber),
+        date: cleanJsonText(row.date || row.addendumDate),
+        titleDescription: cleanJsonText(row.titleDescription || row.description || row.title),
+        acknowledged: row.acknowledged !== false,
+        notes: cleanJsonText(row.notes),
+        includedInPacket: row.includedInPacket !== false,
+      };
+    })
+    .filter((row) => row && Object.values(row).some(hasText));
+}
+
+function normalizeJsonPacketOrderRow(row = {}) {
+  if (typeof row === "string") {
+    const parts = row.split(/[–—-]/).map((part) => part.trim()).filter(Boolean);
+    const order = Number.parseInt(parts[0], 10);
+    const label = Number.isFinite(order) ? parts.slice(1, -1).join(" - ") || parts[1] : parts.slice(0, -1).join(" - ") || parts[0];
+    const status = parts[parts.length - 1] || "Included";
+
+    return label ? { order: Number.isFinite(order) ? order : 999, label, status } : null;
+  }
+
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const label = cleanJsonText(row.label || row.title || row.section);
+
+  if (!label) {
+    return null;
+  }
+
+  return {
+    order: Number.parseInt(row.order, 10) || 999,
+    label,
+    status: cleanJsonText(row.status || (row.included === false ? "Exclude" : "Included")),
+  };
+}
+
+function normalizeJsonProposalNotes(value) {
+  if (typeof value === "string" || Array.isArray(value)) {
+    return {
+      proposalBasis: "",
+      contractScopeControl: "",
+      acceptanceSummary: "",
+      notes: normalizeJsonTextList(value).join("\n"),
+    };
+  }
+
+  if (!value || typeof value !== "object") {
+    return { proposalBasis: "", contractScopeControl: "", acceptanceSummary: "", notes: "" };
+  }
+
+  return {
+    proposalBasis: cleanJsonText(value.proposalBasis),
+    contractScopeControl: cleanJsonText(value.contractScopeControl),
+    acceptanceSummary: cleanJsonText(value.acceptanceSummary),
+    notes: normalizeJsonTextList(value.notes ?? value.items).join("\n"),
+  };
+}
+
+function getObject(value, name, normalized) {
+  if (value === undefined || value === null) {
+    return {};
+  }
+
+  if (Array.isArray(value) || typeof value !== "object") {
+    normalized.warnings.push(`Smart Paste JSON field "${name}" should be an object.`);
+    return {};
+  }
+
+  return value;
+}
+
+function getArray(value, name, normalized) {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    normalized.warnings.push(`Smart Paste JSON field "${name}" should be an array.`);
+    return [];
+  }
+
+  return value;
+}
+
+function firstJsonText(...values) {
+  const value = values.find((candidate) => hasText(candidate));
+  return cleanJsonText(value);
+}
+
+function cleanJsonText(value = "") {
+  const text = cleanText(value);
+  return isPlaceholderText(text) ? "" : text;
+}
+
+function normalizeJsonTextList(value) {
+  if (Array.isArray(value)) {
+    return dedupeList(value.map(cleanJsonText).filter(Boolean));
+  }
+
+  if (typeof value === "string") {
+    return dedupeList(splitList(value).map(cleanJsonText).filter(Boolean));
+  }
+
+  return [];
+}
+
+function isPlaceholderText(value = "") {
+  const normalized = cleanText(value).toLowerCase();
+
+  return (
+    !normalized ||
+    normalized === "new scope item" ||
+    normalized === "new item" ||
+    normalized === "untitled" ||
+    normalized === "upload plan image" ||
+    normalized.includes("[enter") ||
+    normalized.includes("[verify")
+  );
 }
 
 function parseCover(lines, normalized) {
