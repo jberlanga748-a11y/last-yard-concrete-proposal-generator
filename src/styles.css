@@ -2850,6 +2850,44 @@ h4 {
   transform: skewX(-16.5deg);
 }
 
+.print-route-view .proposal-page.first-page {
+  box-sizing: border-box;
+  padding: 8px;
+}
+
+.print-route-view .first-page .cover-header {
+  padding: 28px 34px;
+}
+
+.print-route-view .first-page .logo-seal img {
+  box-sizing: border-box;
+  padding: 8px;
+  object-fit: contain;
+  transform: scale(1.08);
+}
+
+.print-route-view .first-page .page-one-feature-block {
+  overflow: hidden;
+}
+
+.print-route-view .first-page .photo-band {
+  height: 148px;
+}
+
+.print-route-view .first-page .why-choose {
+  padding-top: 16px;
+  padding-bottom: 18px;
+}
+
+.print-route-view .first-page .trust-card {
+  min-height: 118px;
+}
+
+.print-route-view .first-page .compact-footer {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
 .editor-panel {
   display: grid;
   gap: 16px;
@@ -5375,6 +5413,29 @@ h4 {
   background: white;
 }
 
+.plan-sheet-image-caption {
+  border-top: 1px solid var(--line);
+  background: white;
+  color: var(--body);
+  padding: 10px 12px;
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.plan-sheet-body-text-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.plan-sheet-body-text-only .plan-sheet-notes {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+}
+
+.plan-sheet-body-text-only .plan-notes-box {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
 .plan-sheet-placeholder {
   display: grid;
   height: 100%;
@@ -5919,6 +5980,15 @@ h4 {
     zoom: 1;
   }
 
+  .proposal-page.first-page {
+    box-sizing: border-box;
+    padding: 0.08in;
+  }
+
+  .proposal-page.first-page > * {
+    box-sizing: border-box;
+  }
+
   .proposal-page + .proposal-page {
     break-before: page;
     page-break-before: always;
@@ -6023,6 +6093,21 @@ h4 {
     grid-template-columns: minmax(0, 1fr) minmax(180px, 0.36fr);
     gap: 14px;
     padding: 18px 26px 12px;
+  }
+
+  .plan-sheet-body-text-only {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .plan-sheet-body-text-only .plan-sheet-notes {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .plan-sheet-image-caption {
+    padding: 7px 9px;
+    font-size: 8.4px;
+    line-height: 1.28;
   }
 
   .plan-sheet-placeholder {
@@ -6142,11 +6227,11 @@ h4 {
   .cover-inner {
     display: flex;
     align-items: center;
-    gap: 30px;
+    gap: 24px;
   }
 
   .cover-header {
-    padding: 28px 32px;
+    padding: 20px 28px;
   }
 
   .cover-header::before {
@@ -6161,11 +6246,11 @@ h4 {
   }
 
   .cover-copy {
-    max-width: 450px;
+    max-width: 430px;
   }
 
   .cover-copy h2 {
-    font-size: 52px;
+    font-size: 46px;
   }
 
   .cover-tagline {
@@ -6178,13 +6263,21 @@ h4 {
   }
 
   .logo-seal {
-    width: 132px;
-    height: 132px;
+    width: 116px;
+    height: 116px;
+  }
+
+  .cover-header .logo-seal img,
+  .compact-footer .logo-seal-small img {
+    box-sizing: border-box;
+    padding: 7px;
+    object-fit: contain;
+    transform: scale(1.08);
   }
 
   .logo-seal-small {
-    width: 52px;
-    height: 52px;
+    width: 48px;
+    height: 48px;
     margin-left: 0;
   }
 
@@ -6197,7 +6290,7 @@ h4 {
   .company-intro {
     grid-template-columns: 0.9fr 1.1fr;
     gap: 24px;
-    padding: 22px 32px;
+    padding: 16px 28px;
   }
 
   .contact-list {
@@ -6239,11 +6332,11 @@ h4 {
   .project-cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 14px;
-    padding: 14px 28px 8px;
+    padding: 12px 28px 6px;
   }
 
   .info-card {
-    min-height: 128px;
+    min-height: 118px;
     padding: 14px 18px;
     font-size: 10.5px;
     line-height: 1.35;
@@ -6263,6 +6356,21 @@ h4 {
     line-height: 1.35;
   }
 
+  .cover-summary-preview span:last-child,
+  .cover-description-preview {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+  }
+
+  .cover-summary-preview span:last-child {
+    -webkit-line-clamp: 2;
+  }
+
+  .cover-description-preview {
+    -webkit-line-clamp: 3;
+  }
+
   .field-row {
     grid-template-columns: 105px 1fr;
     gap: 8px;
@@ -6278,7 +6386,7 @@ h4 {
   }
 
   .photo-band {
-    height: 150px;
+    height: 132px;
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -6336,13 +6444,13 @@ h4 {
   }
 
   .why-choose {
-    padding-top: 16px;
-    padding-bottom: 18px;
+    padding-top: 12px;
+    padding-bottom: 12px;
   }
 
   .why-heading {
     gap: 14px;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
   }
 
   .why-heading div {
@@ -6358,28 +6466,28 @@ h4 {
   }
 
   .trust-card {
-    min-height: 124px;
-    padding: 12px 8px;
+    min-height: 102px;
+    padding: 8px 7px;
   }
 
   .trust-card div {
-    width: 40px;
-    height: 40px;
-    margin-bottom: 7px;
+    width: 32px;
+    height: 32px;
+    margin-bottom: 5px;
   }
 
   .trust-card h4 {
     max-width: 140px;
     gap: 5px;
-    font-size: 9.8px;
+    font-size: 8.8px;
     line-height: 1.12;
   }
 
   .trust-card p {
     max-width: 142px;
-    margin-top: 6px;
-    font-size: 9.2px;
-    line-height: 1.28;
+    margin-top: 4px;
+    font-size: 8.2px;
+    line-height: 1.22;
   }
 
   .section-title {
@@ -6517,14 +6625,14 @@ h4 {
 
   .compact-footer {
     gap: 6px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-    font-size: 9px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    font-size: 7.8px;
   }
 
   .compact-footer .logo-seal-small {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     margin-left: auto;
   }
 

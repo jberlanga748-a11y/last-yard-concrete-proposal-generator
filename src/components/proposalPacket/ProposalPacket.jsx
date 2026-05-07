@@ -1,7 +1,13 @@
 import { Fragment, createContext, useContext, useState } from "react";
 import { calculateProposalTotals, formatCurrency, normalizePacketBuilder } from "../../proposalData.js";
 import { formatDisplayDate, formatOptionLabel } from "../../utils/formatting/display.js";
-import { cleanProposalForPrint, getPrintablePreparedForLines, hasPrintableText } from "../../utils/proposalPacket/printContentCleanup.js";
+import {
+  cleanPrintableText,
+  cleanProposalForPrint,
+  getCoverPageTextPreview,
+  getPrintablePreparedForLines,
+  hasPrintableText,
+} from "../../utils/proposalPacket/printContentCleanup.js";
 
 const logoSrc = "/assets/last-yard-logo.jpg";
 const PacketRenderContext = createContext(null);
@@ -580,12 +586,14 @@ function AppendixPricingTable({ sections, totals }) {
 }
 
 function PlanSheetPage({ company, sheet, pageNumber, projectName }) {
-  const { normalizePlanSheetNotes } = usePacketHelpers();
+  const { getImageAssetSource, normalizePlanSheetNotes } = usePacketHelpers();
+  const imageSource = getImageAssetSource(sheet);
   const calculationNotes = normalizePlanSheetNotes(sheet.calculationNotes);
   const clarificationNotes = normalizePlanSheetNotes(sheet.clarificationNotes);
+  const pictureCaption = cleanPrintableText(sheet.pictureCaption || sheet.caption);
 
   return (
-    <ProposalPage className="plan-sheet-page">
+    <ProposalPage className={`plan-sheet-page ${imageSource ? "" : "plan-sheet-page-text-only"}`}>
       <header className="plan-sheet-header">
         <div>
           <p>{formatOptionLabel(sheet.pageType)}</p>
@@ -596,10 +604,11 @@ function PlanSheetPage({ company, sheet, pageNumber, projectName }) {
         </div>
       </header>
 
-      <div className="plan-sheet-body">
-        {sheet.imageSrc ? (
+      <div className={`plan-sheet-body ${imageSource ? "" : "plan-sheet-body-text-only"}`}>
+        {imageSource ? (
           <section className="plan-sheet-image-area">
-            <img src={sheet.imageSrc} alt={sheet.title || "Uploaded plan sheet"} />
+            <img src={imageSource} alt={sheet.title || "Uploaded plan sheet"} />
+            {pictureCaption ? <p className="plan-sheet-image-caption">{pictureCaption}</p> : null}
           </section>
         ) : null}
 
@@ -629,6 +638,13 @@ function PlanSheetPage({ company, sheet, pageNumber, projectName }) {
               <p>No clarification notes entered.</p>
             )}
           </div>
+
+          {!imageSource && pictureCaption ? (
+            <div className="plan-notes-box">
+              <h3>Sheet Notes</h3>
+              <p>{pictureCaption}</p>
+            </div>
+          ) : null}
         </aside>
       </div>
 
@@ -721,6 +737,8 @@ function ProjectCards({ proposal }) {
   const { client, project } = proposal;
   const revisionLabel = proposal.revisionLabel || formatRevisionLabel(proposal.revisionNumber);
   const preparedForLines = getPrintablePreparedForLines(client);
+  const coverSchedule = getCoverPageTextPreview(project.estimatedDuration || project.proposedSchedule.display, 180);
+  const coverDescription = getCoverPageTextPreview(project.description, 260);
 
   return (
     <section className="project-cards">
@@ -738,11 +756,13 @@ function ProjectCards({ proposal }) {
         </div>
         <Field label="Project Name" value={project.name} />
         <Field label="Project Location" value={project.location} />
-        <Field label="Proposed Schedule" value={project.estimatedDuration || project.proposedSchedule.display} />
-        <p className="description-copy">
-          <strong>Description: </strong>
-          {project.description}
-        </p>
+        <Field label="Proposed Schedule" value={coverSchedule} className="cover-summary-preview" />
+        {hasPrintableText(coverDescription) ? (
+          <p className="description-copy cover-description-preview">
+            <strong>Description: </strong>
+            {coverDescription}
+          </p>
+        ) : null}
       </InfoCard>
     </section>
   );
@@ -759,13 +779,13 @@ function InfoCard({ title, watermark, children }) {
   );
 }
 
-function Field({ label, value }) {
+function Field({ label, value, className = "" }) {
   if (!hasPrintableText(value)) {
     return null;
   }
 
   return (
-    <p className="field-row">
+    <p className={`field-row ${className}`}>
       <span>{label}:</span>
       <span>{value}</span>
     </p>

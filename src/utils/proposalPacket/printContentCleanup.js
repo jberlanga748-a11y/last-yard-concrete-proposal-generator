@@ -18,7 +18,8 @@ const defaultPlaceholderPatterns = [
   /^new\s+scope\s+item$/i,
   /^new\s+item$/i,
   /^untitled$/i,
-  /^\[?(enter|verify)\b.*\]?$/i,
+  /^\[(enter|verify)\b.*\]$/i,
+  /^(enter|verify)\s+(customer|client|contact|email|phone|name|gc|address|project)\b.*$/i,
   /^upload\s+plan\s+image$/i,
 ];
 
@@ -72,6 +73,16 @@ export function cleanPrintableTextList(items = []) {
 
 export function cleanPrintableTextBlock(value) {
   return cleanPrintableTextList(value).join("\n");
+}
+
+export function getCoverPageTextPreview(value, maxLength = 240) {
+  const text = cleanPrintableTextBlock(value).replace(/\s+/g, " ").trim();
+
+  if (!text || text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, Math.max(0, maxLength - 3)).trim()}...`;
 }
 
 export function cleanPrintableScopeSections(scopeSections = []) {
@@ -169,13 +180,10 @@ export function cleanPrintableStructuredRows(sectionKey, rows = []) {
 
 export function hasPlanSheetPrintContent(sheet = {}) {
   return Boolean(
-    sheet.imageSrc ||
-      sheet.dataUrl ||
-      sheet.publicUrl ||
-      sheet.signedUrl ||
-      sheet.storagePath ||
+    hasPrintableImageAsset(sheet) ||
       cleanPrintableTextList(sheet.calculationNotes).length > 0 ||
-      cleanPrintableTextList(sheet.clarificationNotes).length > 0,
+      cleanPrintableTextList(sheet.clarificationNotes).length > 0 ||
+      hasPrintableText(sheet.pictureCaption || sheet.caption),
   );
 }
 
@@ -185,14 +193,28 @@ export function cleanPrintablePlanSheets(planSheets = []) {
   }
 
   return planSheets
-    .map((sheet) => ({
-      ...sheet,
-      title: cleanPrintableText(sheet.title) || sheet.title || "",
-      subtitle: cleanPrintableText(sheet.subtitle),
-      calculationTitle: cleanPrintableText(sheet.calculationTitle),
-      calculationNotes: cleanPrintableTextList(sheet.calculationNotes),
-      clarificationNotes: cleanPrintableTextList(sheet.clarificationNotes),
-    }))
+    .map((sheet) => {
+      const imageSrc = cleanPrintableText(sheet.imageSrc);
+      const image = cleanPrintableText(sheet.image);
+
+      return {
+        ...sheet,
+        title: cleanPrintableText(sheet.title),
+        subtitle: cleanPrintableText(sheet.subtitle),
+        pageType: cleanPrintableText(sheet.pageType),
+        imageSrc: imageSrc || image,
+        image,
+        src: cleanPrintableText(sheet.src),
+        dataUrl: cleanPrintableText(sheet.dataUrl),
+        publicUrl: cleanPrintableText(sheet.publicUrl),
+        signedUrl: cleanPrintableText(sheet.signedUrl),
+        storagePath: cleanPrintableText(sheet.storagePath),
+        calculationTitle: cleanPrintableText(sheet.calculationTitle || sheet.calculationBoxTitle),
+        calculationNotes: cleanPrintableTextList(sheet.calculationNotes),
+        clarificationNotes: cleanPrintableTextList(sheet.clarificationNotes),
+        pictureCaption: cleanPrintableText(sheet.pictureCaption || sheet.caption),
+      };
+    })
     .filter((sheet) => sheet.enabled && hasPlanSheetPrintContent(sheet));
 }
 
@@ -321,6 +343,17 @@ function isDefaultAllowanceLabel(value) {
 
 function isDefaultAlternateLabel(value) {
   return /^add alternate 0?[12]$/i.test(String(value || "").trim()) || /^add alternate 0?[12]$/i.test(normalizePrintableFingerprint(value));
+}
+
+function hasPrintableImageAsset(sheet = {}) {
+  return Boolean(
+    cleanPrintableText(sheet.imageSrc || sheet.image) ||
+      cleanPrintableText(sheet.src) ||
+      cleanPrintableText(sheet.dataUrl) ||
+      cleanPrintableText(sheet.publicUrl) ||
+      cleanPrintableText(sheet.signedUrl) ||
+      cleanPrintableText(sheet.storagePath),
+  );
 }
 
 function toPrintableNumber(value) {

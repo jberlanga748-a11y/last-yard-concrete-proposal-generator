@@ -6,6 +6,7 @@ import {
   cleanPrintablePricingSections,
   cleanPrintablePricingSummaryRows,
   cleanProposalForPrint,
+  getCoverPageTextPreview,
   getPrintablePreparedForLines,
 } from "./printContentCleanup.js";
 
@@ -101,4 +102,42 @@ test("does not keep UPLOAD PLAN IMAGE placeholder when no image exists", () => {
   assert.equal(sheets.length, 1);
   assert.equal(sheets[0].title, "Plan Sheet Notes");
   assert.doesNotMatch(JSON.stringify(sheets), /UPLOAD PLAN IMAGE|Upload plan image/i);
+});
+
+test("keeps text-only plan sheets without printing image placeholders", () => {
+  const sheets = cleanPrintablePlanSheets([
+    {
+      enabled: true,
+      sheetId: "A101",
+      title: "Freezer Slab Takeoff",
+      subtitle: "POS boxes remodel",
+      imageSrc: "UPLOAD PLAN IMAGE",
+      calculationBoxTitle: "Quantity Notes",
+      calculationNotes: ["Freezer slab quantity from A101 takeoff markup."],
+      clarificationNotes: ["Verify night-work phasing before construction."],
+      pictureCaption: "Area A freezer slab takeoff reference.",
+    },
+  ]);
+
+  assert.equal(sheets.length, 1);
+  assert.equal(sheets[0].imageSrc, "");
+  assert.equal(sheets[0].calculationTitle, "Quantity Notes");
+  assert.deepEqual(sheets[0].calculationNotes, ["Freezer slab quantity from A101 takeoff markup."]);
+  assert.deepEqual(sheets[0].clarificationNotes, ["Verify night-work phasing before construction."]);
+  assert.equal(sheets[0].pictureCaption, "Area A freezer slab takeoff reference.");
+  assert.doesNotMatch(JSON.stringify(sheets), /UPLOAD PLAN IMAGE/i);
+});
+
+test("shortens long cover description and schedule text for page-one fit", () => {
+  const longText = [
+    "Estimated schedule to be confirmed after final phasing and approved night-work window.",
+    "Current working assumption is night work only, one freezer area at a time, coordinated around active store operations.",
+    "Full phasing details remain available in the packet backup.",
+  ].join(" ");
+
+  const preview = getCoverPageTextPreview(longText, 120);
+
+  assert.ok(preview.length <= 120);
+  assert.match(preview, /\.\.\.$/);
+  assert.doesNotMatch(preview, /\n/);
 });
