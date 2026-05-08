@@ -42,12 +42,25 @@ test("residential packet includes legal papers before acceptance", () => {
   assert.match(source, /Legal Papers \/ Notices/);
 });
 
+test("residential terms and conditions render as separate PDF pages when enabled", () => {
+  assert.match(source, /buildResidentialTermsAndConditionsSections/);
+  assert.match(source, /shouldPrintResidentialTermsAndConditions/);
+  assert.match(source, /buildResidentialTermsAndConditionsPages/);
+  assert.match(source, /sectionId: "residential_terms_conditions"/);
+  assert.match(source, /function ResidentialTermsAndConditionsPage/);
+  assert.match(source, /Residential Terms & Conditions/);
+  assert.match(source, /Residential Independent Contractor Services Agreement \/ Terms & Conditions/);
+  assert.match(source, /Signature \/ Acceptance/);
+});
+
 test("residential simple estimate has a dedicated print branch and avoids GC alternate language", () => {
   assert.match(source, /RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT/);
   assert.match(source, /useResidentialSimpleEstimate/);
   assert.match(source, /function ResidentialSimpleEstimatePage/);
   assert.match(source, /Optional Add-On:/);
   assert.match(source, /Estimate Total/);
+  assert.match(source, /residentialSimpleEstimateItems[\s\S]*residentialLegalPapersItem[\s\S]*residentialTermsItems/);
+  assert.match(source, /!\s*includeResidentialTerms\s*\?\s*\[residentialPaymentTermsItem\]\s*:\s*\[\]/);
   assert.doesNotMatch(source.match(/function ResidentialSimpleEstimatePage[\s\S]*?function ResidentialSimpleEstimateAttachmentsPage/)?.[0] || "", /Add Alternate|Total if All Alternates Accepted/);
 });
 

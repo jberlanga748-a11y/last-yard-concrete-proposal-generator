@@ -41,7 +41,10 @@ import {
 import {
   buildResidentialLegalPaperRows,
   buildResidentialLegalSummarySections,
+  buildResidentialTermsAndConditionsSections,
   normalizeResidentialLegalPapers,
+  shouldDefaultIncludeResidentialTerms,
+  shouldPrintResidentialTermsAndConditions,
 } from "../../utils/proposalPacket/residentialLegalPapers.js";
 
 const legacyLogoSrc = "/assets/last-yard-logo.jpg";
@@ -258,9 +261,17 @@ function ProposalPacketContent({ companySettings, proposal }) {
   const proposalTotals = calculateProposalTotals(packetProposal);
   const totalProposalPrice = formatCurrency(proposalTotals.total);
   const termsCopy = isResidentialMode ? buildResidentialPaymentTermsCopy(packetProposal) : buildTermsCopy(packetProposal.terms);
-  const residentialLegalPapers = isResidentialMode ? normalizeResidentialLegalPapers(packetProposal.residentialLegalPapers) : null;
+  const residentialLegalPapers = isResidentialMode
+    ? normalizeResidentialLegalPapers(packetProposal.residentialLegalPapers, {
+        includeTermsByDefault: shouldDefaultIncludeResidentialTerms(packetProposal),
+      })
+    : null;
   const residentialLegalSummarySections = isResidentialMode ? buildResidentialLegalSummarySections(packetProposal) : [];
   const residentialLegalPaperRows = isResidentialMode ? buildResidentialLegalPaperRows({ ...packetProposal, residentialLegalPapers }) : [];
+  const residentialTermsSections = isResidentialMode
+    ? buildResidentialTermsAndConditionsSections({ ...packetProposal, residentialLegalPapers }, company)
+    : [];
+  const includeResidentialTerms = isResidentialMode && shouldPrintResidentialTermsAndConditions({ ...packetProposal, residentialLegalPapers }) && residentialTermsSections.length > 0;
   const visiblePricingSections = isResidentialMode ? [] : appendixPlan.mainPricingSections;
   const hasChooseOnePricing = hasResidentialChooseOnePricing(packetProposal);
   const hasBasePlusAddOnsPricing = hasResidentialBasePlusAddOnsPricing(packetProposal);
@@ -434,6 +445,34 @@ function ProposalPacketContent({ companySettings, proposal }) {
       />
     ),
   };
+  const residentialTermsItems = includeResidentialTerms
+    ? buildResidentialTermsAndConditionsPages(residentialTermsSections).map((page) => ({
+        key: page.key,
+        sectionId: "residential_terms_conditions",
+        render: (pageNumber) => (
+          <ResidentialTermsAndConditionsPage
+            company={company}
+            page={page}
+            pageNumber={pageNumber}
+            projectName={packetProposal.project?.name}
+          />
+        ),
+      }))
+    : [];
+  const residentialPaymentTermsItem = {
+    key: "residential-payment-terms",
+    sectionId: "residential_payment_terms",
+    render: (pageNumber) => (
+      <ResidentialPaymentTermsPage
+        company={company}
+        pageNumber={pageNumber}
+        pdfStyle={pdfStyle}
+        projectName={packetProposal.project?.name}
+        showTermsCopy={residentialLegalSummarySections.length === 0}
+        termsCopy={termsCopy}
+      />
+    ),
+  };
   const residentialPacketItems = [
     coverSummaryItem,
     ...residentialPricingItems,
@@ -457,20 +496,8 @@ function ProposalPacketContent({ companySettings, proposal }) {
     },
     ...planSheetItems,
     residentialLegalPapersItem,
-    {
-      key: "residential-payment-terms",
-      sectionId: "residential_payment_terms",
-      render: (pageNumber) => (
-        <ResidentialPaymentTermsPage
-          company={company}
-          pageNumber={pageNumber}
-          pdfStyle={pdfStyle}
-          projectName={packetProposal.project?.name}
-          showTermsCopy={residentialLegalSummarySections.length === 0}
-          termsCopy={termsCopy}
-        />
-      ),
-    },
+    ...residentialTermsItems,
+    ...(!includeResidentialTerms ? [residentialPaymentTermsItem] : []),
   ];
   const residentialSimpleEstimateItems = [
     {
@@ -499,20 +526,8 @@ function ProposalPacketContent({ companySettings, proposal }) {
       ),
     })),
     residentialLegalPapersItem,
-    {
-      key: "residential-payment-terms",
-      sectionId: "residential_payment_terms",
-      render: (pageNumber) => (
-        <ResidentialPaymentTermsPage
-          company={company}
-          pageNumber={pageNumber}
-          pdfStyle={pdfStyle}
-          projectName={packetProposal.project?.name}
-          showTermsCopy={residentialLegalSummarySections.length === 0}
-          termsCopy={termsCopy}
-        />
-      ),
-    },
+    ...residentialTermsItems,
+    ...(!includeResidentialTerms ? [residentialPaymentTermsItem] : []),
   ];
   const standardPacketItems = [
     coverSummaryItem,
@@ -521,6 +536,7 @@ function ProposalPacketContent({ companySettings, proposal }) {
     ...appendixItems,
     ...planSheetItems,
     ...(isResidentialMode ? [residentialLegalPapersItem] : []),
+    ...(isResidentialMode ? residentialTermsItems : []),
   ];
   const packetItems = orderPacketRenderItems(
     packetProposal,
@@ -1060,6 +1076,65 @@ function ResidentialLegalPapersPage({ company, legalPaperRows = [], legalSummary
             ))}
           </div>
         </section>
+      </div>
+
+      <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
+    </ProposalPage>
+  );
+}
+
+function buildResidentialTermsAndConditionsPages(sections = [], sectionsPerPage = 7) {
+  const chunks = [];
+  const safeSectionsPerPage = Math.max(1, sectionsPerPage);
+
+  for (let index = 0; index < sections.length; index += safeSectionsPerPage) {
+    chunks.push(sections.slice(index, index + safeSectionsPerPage));
+  }
+
+  return chunks.map((pageSections, index) => ({
+    key: `residential-terms-conditions-${index + 1}`,
+    pageIndex: index,
+    pageCount: chunks.length,
+    sections: pageSections,
+  }));
+}
+
+function ResidentialTermsAndConditionsPage({ company, page, pageNumber, projectName }) {
+  const isLastPage = page.pageIndex === page.pageCount - 1;
+
+  return (
+    <ProposalPage className="structured-packet-page residential-terms-conditions-page">
+      <ResidentialPacketHeader
+        company={company}
+        pageTitle={page.pageIndex === 0 ? "Residential Terms & Conditions" : "Residential Terms & Conditions Continued"}
+        projectName={projectName}
+      />
+
+      <div className="structured-packet-body residential-page-body residential-terms-conditions-body">
+        <div className="structured-accent" />
+        <section className="residential-print-section residential-terms-template-intro">
+          <h3>Residential Independent Contractor Services Agreement / Terms & Conditions</h3>
+          <p>
+            Standard residential customer terms for Last Yard Concrete. This section supports customer review and
+            acknowledgement; Last Yard should verify current requirements before signing.
+          </p>
+        </section>
+
+        <div className="residential-terms-template-list">
+          {page.sections.map((section) => (
+            <article className="residential-terms-template-section" key={section.id || section.title}>
+              <h4>{section.title}</h4>
+              <p>{section.body}</p>
+            </article>
+          ))}
+        </div>
+
+        {isLastPage ? (
+          <section className="residential-print-section residential-terms-signature-section">
+            <h3>Signature / Acceptance</h3>
+            <SignatureBlock companyName={company.name} />
+          </section>
+        ) : null}
       </div>
 
       <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />

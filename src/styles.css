@@ -6725,6 +6725,59 @@ h4 {
   white-space: nowrap;
 }
 
+.residential-terms-conditions-body {
+  gap: 12px;
+}
+
+.residential-terms-template-intro {
+  border: 1px solid rgba(202, 162, 75, 0.45);
+  background: #fffaf0;
+  padding: 10px 12px;
+}
+
+.residential-terms-template-intro p {
+  margin: 0;
+  color: var(--body);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.residential-terms-template-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.residential-terms-template-section {
+  break-inside: avoid;
+  border: 1px solid rgba(6, 43, 69, 0.12);
+  background: white;
+  padding: 8px 10px;
+  page-break-inside: avoid;
+}
+
+.residential-terms-template-section h4 {
+  margin: 0 0 4px;
+  color: var(--blue);
+  font-size: 10.8px;
+  font-weight: 950;
+  line-height: 1.2;
+}
+
+.residential-terms-template-section p {
+  margin: 0;
+  color: var(--body);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.residential-terms-signature-section {
+  break-inside: avoid;
+  margin-top: 4px;
+  page-break-inside: avoid;
+}
+
 .proposal-grid.proposal-pdf-style .structured-packet-note,
 .proposal-grid.proposal-pdf-style .residential-pricing-heading span,
 .proposal-grid.proposal-pdf-style .residential-pricing-option-card > p,
@@ -6732,16 +6785,19 @@ h4 {
 .proposal-grid.proposal-pdf-style .residential-add-on-print-description,
 .proposal-grid.proposal-pdf-style .residential-legal-summary-card p,
 .proposal-grid.proposal-pdf-style .residential-legal-paper-row span,
+.proposal-grid.proposal-pdf-style .residential-terms-template-section p,
+.proposal-grid.proposal-pdf-style .residential-terms-template-intro p,
 .proposal-grid.proposal-pdf-style .residential-empty-note,
 .proposal-grid.proposal-pdf-style .residential-terms-copy {
   font-size: var(--packet-body-font-size);
   line-height: var(--packet-line-height);
 }
 
-.proposal-grid.proposal-pdf-style .residential-pricing-heading h4,
-.proposal-grid.proposal-pdf-style .residential-print-section h3,
-.proposal-grid.proposal-pdf-style .residential-option-breakdown-heading h3,
-.proposal-grid.proposal-pdf-style .structured-packet-header h2,
+  .proposal-grid.proposal-pdf-style .residential-pricing-heading h4,
+  .proposal-grid.proposal-pdf-style .residential-print-section h3,
+  .proposal-grid.proposal-pdf-style .residential-terms-template-section h4,
+  .proposal-grid.proposal-pdf-style .residential-option-breakdown-heading h3,
+  .proposal-grid.proposal-pdf-style .structured-packet-header h2,
 .proposal-grid.proposal-pdf-style .section-title h3,
 .proposal-grid.proposal-pdf-style .mini-heading h4 {
   font-weight: var(--packet-heading-weight);
@@ -8113,31 +8169,48 @@ h4 {
   .proposal-page.residential-pricing-page .structured-packet-body,
   .proposal-page.residential-add-on-page .structured-packet-body,
   .proposal-page.residential-simple-estimate-page .structured-packet-body,
-  .proposal-page.residential-simple-attachments-page .structured-packet-body,
-  .proposal-page.residential-scope-page .structured-packet-body,
-  .proposal-page.residential-legal-papers-page .structured-packet-body,
-  .proposal-page.residential-terms-page .structured-packet-body {
-    padding: 26px 34px;
-  }
+    .proposal-page.residential-simple-attachments-page .structured-packet-body,
+    .proposal-page.residential-scope-page .structured-packet-body,
+    .proposal-page.residential-legal-papers-page .structured-packet-body,
+    .proposal-page.residential-terms-conditions-page .structured-packet-body,
+    .proposal-page.residential-terms-page .structured-packet-body {
+      padding: 26px 34px;
+    }
 
   .proposal-page.residential-pricing-page .residential-pricing-heading h4,
-  .proposal-page.residential-scope-page .residential-print-section h3,
-  .proposal-page.residential-legal-papers-page .residential-print-section h3,
-  .proposal-page.residential-terms-page .residential-print-section h3 {
-    font-size: 14px;
-  }
+    .proposal-page.residential-scope-page .residential-print-section h3,
+    .proposal-page.residential-legal-papers-page .residential-print-section h3,
+    .proposal-page.residential-terms-conditions-page .residential-print-section h3,
+    .proposal-page.residential-terms-page .residential-print-section h3 {
+      font-size: 14px;
+    }
 
   .proposal-page.residential-pricing-page .residential-pricing-heading span,
   .proposal-page.residential-pricing-page .residential-pricing-option-card > p,
   .proposal-page.residential-simple-estimate-page .simple-estimate-table,
-  .proposal-page.residential-simple-estimate-page .simple-estimate-hero span,
-  .proposal-page.residential-legal-papers-page .residential-legal-summary-card p,
-  .proposal-page.residential-legal-papers-page .residential-legal-paper-row span,
-  .proposal-page.residential-scope-page .residential-empty-note,
-  .proposal-page.residential-terms-page .residential-terms-copy {
-    font-size: 11px;
-    line-height: 1.35;
-  }
+    .proposal-page.residential-simple-estimate-page .simple-estimate-hero span,
+    .proposal-page.residential-legal-papers-page .residential-legal-summary-card p,
+    .proposal-page.residential-legal-papers-page .residential-legal-paper-row span,
+    .proposal-page.residential-terms-conditions-page .residential-terms-template-section p,
+    .proposal-page.residential-terms-conditions-page .residential-terms-template-intro p,
+    .proposal-page.residential-scope-page .residential-empty-note,
+    .proposal-page.residential-terms-page .residential-terms-copy {
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .proposal-page.residential-terms-conditions-page .residential-terms-template-list {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px;
+    }
+
+    .proposal-page.residential-terms-conditions-page .residential-terms-template-section {
+      padding: 7px 9px;
+    }
+
+    .proposal-page.residential-terms-conditions-page .residential-terms-template-section h4 {
+      font-size: 10.5px;
+    }
 
   .proposal-page.residential-pricing-page .residential-option-card-heading h5 {
     font-size: 11px;

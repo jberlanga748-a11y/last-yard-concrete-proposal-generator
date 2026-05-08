@@ -1157,6 +1157,14 @@ ${JSON.stringify(
         status: "provided_separately",
         notes: "Provided separately if applicable.",
       },
+      termsAndConditions: {
+        status: "included",
+        template: "last_yard_standard_residential_terms",
+        includedInPdf: true,
+        customerAcknowledged: false,
+        customerAcknowledgedDate: "",
+        notes: "Use Last Yard standard residential terms.",
+      },
       legalAttachments: [
         {
           title: "Information Notice to Owner About Construction Liens",
@@ -1207,6 +1215,10 @@ ${JSON.stringify(
   assert.equal(result.proposal.optionalAddOns[0].images[0].label, "Cantilever stair example");
   assert.equal(result.proposal.residentialLegalPapers.informationNoticeToOwner.status, "needs_review");
   assert.equal(result.proposal.residentialLegalPapers.rightToCancelNotice.status, "provided_separately");
+  assert.equal(result.proposal.residentialLegalPapers.termsAndConditions.status, "included");
+  assert.equal(result.proposal.residentialLegalPapers.termsAndConditions.template, "last_yard_standard_residential_terms");
+  assert.equal(result.proposal.residentialLegalPapers.termsAndConditions.includedInPdf, true);
+  assert.match(result.proposal.residentialLegalPapers.termsAndConditions.notes, /standard residential terms/i);
   assert.equal(result.proposal.residentialLegalPapers.legalAttachments[0].title, "Information Notice to Owner About Construction Liens");
   assert.equal(result.proposal.lineItems.length, 1);
   assert.equal(result.proposal.lineItems[0].description, "Option 1 - Full Scope With Broom Finish");

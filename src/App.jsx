@@ -114,9 +114,12 @@ import {
 } from "./utils/proposalPacket/residentialPricing.js";
 import {
   RESIDENTIAL_LEGAL_NOTICE_STATUS_OPTIONS,
+  RESIDENTIAL_TERMS_TEMPLATE_OPTIONS,
   getResidentialLegalStatusLabel,
+  getResidentialTermsTemplateLabel,
   normalizeResidentialLegalAttachment,
   normalizeResidentialLegalPapers,
+  shouldDefaultIncludeResidentialTerms,
 } from "./utils/proposalPacket/residentialLegalPapers.js";
 import {
   PROPOSAL_PDF_BODY_TEXT_SIZE_LABELS,
@@ -2736,7 +2739,9 @@ export default function App() {
       return;
     }
 
-    const legalPapers = normalizeResidentialLegalPapers(proposalDraft.residentialLegalPapers);
+    const legalPapers = normalizeResidentialLegalPapers(proposalDraft.residentialLegalPapers, {
+      includeTermsByDefault: shouldDefaultIncludeResidentialTerms(proposalDraft),
+    });
     const attachmentId = createProposalId();
 
     let pdfValidation;
@@ -2809,7 +2814,9 @@ export default function App() {
 
     setProposalDirty(true);
     setProposalDraft((currentProposal) => {
-      const legalPapers = normalizeResidentialLegalPapers(currentProposal.residentialLegalPapers);
+      const legalPapers = normalizeResidentialLegalPapers(currentProposal.residentialLegalPapers, {
+        includeTermsByDefault: shouldDefaultIncludeResidentialTerms(currentProposal),
+      });
 
       return {
         ...currentProposal,
@@ -8596,6 +8603,7 @@ function ProposalEditor({
           <ResidentialLegalPapersEditor
             message={assetUploadMessage}
             papers={proposal.residentialLegalPapers}
+            proposal={proposal}
             onAttachmentRemove={onResidentialLegalAttachmentRemove}
             onAttachmentUpload={onResidentialLegalAttachmentUpload}
             onChange={onChange}
@@ -9331,10 +9339,13 @@ function LegalTermsEditor({ terms = {}, onChange }) {
   );
 }
 
-function ResidentialLegalPapersEditor({ message = "", papers = {}, onAttachmentRemove, onAttachmentUpload, onChange }) {
-  const normalizedPapers = normalizeResidentialLegalPapers(papers);
+function ResidentialLegalPapersEditor({ message = "", papers = {}, proposal = {}, onAttachmentRemove, onAttachmentUpload, onChange }) {
+  const normalizedPapers = normalizeResidentialLegalPapers(papers, {
+    includeTermsByDefault: shouldDefaultIncludeResidentialTerms(proposal),
+  });
   const ownerNotice = normalizedPapers.informationNoticeToOwner;
   const cancellationNotice = normalizedPapers.rightToCancelNotice;
+  const termsAndConditions = normalizedPapers.termsAndConditions;
 
   return (
     <div className="residential-legal-papers-editor">
@@ -9410,6 +9421,66 @@ function ResidentialLegalPapersEditor({ message = "", papers = {}, onAttachmentR
             label="Cancellation Notice Notes"
             path="residentialLegalPapers.rightToCancelNotice.notes"
             value={cancellationNotice.notes}
+            onChange={onChange}
+            multiline
+          />
+        </section>
+
+        <section className="residential-legal-checklist-card residential-terms-template-card">
+          <div className="residential-legal-checklist-heading">
+            <strong>Residential Terms & Conditions</strong>
+            <span>{getResidentialLegalStatusLabel(termsAndConditions.status)}</span>
+          </div>
+          <label className="editor-check">
+            <input
+              checked={Boolean(termsAndConditions.includedInPdf)}
+              type="checkbox"
+              onChange={(event) => onChange("residentialLegalPapers.termsAndConditions.includedInPdf", event.target.checked)}
+            />
+            <span>Include Residential Terms & Conditions in PDF</span>
+          </label>
+          <EditorField
+            label="Terms Template"
+            path="residentialLegalPapers.termsAndConditions.template"
+            value={termsAndConditions.template}
+            onChange={onChange}
+            options={RESIDENTIAL_TERMS_TEMPLATE_OPTIONS}
+          />
+          <p className="smart-paste-help">{getResidentialTermsTemplateLabel(termsAndConditions.template)}</p>
+          <EditorField
+            label="Terms Delivery / Status"
+            path="residentialLegalPapers.termsAndConditions.status"
+            value={termsAndConditions.status}
+            onChange={onChange}
+            options={RESIDENTIAL_LEGAL_NOTICE_STATUS_OPTIONS}
+          />
+          <label className="editor-check">
+            <input
+              checked={Boolean(termsAndConditions.acknowledgementRequired)}
+              type="checkbox"
+              onChange={(event) => onChange("residentialLegalPapers.termsAndConditions.acknowledgementRequired", event.target.checked)}
+            />
+            <span>Customer acknowledgement required</span>
+          </label>
+          <label className="editor-check">
+            <input
+              checked={Boolean(termsAndConditions.customerAcknowledged)}
+              type="checkbox"
+              onChange={(event) => onChange("residentialLegalPapers.termsAndConditions.customerAcknowledged", event.target.checked)}
+            />
+            <span>Customer acknowledged terms</span>
+          </label>
+          <EditorField
+            label="Terms Acknowledged Date"
+            path="residentialLegalPapers.termsAndConditions.customerAcknowledgedDate"
+            type="date"
+            value={termsAndConditions.customerAcknowledgedDate}
+            onChange={onChange}
+          />
+          <EditorField
+            label="Terms Notes"
+            path="residentialLegalPapers.termsAndConditions.notes"
+            value={termsAndConditions.notes}
             onChange={onChange}
             multiline
           />
@@ -11657,7 +11728,9 @@ function applyProposalModeToBlankProposal(proposal = {}, mode = DEFAULT_PROPOSAL
     pricingOptions: isResidentialProposalMode(normalizedMode) ? proposal.pricingOptions || [] : [],
     optionalAddOns: isResidentialProposalMode(normalizedMode) ? proposal.optionalAddOns || [] : [],
     residentialLegalPapers: isResidentialProposalMode(normalizedMode)
-      ? normalizeResidentialLegalPapers(proposal.residentialLegalPapers)
+      ? normalizeResidentialLegalPapers(proposal.residentialLegalPapers, {
+          includeTermsByDefault: shouldDefaultIncludeResidentialTerms({ ...proposal, proposalMode: normalizedMode }),
+        })
       : proposal.residentialLegalPapers,
     packetBuilder: isGcPrimePacketMode(normalizedMode) ? normalizePacketBuilder(proposal.packetBuilder) : [],
   };
@@ -14393,7 +14466,9 @@ function createEditableProposal(seedProposal) {
     pricingOptions: normalizePricingOptions(proposal.pricingOptions),
     optionalAddOns: normalizeOptionalAddOns(proposal.optionalAddOns),
     residentialLegalPapers: isResidentialProposalMode(proposalMode)
-      ? normalizeResidentialLegalPapers(proposal.residentialLegalPapers)
+      ? normalizeResidentialLegalPapers(proposal.residentialLegalPapers, {
+          includeTermsByDefault: shouldDefaultIncludeResidentialTerms(proposal),
+        })
       : proposal.residentialLegalPapers
         ? normalizeResidentialLegalPapers(proposal.residentialLegalPapers)
         : undefined,

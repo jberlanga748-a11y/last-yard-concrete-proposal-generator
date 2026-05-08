@@ -115,13 +115,35 @@ test("residential option SOV tables use compact readable spacing without page br
 test("residential legal papers use print-safe readable cards", () => {
   const legalSummaryCard = getCssBlock(".residential-legal-summary-card");
   const legalPaperRow = getCssBlock(".residential-legal-paper-row");
-  const printLegalBody = styles.match(/@media print\s*\{[\s\S]*?\.proposal-page\.residential-legal-papers-page \.structured-packet-body,\s*\.proposal-page\.residential-terms-page \.structured-packet-body\s*\{([^}]+)\}/)?.[1] || "";
+  const printLegalBody =
+    styles.match(
+      /@media print\s*\{[\s\S]*?\.proposal-page\.residential-legal-papers-page \.structured-packet-body,[\s\S]*?\.proposal-page\.residential-terms-page \.structured-packet-body\s*\{([^}]+)\}/,
+    )?.[1] || "";
 
   assert.match(legalSummaryCard, /break-inside:\s*avoid/);
   assert.match(legalSummaryCard, /page-break-inside:\s*avoid/);
   assert.match(legalPaperRow, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*auto/);
   assert.match(legalPaperRow, /page-break-inside:\s*avoid/);
   assert.match(printLegalBody, /padding:\s*26px\s*34px/);
+});
+
+test("residential terms and conditions pages use readable print-safe template cards", () => {
+  const termsList = getCssBlock(".residential-terms-template-list");
+  const termsSection = getCssBlock(".residential-terms-template-section");
+  const termsIntro = getCssBlock(".residential-terms-template-intro");
+  const printTermsList =
+    styles.match(/@media print\s*\{[\s\S]*?\.proposal-page\.residential-terms-conditions-page \.residential-terms-template-list\s*\{([^}]+)\}/)?.[1] ||
+    "";
+  const printTermsSection =
+    styles.match(/@media print\s*\{[\s\S]*?\.proposal-page\.residential-terms-conditions-page \.residential-terms-template-section\s*\{([^}]+)\}/)?.[1] ||
+    "";
+
+  assert.match(termsIntro, /background:\s*#fffaf0/);
+  assert.match(termsList, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(termsSection, /break-inside:\s*avoid/);
+  assert.match(termsSection, /page-break-inside:\s*avoid/);
+  assert.match(printTermsList, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(printTermsSection, /padding:\s*7px\s*9px/);
 });
 
 test("residential simple estimate uses print-safe totals and non-distorting attachment photos", () => {
