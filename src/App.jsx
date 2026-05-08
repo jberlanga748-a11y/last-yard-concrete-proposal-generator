@@ -96,7 +96,9 @@ import {
   formatResidentialCurrency,
   hasResidentialChooseOnePricing,
   hasResidentialOptionBreakdowns,
+  normalizeResidentialOptionImages,
   normalizeResidentialScheduleOfValues,
+  removeResidentialItemImage,
 } from "./utils/proposalPacket/residentialPricing.js";
 import {
   DEFAULT_PROPOSAL_MODE,
@@ -3543,6 +3545,269 @@ export default function App() {
     }
   }
 
+  function updateResidentialPricingOptionImage(optionIndex, imageIndex, updates) {
+    updateResidentialItemImage("pricingOptions", optionIndex, imageIndex, updates);
+  }
+
+  function updateResidentialOptionalAddOnImage(addOnIndex, imageIndex, updates) {
+    updateResidentialItemImage("optionalAddOns", addOnIndex, imageIndex, updates);
+  }
+
+  function updateResidentialItemImage(collectionKey, itemIndex, imageIndex, updates) {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    setProposalDirty(true);
+    setProposalDraft((currentProposal) => {
+      const normalizeItems = collectionKey === "optionalAddOns" ? normalizeOptionalAddOns : normalizePricingOptions;
+      const items = normalizeItems(currentProposal[collectionKey]).map((item, currentItemIndex) => {
+        if (currentItemIndex !== itemIndex) {
+          return item;
+        }
+
+        const images = normalizeResidentialOptionImages(item.images).map((image, currentImageIndex) =>
+          currentImageIndex === imageIndex
+            ? normalizeResidentialOptionImages([{ ...image, ...updates }])[0] || image
+            : image,
+        );
+
+        return {
+          ...item,
+          images,
+        };
+      });
+
+      return {
+        ...currentProposal,
+        [collectionKey]: items,
+      };
+    });
+  }
+
+  function removeResidentialPricingOptionImage(optionIndex, imageIndex) {
+    removeResidentialImageFromItem("pricingOptions", optionIndex, imageIndex);
+  }
+
+  function removeResidentialOptionalAddOnImage(addOnIndex, imageIndex) {
+    removeResidentialImageFromItem("optionalAddOns", addOnIndex, imageIndex);
+  }
+
+  function removeResidentialImageFromItem(collectionKey, itemIndex, imageIndex) {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    setProposalDirty(true);
+    setProposalDraft((currentProposal) => {
+      const normalizeItems = collectionKey === "optionalAddOns" ? normalizeOptionalAddOns : normalizePricingOptions;
+
+      return {
+        ...currentProposal,
+        [collectionKey]: removeResidentialItemImage(normalizeItems(currentProposal[collectionKey]), itemIndex, imageIndex),
+      };
+    });
+  }
+
+  async function uploadResidentialPricingOptionImage(optionIndex, file) {
+    await uploadResidentialOptionImage("pricingOptions", optionIndex, file);
+  }
+
+  async function uploadResidentialOptionalAddOnImage(addOnIndex, file) {
+    await uploadResidentialOptionImage("optionalAddOns", addOnIndex, file);
+  }
+
+  async function uploadResidentialOptionImage(collectionKey, itemIndex, file) {
+    if (!canPerform("storageUpload")) {
+      return;
+    }
+
+    if (!file) {
+      return;
+    }
+
+    const isAddOn = collectionKey === "optionalAddOns";
+    const normalizeItems = isAddOn ? normalizeOptionalAddOns : normalizePricingOptions;
+    const items = normalizeItems(proposalDraft[collectionKey]);
+    const item = items[itemIndex] || {};
+    const attemptedAt = new Date().toISOString();
+    const uploadType = isAddOn ? "Optional add-on photo" : "Pricing option photo";
+    const localReason = getAssetLocalStorageReason(authUser);
+    const fileStem = sanitizeStoragePathSegment(`${isAddOn ? "add-on" : "option"}-${itemIndex + 1}-${item.name || "photo"}`);
+    let preparedImage;
+
+    try {
+      preparedImage = await prepareImageFileForUpload(file, { kind: "featured" });
+    } catch (error) {
+      const errorMessage = formatStorageUploadError(error);
+      setStorageDiagnostics((currentDiagnostics) => ({
+        ...currentDiagnostics,
+        companyId: cloudSync.companyId || currentDiagnostics.companyId,
+        errorMessage,
+        lastAttemptedAt: attemptedAt,
+        lastFailedUploadError: errorMessage,
+        lastFileName: file.name || fileStem,
+        lastFileSize: file.size || 0,
+        lastProcessedFileSize: "",
+        lastPublicUrl: "",
+        lastStatus: "failed",
+        lastStoragePath: "",
+        lastUploadType: uploadType,
+      }));
+      setAssetUploadMessage(`Upload failed: ${errorMessage}`);
+      recordActivity({
+        action: "Image upload failed",
+        entityType: "storage",
+        entityId: proposalDraft.id,
+        entityLabel: uploadType,
+        notes: errorMessage,
+      });
+      return;
+    }
+
+    const uploadFile = preparedImage.file;
+    const preparationMessage = formatImagePreparationMessage(preparedImage);
+
+    setStorageDiagnostics((currentDiagnostics) => ({
+      ...currentDiagnostics,
+      companyId: cloudSync.companyId || currentDiagnostics.companyId,
+      errorMessage: "",
+      lastAttemptedAt: attemptedAt,
+      lastFileName: file.name || fileStem,
+      lastFileSize: file.size || 0,
+      lastProcessedFileSize: uploadFile.size || file.size || 0,
+      lastPublicUrl: "",
+      lastStatus: canUseCloudSync(authUser) ? "uploading" : "local fallback",
+      lastStoragePath: "",
+      lastUploadType: uploadType,
+    }));
+    setAssetUploadMessage(
+      canUseCloudSync(authUser)
+        ? `Uploading to cloud... ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
+        : `Saved locally only. Reason: ${localReason} ${formatSelectedFileLabel(uploadFile)}${preparationMessage ? ` ${preparationMessage}` : ""}`,
+    );
+
+    try {
+      const asset = canUseCloudSync(authUser)
+        ? await uploadProposalAssetToCloud(uploadFile, {
+            area: "option-photos",
+            companySettings,
+            companyUser: authUser,
+            companyDeps: companyCloudDeps,
+            fileStem,
+            proposalId: proposalDraft.id,
+          })
+        : await createLocalImageAsset(uploadFile);
+      const safeAsset = withImageSafetyMetadata(asset, file, preparedImage);
+      const nextProposal = createEditableProposal(
+        attachResidentialOptionImageToProposal(proposalDraft, collectionKey, itemIndex, safeAsset, authUser?.email || ""),
+      );
+
+      setProposalDirty(false);
+      setProposalDraft(nextProposal);
+      setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
+
+      if (canUseCloudSync(authUser)) {
+        await syncSingleProposalToCloud(nextProposal, "Option photo uploaded to Supabase Storage and proposal synced.");
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          companyId: safeAsset.companyId || currentDiagnostics.companyId,
+          errorMessage: "",
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || safeAsset.fileName || fileStem,
+          lastFileSize: file.size || 0,
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
+          lastPublicUrl: safeAsset.publicUrl || "",
+          lastStatus: "success",
+          lastStoragePath: safeAsset.storagePath || "",
+          lastSuccessfulImageUploadPath: safeAsset.storagePath || currentDiagnostics.lastSuccessfulImageUploadPath,
+          lastUploadType: uploadType,
+        }));
+        setAssetUploadMessage(formatUploadResultMessage(`Uploaded to Supabase Storage: ${safeAsset.storagePath}.`, safeAsset, preparedImage));
+        recordActivity({
+          action: "Image upload succeeded",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: safeAsset.storagePath,
+        });
+      } else {
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          errorMessage: `Saved locally only. Reason: ${localReason}`,
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || safeAsset.fileName || fileStem,
+          lastFileSize: file.size || 0,
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
+          lastPublicUrl: "",
+          lastStatus: "local fallback",
+          lastStoragePath: "",
+          lastUploadType: uploadType,
+        }));
+        setAssetUploadMessage(formatUploadResultMessage(`Saved locally only. Reason: ${localReason}`, safeAsset, preparedImage));
+        recordActivity({
+          action: "Image upload succeeded",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: `Saved locally only. Reason: ${localReason}`,
+        });
+      }
+    } catch (error) {
+      console.error("Option photo upload failed:", error);
+      const errorMessage = formatStorageUploadError(error);
+
+      try {
+        const localAsset = withImageSafetyMetadata(await createLocalImageAsset(uploadFile), file, preparedImage);
+        const nextProposal = createEditableProposal(
+          attachResidentialOptionImageToProposal(proposalDraft, collectionKey, itemIndex, localAsset, authUser?.email || ""),
+        );
+
+        setProposalDirty(false);
+        setProposalDraft(nextProposal);
+        setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          errorMessage,
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || localAsset.fileName || fileStem,
+          lastFileSize: file.size || 0,
+          lastFailedUploadError: errorMessage,
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
+          lastPublicUrl: "",
+          lastStatus: "local fallback",
+          lastStoragePath: "",
+          lastUploadType: uploadType,
+        }));
+        setAssetUploadMessage(formatUploadResultMessage(`Cloud upload failed: ${errorMessage}. Saved locally only. Reason: cloud upload failed.`, localAsset, preparedImage));
+        recordActivity({
+          action: "Image upload failed",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: errorMessage,
+        });
+      } catch (localError) {
+        console.error("Local option photo fallback failed:", localError);
+        const localErrorMessage = formatStorageUploadError(localError);
+        setStorageDiagnostics((currentDiagnostics) => ({
+          ...currentDiagnostics,
+          errorMessage: `${errorMessage} Local fallback failed: ${localErrorMessage}`,
+          lastAttemptedAt: attemptedAt,
+          lastFileName: file.name || fileStem,
+          lastFileSize: file.size || 0,
+          lastFailedUploadError: `${errorMessage} Local fallback failed: ${localErrorMessage}`,
+          lastProcessedFileSize: uploadFile.size || file.size || 0,
+          lastPublicUrl: "",
+          lastStatus: "failed",
+          lastStoragePath: "",
+          lastUploadType: uploadType,
+        }));
+        setAssetUploadMessage(`Cloud upload failed: ${errorMessage}. Local fallback failed: ${localErrorMessage}`);
+      }
+    }
+  }
+
   function updatePlanSheet(index, field, value) {
     if (!canPerform("editProposal")) {
       return;
@@ -4856,6 +5121,12 @@ export default function App() {
                 onScopeTitleChange={updateScopeSectionTitle}
                 onConcreteSpecChange={updateConcreteSpec}
                 onGcPrimeChange={updateGcPrimeField}
+                onPricingOptionImageChange={updateResidentialPricingOptionImage}
+                onPricingOptionImageRemove={removeResidentialPricingOptionImage}
+                onPricingOptionImageUpload={uploadResidentialPricingOptionImage}
+                onOptionalAddOnImageChange={updateResidentialOptionalAddOnImage}
+                onOptionalAddOnImageRemove={removeResidentialOptionalAddOnImage}
+                onOptionalAddOnImageUpload={uploadResidentialOptionalAddOnImage}
                 onProjectPhotoChange={updateProjectPhoto}
                 onProjectPhotoUpload={uploadProjectPhoto}
                 onAddPlanSheet={addPlanSheet}
@@ -7442,6 +7713,12 @@ function ProposalEditor({
   onGcPrimeChange,
   onProjectPhotoChange,
   onProjectPhotoUpload,
+  onPricingOptionImageChange,
+  onPricingOptionImageRemove,
+  onPricingOptionImageUpload,
+  onOptionalAddOnImageChange,
+  onOptionalAddOnImageRemove,
+  onOptionalAddOnImageUpload,
   onAddPlanSheet,
   onPlanSheetChange,
   onPlanSheetImageUpload,
@@ -7789,7 +8066,16 @@ function ProposalEditor({
           <a href="#pricing-alternates-section" onClick={(event) => openEditorAccordionSection(event, "pricing-alternates-section")}>Alternates / Allowances</a>
           <a href="#pricing-summary" onClick={(event) => openEditorAccordionSection(event, "pricing-section")}>Pricing Summary</a>
         </nav>
-        <ResidentialPricingOptionsEditorSummary proposal={proposal} />
+        <ResidentialPricingOptionsEditorSummary
+          addOnImageChange={onOptionalAddOnImageChange}
+          addOnImageRemove={onOptionalAddOnImageRemove}
+          addOnImageUpload={onOptionalAddOnImageUpload}
+          message={assetUploadMessage}
+          optionImageChange={onPricingOptionImageChange}
+          optionImageRemove={onPricingOptionImageRemove}
+          optionImageUpload={onPricingOptionImageUpload}
+          proposal={proposal}
+        />
         <LineItemEditor
           lineItems={proposal.lineItems}
           priceLibrary={priceLibrary}
@@ -9662,6 +9948,47 @@ function withImageSafetyMetadata(asset = {}, originalFile = {}, preparedImage = 
     fileSize: preparedImage.file?.size || asset.fileSize || originalFile.size || 0,
     originalFileName: originalFile.name || asset.originalFileName || asset.fileName || "",
     originalFileSize: originalFile.size || asset.originalFileSize || asset.fileSize || 0,
+  };
+}
+
+function attachResidentialOptionImageToProposal(proposal = {}, collectionKey, itemIndex, asset = {}, uploadedBy = "") {
+  const normalizeItems = collectionKey === "optionalAddOns" ? normalizeOptionalAddOns : normalizePricingOptions;
+  const items = normalizeItems(proposal[collectionKey]).map((item, currentItemIndex) => {
+    if (currentItemIndex !== itemIndex) {
+      return item;
+    }
+
+    const existingImages = normalizeResidentialOptionImages(item.images);
+    const placeholderIndex = existingImages.findIndex((image) => !getImageAssetSource(image));
+    const placeholder = placeholderIndex >= 0 ? existingImages[placeholderIndex] : {};
+    const placeholderCaption = /upload|smart paste/i.test(placeholder.caption || "") ? "" : placeholder.caption;
+    const uploadedImage = normalizeResidentialOptionImages([
+      {
+        ...placeholder,
+        ...asset,
+        label: placeholder.label || `${item.name || "Option"} photo`,
+        caption: placeholderCaption || asset.caption || placeholder.label || "",
+        uploadedAt: asset.uploadedAt || new Date().toISOString(),
+        uploadedBy: uploadedBy || placeholder.uploadedBy || "",
+        uploadRequired: false,
+      },
+    ])[0];
+
+    const images =
+      placeholderIndex >= 0
+        ? existingImages.map((image, currentImageIndex) => (currentImageIndex === placeholderIndex ? uploadedImage : image))
+        : [...existingImages, uploadedImage];
+
+    return {
+      ...item,
+      images: images.filter(Boolean),
+    };
+  });
+
+  return {
+    ...proposal,
+    [collectionKey]: items,
+    updatedAt: new Date().toISOString(),
   };
 }
 
@@ -12355,7 +12682,16 @@ function normalizePricingSections(pricingSections = []) {
   }));
 }
 
-function ResidentialPricingOptionsEditorSummary({ proposal }) {
+function ResidentialPricingOptionsEditorSummary({
+  addOnImageChange,
+  addOnImageRemove,
+  addOnImageUpload,
+  message = "",
+  optionImageChange,
+  optionImageRemove,
+  optionImageUpload,
+  proposal,
+}) {
   if (!hasResidentialChooseOnePricing(proposal)) {
     return null;
   }
@@ -12369,19 +12705,104 @@ function ResidentialPricingOptionsEditorSummary({ proposal }) {
         <span>Customer to Select One Pricing Option</span>
         <strong>{formatResidentialCurrency(options.find((option) => option.selected || option.included)?.price || options[0]?.price || 0)}</strong>
       </div>
-      {options.map((option) => (
-        <div key={option.id || option.name}>
-          <span>{option.name}</span>
-          <strong>{formatResidentialCurrency(option.price)}</strong>
+      {message ? <p className="asset-upload-message">{message}</p> : null}
+      {options.map((option, optionIndex) => (
+        <div className="residential-option-editor-card" key={option.id || option.name}>
+          <div className="residential-option-editor-row">
+            <span>{option.name}</span>
+            <strong>{formatResidentialCurrency(option.price)}</strong>
+          </div>
+          <ResidentialOptionPhotosEditor
+            images={option.images}
+            itemLabel={option.name}
+            onCaptionChange={(imageIndex, value) => optionImageChange?.(optionIndex, imageIndex, { caption: value })}
+            onRemove={(imageIndex) => optionImageRemove?.(optionIndex, imageIndex)}
+            onUpload={(file) => optionImageUpload?.(optionIndex, file)}
+          />
         </div>
       ))}
       {addOns.length > 0 ? (
-        <div>
+        <div className="residential-add-on-editor-group">
           <span>Optional Add-On</span>
-          <strong>{addOns.map((addOn) => `${addOn.name}: ${formatResidentialCurrency(addOn.amount, { plus: true })}`).join(", ")}</strong>
+          {addOns.map((addOn, addOnIndex) => (
+            <div className="residential-option-editor-card" key={addOn.id || addOn.name}>
+              <div className="residential-option-editor-row">
+                <span>{addOn.name}</span>
+                <strong>{formatResidentialCurrency(addOn.amount, { plus: true })}</strong>
+              </div>
+              <ResidentialOptionPhotosEditor
+                images={addOn.images}
+                itemLabel={addOn.name}
+                onCaptionChange={(imageIndex, value) => addOnImageChange?.(addOnIndex, imageIndex, { caption: value })}
+                onRemove={(imageIndex) => addOnImageRemove?.(addOnIndex, imageIndex)}
+                onUpload={(file) => addOnImageUpload?.(addOnIndex, file)}
+              />
+            </div>
+          ))}
         </div>
       ) : null}
       <p className="pricing-helper-text">Main options are mutually exclusive. Optional add-ons are separate from the selected option.</p>
+    </div>
+  );
+}
+
+function ResidentialOptionPhotosEditor({ images = [], itemLabel = "Pricing option", onCaptionChange, onRemove, onUpload }) {
+  const normalizedImages = normalizeResidentialOptionImages(images);
+
+  function handleUpload(file) {
+    if (!file) {
+      return;
+    }
+
+    onUpload?.(file);
+  }
+
+  return (
+    <div className="residential-option-photos-editor">
+      <div className="residential-option-photos-heading">
+        <span>Option Photos</span>
+        <label className="editor-secondary-file-button">
+          Upload image
+          <input type="file" accept="image/*" onChange={(event) => handleUpload(event.target.files?.[0])} />
+        </label>
+      </div>
+      {normalizedImages.length > 0 ? (
+        <div className="residential-option-photo-list">
+          {normalizedImages.map((image, imageIndex) => {
+            const source = getImageAssetSource(image);
+
+            return (
+              <div className="residential-option-photo-editor-card" key={image.id || `${itemLabel}-${imageIndex}`}>
+                <div className="residential-option-photo-preview">
+                  {source ? <img src={source} alt={image.caption || image.label || itemLabel} /> : <span>{image.label || "Photo reminder"}</span>}
+                </div>
+                <div className="residential-option-photo-fields">
+                  <span className="asset-source-badge">{source ? getImageAssetLabel(image) : "Upload reminder"}</span>
+                  {image.fileName ? (
+                    <span className="asset-upload-detail">
+                      {image.fileName} {image.fileSize ? `| ${formatAssetFileSize(image.fileSize)}` : ""}
+                    </span>
+                  ) : null}
+                  <label className="editor-field">
+                    <span>Caption</span>
+                    <input
+                      type="text"
+                      value={image.caption}
+                      placeholder={image.label || "Finish photo caption"}
+                      onChange={(event) => onCaptionChange?.(imageIndex, event.target.value)}
+                    />
+                  </label>
+                  <button className="editor-secondary-button" type="button" onClick={() => onRemove?.(imageIndex)}>
+                    Remove photo
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="pricing-helper-text">No option photos yet. Upload finish or add-on examples for the customer packet.</p>
+      )}
     </div>
   );
 }
@@ -12406,6 +12827,7 @@ function normalizePricingOptions(pricingOptions = []) {
         finalPayment: toEditableNumber(option?.finalPayment) || price / 2,
         included: Boolean(option?.included === true || option?.selected === true || (!hasExplicitSelection && index === 0)),
         selected: Boolean(option?.selected === true || option?.included === true || (!hasExplicitSelection && index === 0)),
+        images: normalizeResidentialOptionImages(option?.images || option?.optionPhotos || option?.photos),
         scheduleOfValues: normalizeResidentialScheduleOfValues(
           option?.scheduleOfValues ?? option?.sov ?? option?.breakdown ?? option?.optionBreakdown,
         ),
@@ -12428,6 +12850,7 @@ function normalizeOptionalAddOns(optionalAddOns = []) {
       appliesTo: Array.isArray(addOn?.appliesTo) ? addOn.appliesTo : [],
       included: Boolean(addOn?.included ?? addOn?.selected),
       selected: Boolean(addOn?.selected ?? addOn?.included),
+      images: normalizeResidentialOptionImages(addOn?.images || addOn?.optionPhotos || addOn?.photos),
     }))
     .filter((addOn) => addOn.name && addOn.amount > 0);
 }

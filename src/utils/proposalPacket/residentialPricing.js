@@ -63,9 +63,117 @@ export function buildResidentialPricingOptionRows(proposal = {}) {
       downPayment: toResidentialPricingNumber(option.downPayment) || basePrice / 2,
       finalPayment: toResidentialPricingNumber(option.finalPayment) || basePrice / 2,
       comparisonAddOn,
+      images: normalizeResidentialOptionImages(option.images),
       withAddOnTotal,
       withAddOnDownPayment: withAddOnTotal > 0 ? withAddOnTotal / 2 : 0,
       withAddOnFinalPayment: withAddOnTotal > 0 ? withAddOnTotal / 2 : 0,
+    };
+  });
+}
+
+export function normalizeResidentialOptionImages(images = []) {
+  if (!Array.isArray(images)) {
+    return [];
+  }
+
+  return images
+    .map((image, index) => {
+      if (!image || typeof image !== "object") {
+        return null;
+      }
+
+      const source = cleanResidentialText(
+        image.dataUrl || image.src || image.imageSrc || image.publicUrl || image.signedUrl || image.storagePath,
+      );
+      const label = cleanResidentialText(image.label || image.name || (source ? `Option photo ${index + 1}` : ""));
+      const caption = cleanResidentialText(image.caption || image.description || image.notes);
+      const uploadRequired = Boolean(image.uploadRequired);
+
+      if (!source && !label && !caption && !uploadRequired) {
+        return null;
+      }
+
+      return {
+        id:
+          cleanResidentialText(image.id) ||
+          `option-photo-${index + 1}-${normalizeResidentialKey(label || caption || source || "placeholder").slice(0, 24)}`,
+        label,
+        caption,
+        fileName: cleanResidentialText(image.fileName || image.originalFileName || image.name),
+        fileSize: toResidentialPricingNumber(image.fileSize),
+        fileType: cleanResidentialText(image.fileType || image.type),
+        dataUrl: cleanResidentialText(image.dataUrl),
+        src: cleanResidentialText(image.src || image.imageSrc),
+        imageSrc: cleanResidentialText(image.imageSrc || image.src),
+        publicUrl: cleanResidentialText(image.publicUrl),
+        signedUrl: cleanResidentialText(image.signedUrl),
+        storagePath: cleanResidentialText(image.storagePath),
+        uploadedAt: cleanResidentialText(image.uploadedAt),
+        uploadedBy: cleanResidentialText(image.uploadedBy || image.uploadedByEmail || image.uploadedByUserId),
+        uploadRequired,
+      };
+    })
+    .filter(Boolean);
+}
+
+export function hasResidentialOptionImageSource(image = {}) {
+  const source = cleanResidentialText(image.dataUrl || image.src || image.imageSrc || image.publicUrl || image.signedUrl || image.storagePath);
+
+  return Boolean(
+    source && !/^(upload|uploaded|placeholder|none|n\/a)\s*(image|photo|file)?$/i.test(source) && !/upload\s+(image|photo)/i.test(source),
+  );
+}
+
+export function getPrintableResidentialOptionImages(images = []) {
+  return normalizeResidentialOptionImages(images).filter(hasResidentialOptionImageSource);
+}
+
+export function countResidentialOptionImagePlaceholders(proposal = {}) {
+  const options = getResidentialPricingOptions(proposal);
+  const addOns = getResidentialOptionalAddOns(proposal);
+
+  return [...options, ...addOns].reduce(
+    (count, item) =>
+      count +
+      normalizeResidentialOptionImages(item.images).filter((image) => !hasResidentialOptionImageSource(image)).length,
+    0,
+  );
+}
+
+export function replaceResidentialItemImage(items = [], itemIndex, imageIndex, nextImage = {}) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.map((item, currentItemIndex) => {
+    if (currentItemIndex !== itemIndex) {
+      return item;
+    }
+
+    const images = normalizeResidentialOptionImages(item?.images);
+    const normalizedImage = normalizeResidentialOptionImages([nextImage])[0];
+    const nextImages = images.map((image, currentImageIndex) => (currentImageIndex === imageIndex ? normalizedImage : image)).filter(Boolean);
+
+    return {
+      ...item,
+      images: nextImages,
+    };
+  });
+}
+
+export function removeResidentialItemImage(items = [], itemIndex, imageIndex) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  return items.map((item, currentItemIndex) => {
+    if (currentItemIndex !== itemIndex) {
+      return item;
+    }
+
+    return {
+      ...item,
+      images: normalizeResidentialOptionImages(item?.images).filter((_, currentImageIndex) => currentImageIndex !== imageIndex),
     };
   });
 }
@@ -198,6 +306,7 @@ export function normalizeResidentialPricingOptions(pricingOptions = []) {
         finalPayment: toResidentialPricingNumber(option.finalPayment) || price / 2,
         included: Boolean(option.included === true || option.selected === true || (!hasExplicitSelection && index === 0)),
         selected: Boolean(option.selected === true || option.included === true || (!hasExplicitSelection && index === 0)),
+        images: normalizeResidentialOptionImages(option.images || option.optionPhotos || option.photos),
         scheduleOfValues: normalizeResidentialScheduleOfValues(
           option.scheduleOfValues ?? option.sov ?? option.breakdown ?? option.optionBreakdown,
         ),
@@ -232,6 +341,7 @@ export function normalizeResidentialOptionalAddOns(optionalAddOns = []) {
         appliesTo: Array.isArray(addOn.appliesTo) ? addOn.appliesTo.map(cleanResidentialText).filter(Boolean) : [],
         included: Boolean(addOn.included === true || addOn.selected === true),
         selected: Boolean(addOn.selected === true || addOn.included === true),
+        images: normalizeResidentialOptionImages(addOn.images || addOn.optionPhotos || addOn.photos),
       };
     })
     .filter(Boolean);

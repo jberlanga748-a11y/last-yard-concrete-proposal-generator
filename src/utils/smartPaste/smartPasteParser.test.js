@@ -1011,6 +1011,13 @@ ${JSON.stringify(
           downPayment: 41250,
           finalPayment: 41250,
           included: true,
+          images: [
+            {
+              label: "Broom finish example",
+              caption: "Upload broom finish example photo after Smart Paste.",
+              uploadRequired: true,
+            },
+          ],
           scheduleOfValues: [
             { item: "10 Day Crew Labor", amount: 56000 },
             { item: "Concrete Demo / Removal / Haul-Off", amount: 5500 },
@@ -1025,6 +1032,14 @@ ${JSON.stringify(
           downPayment: 48750,
           finalPayment: 48750,
           included: false,
+          images: [
+            {
+              label: "Stamped finish example",
+              caption: "Stamped finish sample",
+              src: "data:image/png;base64,stamped",
+              fileName: "stamped.png",
+            },
+          ],
           scheduleOfValues: [
             { item: "10 Day Crew Labor", amount: 56000 },
             { item: "Concrete Demo / Removal / Haul-Off", amount: 5500 },
@@ -1054,6 +1069,13 @@ ${JSON.stringify(
           amount: 8500,
           description: "Optional upgrade to selected option.",
           appliesTo: ["Option 1", "Option 2", "Option 3"],
+          images: [
+            {
+              label: "Cantilever stair example",
+              caption: "Upload cantilever stair example photo after Smart Paste.",
+              uploadRequired: true,
+            },
+          ],
         },
       ],
       alternates: [],
@@ -1074,6 +1096,9 @@ ${JSON.stringify(
   assert.equal(result.proposal.pricingOptions[0].price, 82500);
   assert.equal(result.proposal.pricingOptions[0].downPayment, 41250);
   assert.equal(result.proposal.pricingOptions[0].finalPayment, 41250);
+  assert.equal(result.proposal.pricingOptions[0].images[0].label, "Broom finish example");
+  assert.equal(result.proposal.pricingOptions[0].images[0].uploadRequired, true);
+  assert.equal(result.proposal.pricingOptions[1].images[0].src, "data:image/png;base64,stamped");
   assert.equal(result.proposal.pricingOptions[0].scheduleOfValues.length, 5);
   assert.equal(result.proposal.pricingOptions[1].scheduleOfValues.length, 5);
   assert.equal(result.proposal.pricingOptions[2].scheduleOfValues.length, 5);
@@ -1084,6 +1109,7 @@ ${JSON.stringify(
   assert.equal(result.proposal.optionalAddOns.length, 1);
   assert.equal(result.proposal.optionalAddOns[0].name, "Cantilever-Style Stair Upgrade");
   assert.equal(result.proposal.optionalAddOns[0].amount, 8500);
+  assert.equal(result.proposal.optionalAddOns[0].images[0].label, "Cantilever stair example");
   assert.equal(result.proposal.lineItems.length, 1);
   assert.equal(result.proposal.lineItems[0].description, "Option 1 - Full Scope With Broom Finish");
   assert.equal(result.proposal.lineItems[0].unitPrice, 82500);
@@ -1097,9 +1123,12 @@ ${JSON.stringify(
   assert.equal(result.summary.hideTotalIfAllAccepted, true);
   assert.equal(result.summary.pricingOptions.length, 3);
   assert.equal(result.summary.optionalAddOns.length, 1);
+  assert.equal(result.summary.pricingOptions[0].images[0].label, "Broom finish example");
+  assert.equal(result.summary.optionalAddOns[0].images[0].uploadRequired, true);
   assert.equal(result.summary.scheduleOfValuesCount, 15);
   assert.ok(result.summary.applyTargets.includes("Schedule of Values"));
   assert.match(warningText(result), /Residential pricing options detected/);
+  assert.match(warningText(result), /Image placeholders detected/);
 });
 
 test("infers residential choose-one pricing from rough option notes", () => {

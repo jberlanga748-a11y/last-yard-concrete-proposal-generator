@@ -19,6 +19,7 @@ import {
   getResidentialCoverDescription,
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
+  getPrintableResidentialOptionImages,
   hasResidentialChooseOnePricing,
 } from "../../utils/proposalPacket/residentialPricing.js";
 import {
@@ -1301,6 +1302,7 @@ function PricingTable({ items, total }) {
 }
 
 function ResidentialPricingOptionsTable({ proposal }) {
+  const { getImageAssetSource } = usePacketHelpers();
   const addOns = getResidentialOptionalAddOns(proposal);
   const optionRows = buildResidentialPricingOptionRows(proposal);
   const comparisonAddOn = getResidentialComparisonAddOn(addOns);
@@ -1356,18 +1358,58 @@ function ResidentialPricingOptionsTable({ proposal }) {
                 </>
               ) : null}
             </div>
+            <ResidentialOptionPhotoStrip images={option.images} getImageAssetSource={getImageAssetSource} />
           </section>
         ))}
       </div>
 
-      {comparisonAddOn ? (
-        <div className="residential-add-on-callout">
-          <strong>Optional Add-On:</strong> {comparisonAddOn.name} {formatResidentialCurrency(comparisonAddOn.amount, { plus: true })}
-          {comparisonAddOn.description ? <span>{comparisonAddOn.description}</span> : null}
+      {addOns.length > 0 ? (
+        <div className="residential-add-on-callouts">
+          {addOns.map((addOn) => (
+            <div className="residential-add-on-callout" key={addOn.id || addOn.name}>
+              <strong>Optional Add-On:</strong> {addOn.name} {formatResidentialCurrency(addOn.amount, { plus: true })}
+              {addOn.description ? <span>{addOn.description}</span> : null}
+              <ResidentialOptionPhotoStrip images={addOn.images} getImageAssetSource={getImageAssetSource} />
+            </div>
+          ))}
         </div>
       ) : null}
     </div>
   );
+}
+
+function ResidentialOptionPhotoStrip({ images = [], getImageAssetSource }) {
+  const printableImages = getPrintableResidentialOptionImages(images)
+    .map((image) => ({
+      ...image,
+      source: getImageAssetSource(image),
+    }))
+    .filter((image) => image.source);
+
+  if (printableImages.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="residential-option-photo-strip">
+      {printableImages.map((image, index) => (
+        <figure className="residential-option-photo" key={image.id || `${image.source}-${index}`}>
+          <img src={image.source} alt={getResidentialOptionPhotoCaption(image) || "Residential option photo"} />
+          {getResidentialOptionPhotoCaption(image) ? <figcaption>{getResidentialOptionPhotoCaption(image)}</figcaption> : null}
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+function getResidentialOptionPhotoCaption(image = {}) {
+  const caption = cleanPrintableText(image.caption);
+
+  if (caption && !/upload|smart paste/i.test(caption)) {
+    return caption;
+  }
+
+  return cleanPrintableText(image.label);
 }
 
 function AlternatesAllowancesTable({ sections, totals }) {

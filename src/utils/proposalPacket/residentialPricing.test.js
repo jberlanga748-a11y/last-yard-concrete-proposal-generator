@@ -7,8 +7,10 @@ import {
   buildResidentialPaymentTermsCopy,
   buildResidentialOptionBreakdowns,
   buildResidentialPricingOptionRows,
+  countResidentialOptionImagePlaceholders,
   formatResidentialCurrency,
   formatResidentialMoneyText,
+  getPrintableResidentialOptionImages,
   getResidentialCoverDescription,
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
@@ -16,6 +18,8 @@ import {
   getResidentialPricingOptions,
   hasResidentialChooseOnePricing,
   normalizeResidentialPricingOptions,
+  normalizeResidentialOptionalAddOns,
+  removeResidentialItemImage,
 } from "./residentialPricing.js";
 
 const residentialProposal = {
@@ -34,6 +38,13 @@ const residentialProposal = {
         { item: "Concrete / Rebar / Forms / Wall Footing Materials", amount: 9500 },
         { item: "Broom Finish / Detailing / Cleanup", amount: 4000 },
       ],
+      images: [
+        {
+          label: "Broom finish example",
+          caption: "Upload broom finish example photo after Smart Paste.",
+          uploadRequired: true,
+        },
+      ],
     },
     {
       name: "Option 2 - Full Scope With Stamped Finish",
@@ -47,6 +58,15 @@ const residentialProposal = {
         { item: "Dirt and Gravel Area Prep", amount: 7500 },
         { item: "Concrete / Rebar / Forms / Wall Footing Materials", amount: 9500 },
         { item: "Stamped Finish Labor / Pattern Work / Cleanup", amount: 19000 },
+      ],
+      images: [
+        {
+          label: "Stamped finish example",
+          caption: "Stamped finish sample",
+          src: "data:image/png;base64,stamped",
+          fileName: "stamped.png",
+          fileSize: 1200,
+        },
       ],
     },
     {
@@ -70,6 +90,13 @@ const residentialProposal = {
       amount: 8500,
       description: "Optional upgrade to selected option.",
       appliesTo: ["Option 1", "Option 2", "Option 3"],
+      images: [
+        {
+          label: "Cantilever stair example",
+          caption: "Upload cantilever stair example photo after Smart Paste.",
+          uploadRequired: true,
+        },
+      ],
     },
   ],
 };
@@ -91,6 +118,47 @@ test("normalizes all residential pricing options and keeps JSON amounts numeric"
   assert.equal(options[1].included, false);
   assert.equal(options[2].included, false);
   assert.equal(options[0].scheduleOfValues.length, 5);
+  assert.equal(options[0].images[0].label, "Broom finish example");
+  assert.equal(options[0].images[0].uploadRequired, true);
+  assert.equal(options[1].images[0].src, "data:image/png;base64,stamped");
+});
+
+test("preserves optional add-on image placeholders from Smart Paste JSON", () => {
+  const addOns = normalizeResidentialOptionalAddOns(residentialProposal.optionalAddOns);
+
+  assert.equal(addOns.length, 1);
+  assert.equal(addOns[0].images.length, 1);
+  assert.equal(addOns[0].images[0].label, "Cantilever stair example");
+  assert.equal(addOns[0].images[0].uploadRequired, true);
+});
+
+test("prints uploaded option images but hides placeholder-only images", () => {
+  const options = normalizeResidentialPricingOptions(residentialProposal.pricingOptions);
+
+  assert.equal(getPrintableResidentialOptionImages(options[0].images).length, 0);
+  assert.equal(getPrintableResidentialOptionImages(options[1].images).length, 1);
+  assert.equal(getPrintableResidentialOptionImages([{ label: "Upload", src: "UPLOAD IMAGE" }]).length, 0);
+  assert.equal(countResidentialOptionImagePlaceholders(residentialProposal), 2);
+});
+
+test("removing residential images only affects the selected option or add-on", () => {
+  const options = normalizeResidentialPricingOptions([
+    {
+      name: "Option 1",
+      price: 100,
+      images: [{ label: "Option 1 image", src: "data:image/png;base64,one" }],
+    },
+    {
+      name: "Option 2",
+      price: 200,
+      images: [{ label: "Option 2 image", src: "data:image/png;base64,two" }],
+    },
+  ]);
+  const nextOptions = removeResidentialItemImage(options, 0, 0);
+
+  assert.equal(nextOptions[0].images.length, 0);
+  assert.equal(nextOptions[1].images.length, 1);
+  assert.equal(nextOptions[1].images[0].label, "Option 2 image");
 });
 
 test("builds option-specific SOV breakdowns for every main option", () => {

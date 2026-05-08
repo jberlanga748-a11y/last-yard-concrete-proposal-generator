@@ -4092,6 +4092,113 @@ h4 {
   line-height: 1.35;
 }
 
+.residential-option-editor-card,
+.residential-add-on-editor-group {
+  display: grid !important;
+  gap: 10px !important;
+  align-items: stretch !important;
+  border: 1px solid rgba(6, 43, 69, 0.12);
+  border-radius: 9px;
+  background: white;
+  padding: 10px;
+}
+
+.residential-add-on-editor-group > span {
+  color: var(--body);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.residential-option-editor-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.residential-option-photos-editor {
+  display: grid !important;
+  gap: 9px;
+}
+
+.residential-option-photos-heading {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.residential-option-photos-heading span {
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.editor-secondary-file-button {
+  position: relative;
+  display: inline-flex;
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: white;
+  color: var(--blue);
+  cursor: pointer;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 850;
+  outline: 1px solid #c9d1dc;
+}
+
+.editor-secondary-file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.residential-option-photo-list {
+  display: grid !important;
+  gap: 9px;
+}
+
+.residential-option-photo-editor-card {
+  display: grid !important;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid rgba(6, 43, 69, 0.1);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 9px;
+}
+
+.residential-option-photo-preview {
+  display: grid !important;
+  overflow: hidden;
+  min-height: 78px;
+  place-items: center;
+  border-radius: 7px;
+  background: white;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-align: center;
+}
+
+.residential-option-photo-preview img {
+  display: block;
+  width: 100%;
+  height: 82px;
+  object-fit: cover;
+}
+
+.residential-option-photo-fields {
+  display: grid !important;
+  gap: 7px;
+}
+
 .preview-pane {
   width: 100%;
   min-width: 0;
@@ -5804,6 +5911,48 @@ h4 {
   color: var(--body);
 }
 
+.residential-add-on-callouts {
+  display: grid;
+  gap: 10px;
+}
+
+.residential-option-photo-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  border-top: 1px solid rgba(6, 43, 69, 0.1);
+  margin-top: 10px;
+  padding: 10px 12px 12px;
+}
+
+.residential-add-on-callout .residential-option-photo-strip {
+  border-top-color: rgba(202, 162, 75, 0.35);
+  margin: 8px -2px 0;
+  padding: 8px 0 0;
+}
+
+.residential-option-photo {
+  break-inside: avoid;
+  margin: 0;
+  page-break-inside: avoid;
+}
+
+.residential-option-photo img {
+  display: block;
+  width: 100%;
+  height: 88px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.residential-option-photo figcaption {
+  margin-top: 4px;
+  color: var(--body);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
 .residential-print-section {
   break-inside: avoid;
   page-break-inside: avoid;
@@ -5999,6 +6148,7 @@ h4 {
     .footer-details,
     .plan-sheet-editor-grid,
     .plan-sheet-upload-row,
+    .residential-option-photo-editor-card,
     .packet-row-grid,
     .backup-grid,
     .backup-button-grid {
@@ -7139,6 +7289,20 @@ h4 {
 
   .proposal-page.residential-pricing-page .residential-add-on-callout {
     font-size: 11px;
+  }
+
+  .proposal-page.residential-pricing-page .residential-option-photo-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding: 7px 10px 10px;
+  }
+
+  .proposal-page.residential-pricing-page .residential-option-photo img {
+    height: 72px;
+  }
+
+  .proposal-page.residential-pricing-page .residential-option-photo figcaption {
+    font-size: 8.5px;
   }
 
   .proposal-page.residential-scope-page .section-pad,

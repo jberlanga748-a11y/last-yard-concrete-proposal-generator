@@ -7,7 +7,11 @@ import {
   mergeSmartPasteCoverValues,
 } from "./smartPasteCoverFields.js";
 import { isSmartPasteJsonImportNotes, normalizeSmartPasteNotes } from "./smartPasteNormalizer.js";
-import { normalizeResidentialScheduleOfValues } from "../proposalPacket/residentialPricing.js";
+import {
+  countResidentialOptionImagePlaceholders,
+  normalizeResidentialOptionImages,
+  normalizeResidentialScheduleOfValues,
+} from "../proposalPacket/residentialPricing.js";
 import {
   DEFAULT_PROPOSAL_MODE,
   getPacketModeForProposalMode,
@@ -323,6 +327,10 @@ function getSmartPasteReviewWarnings(proposal = {}, parsedNotes = {}) {
     warnings.push("Residential pricing options detected. Confirm which option the customer accepted before sending.");
   } else if (optionalScopeDetected) {
     warnings.push("Optional scope detected. Confirm whether it is excluded from the base bid before sending.");
+  }
+
+  if (countResidentialOptionImagePlaceholders(proposal) > 0) {
+    warnings.push("Image placeholders detected for pricing options. Upload photos after applying.");
   }
 
   totalRows.forEach((row) => {
@@ -1046,6 +1054,7 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
       finalPayment: toEditableNumber(option.finalPayment) || toEditableNumber(option.price) / 2,
       included: option.included === true || option.selected === true || (!hasExplicitSelectedOption && index === 0),
       selected: option.selected === true || option.included === true || (!hasExplicitSelectedOption && index === 0),
+      images: normalizeResidentialOptionImages(option.images),
       scheduleOfValues: normalizeResidentialScheduleOfValues(option.scheduleOfValues),
     }));
     fields.push("pricing options");
@@ -1060,6 +1069,7 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
       appliesTo: Array.isArray(addOn.appliesTo) ? addOn.appliesTo : [],
       included: addOn.included === true || addOn.selected === true,
       selected: addOn.selected === true || addOn.included === true,
+      images: normalizeResidentialOptionImages(addOn.images),
     })).filter((addOn) => addOn.amount > 0);
     fields.push("optional add-ons");
   }
