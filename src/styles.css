@@ -5669,6 +5669,176 @@ h4 {
   font-weight: 950;
 }
 
+.residential-page-body {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+}
+
+.residential-pricing-options-wrap {
+  display: grid;
+  gap: 14px;
+}
+
+.residential-pricing-heading {
+  border-left: 4px solid var(--gold);
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.residential-pricing-heading h4 {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.residential-pricing-heading span {
+  display: block;
+  margin-top: 3px;
+  color: var(--body);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.residential-pricing-option-cards {
+  display: grid;
+  gap: 12px;
+}
+
+.residential-pricing-option-card {
+  break-inside: avoid;
+  border: 1px solid var(--line);
+  background: white;
+  page-break-inside: avoid;
+}
+
+.residential-option-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  background: var(--navy);
+  color: white;
+  padding: 10px 12px;
+}
+
+.residential-option-card-heading h5 {
+  color: white;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.03em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.residential-option-card-heading strong {
+  color: white;
+  font-size: 16px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.residential-pricing-option-card > p {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 12px;
+  color: var(--body);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.residential-option-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.residential-option-metrics p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  padding: 8px 10px;
+  color: var(--body);
+  font-size: 10.5px;
+}
+
+.residential-option-metrics p:nth-child(-n + 3) {
+  border-top: 0;
+}
+
+.residential-option-metrics p:nth-child(3n) {
+  border-right: 0;
+}
+
+.residential-option-metrics span {
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.residential-option-metrics strong {
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.residential-add-on-callout {
+  border: 1px solid rgba(202, 162, 75, 0.5);
+  background: #fffaf0;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.residential-add-on-callout strong {
+  font-weight: 950;
+}
+
+.residential-add-on-callout span {
+  display: block;
+  margin-top: 3px;
+  color: var(--body);
+}
+
+.residential-print-section {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.residential-print-section h3 {
+  border-bottom: 2px solid var(--gold);
+  padding-bottom: 7px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.residential-scope-grid {
+  padding: 10px 0 0;
+}
+
+.residential-clean-list {
+  margin-top: 10px;
+}
+
+.residential-empty-note,
+.residential-terms-copy {
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.residential-terms-body {
+  align-content: start;
+  gap: 28px;
+}
+
 .structured-packet-table.pricing-summary th:nth-child(2),
 .structured-packet-table.pricing-summary td:nth-child(2),
 .structured-packet-table.scheduleOfValues th:last-child,
@@ -6928,6 +7098,76 @@ h4 {
     gap: 1px 16px;
     font-size: 8px;
     line-height: 1.18;
+  }
+
+  .proposal-page.residential-pricing-page .structured-packet-body,
+  .proposal-page.residential-scope-page .structured-packet-body,
+  .proposal-page.residential-terms-page .structured-packet-body {
+    padding: 26px 34px;
+  }
+
+  .proposal-page.residential-pricing-page .residential-pricing-heading h4,
+  .proposal-page.residential-scope-page .residential-print-section h3,
+  .proposal-page.residential-terms-page .residential-print-section h3 {
+    font-size: 14px;
+  }
+
+  .proposal-page.residential-pricing-page .residential-pricing-heading span,
+  .proposal-page.residential-pricing-page .residential-pricing-option-card > p,
+  .proposal-page.residential-scope-page .residential-empty-note,
+  .proposal-page.residential-terms-page .residential-terms-copy {
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .proposal-page.residential-pricing-page .residential-option-card-heading h5 {
+    font-size: 11px;
+  }
+
+  .proposal-page.residential-pricing-page .residential-option-card-heading strong {
+    font-size: 15px;
+  }
+
+  .proposal-page.residential-pricing-page .residential-option-metrics p {
+    padding: 7px 9px;
+    font-size: 10px;
+  }
+
+  .proposal-page.residential-pricing-page .residential-option-metrics strong {
+    font-size: 11.5px;
+  }
+
+  .proposal-page.residential-pricing-page .residential-add-on-callout {
+    font-size: 11px;
+  }
+
+  .proposal-page.residential-scope-page .section-pad,
+  .proposal-page.residential-scope-page .spec-grid {
+    padding: 10px 0 0;
+  }
+
+  .proposal-page.residential-scope-page .bullet-list {
+    gap: 3px;
+    font-size: 10px;
+    line-height: 1.28;
+  }
+
+  .proposal-page.residential-scope-page .scope-column h4 {
+    font-size: 10px;
+  }
+
+  .proposal-page.residential-scope-page .spec-table {
+    font-size: 10px;
+  }
+
+  .proposal-page.residential-scope-page .spec-table th,
+  .proposal-page.residential-scope-page .spec-table td {
+    padding: 5px 8px;
+  }
+
+  .proposal-page.residential-terms-page .signature-grid {
+    margin-top: 16px;
+    font-size: 10px;
   }
 
   .cover-header,

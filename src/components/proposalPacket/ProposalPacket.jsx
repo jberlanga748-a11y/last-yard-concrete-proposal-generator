@@ -11,13 +11,14 @@ import {
 import {
   buildResidentialPaymentTermsCopy,
   buildResidentialOptionBreakdowns,
+  buildResidentialPricingOptionRows,
   formatResidentialCurrency,
   formatResidentialMoneyText,
   formatResidentialMoneyTextList,
+  getResidentialComparisonAddOn,
   getResidentialCoverDescription,
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
-  getResidentialPricingOptions,
   hasResidentialChooseOnePricing,
 } from "../../utils/proposalPacket/residentialPricing.js";
 import {
@@ -244,135 +245,169 @@ function ProposalPacketContent({ proposal }) {
   const hasExtendedPacketPages =
     structuredPacketPages.length > 0 || residentialOptionBreakdownPages.length > 0 || appendixPages.length > 0 || planSheetPages.length > 0;
   const showCoverGcPrimeNotes = gcPrimeRows.length > 0 && !hasExtendedPacketPages;
+  const coverSummaryItem = {
+    key: "cover-summary",
+    sectionId: "cover_summary",
+    render: () => (
+      <ProposalPage className="first-page">
+        <CoverHeader company={company} />
+        <CompanyIntro company={company} companyCredentials={companyCredentials} />
+        <ProjectCards proposal={packetProposal} />
+        {showCoverGcPrimeNotes ? <GcPrimeNotes rows={gcPrimeRows} /> : null}
+        <div className="page-one-feature-block">
+          <PhotoBand photos={packetProposal.projectPhotos} />
+          <WhyChoose />
+        </div>
+        <PageFooter company={company} companyCredentials={companyCredentials} compact />
+      </ProposalPage>
+    ),
+  };
+  const detailsPricingItem = {
+    key: "details-pricing",
+    sectionId: "details_pricing",
+    render: () => (
+      <ProposalPage>
+        <SectionTitle icon="clipboard" title="Scope of Work" />
+        <div className="two-column section-pad">
+          <ScopeColumn groups={scopeLeft} />
+          <ScopeColumn groups={scopeRight} />
+        </div>
+        {!isResidentialMode && appendixPlan.scopeNeedsAppendix ? <AppendixReferenceNote message="See Appendix for detailed scope backup." /> : null}
+
+        {specRows.length > 0 ? (
+          <>
+            <SectionTitle icon="gear" title="Concrete Specifications" className="section-title-spaced" />
+            <div className="two-column spec-grid">
+              {specTables.map((rows, index) => (
+                <SpecTable rows={rows} key={`spec-table-${index}`} />
+              ))}
+            </div>
+          </>
+        ) : null}
+
+        <SectionTitle icon="dollar" title="Pricing" className="section-title-spaced" />
+        <PricingTable items={lineItems} total={totalProposalPrice} />
+        {visiblePricingSections.length > 0 ? <AlternatesAllowancesTable sections={visiblePricingSections} totals={proposalTotals} /> : null}
+
+        <div className="two-column lower-grid">
+          <div>
+            <MiniHeading icon="minus" title="Exclusions / Assumptions" />
+            <ul className="bullet-list compact-list">
+              {appendixPlan.mainExclusions.map((item) => (
+                <li key={item}>
+                  <span />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <MiniHeading icon="check" title="Terms & Acceptance" />
+            <p className="terms-copy">{termsCopy}</p>
+            <SignatureBlock companyName={company.name} />
+          </div>
+        </div>
+        {!isResidentialMode && appendixPlan.referenceNotes.length > 0 ? <AppendixReferenceNote notes={appendixPlan.referenceNotes} /> : null}
+
+        <div className="footer-push">
+          <PageFooter company={company} companyCredentials={companyCredentials} />
+        </div>
+      </ProposalPage>
+    ),
+  };
+  const structuredPacketItems = structuredPacketPages.map((page) => ({
+    key: page.key,
+    sectionId: getStructuredPacketBuilderSectionId(page),
+    render: (pageNumber) => (
+      <StructuredPacketPage
+        company={company}
+        page={page}
+        pageNumber={pageNumber}
+        projectName={packetProposal.project?.name}
+      />
+    ),
+  }));
+  const residentialOptionBreakdownItems = residentialOptionBreakdownPages.map((page) => ({
+    key: page.key,
+    sectionId: "schedule_of_values",
+    render: (pageNumber) => (
+      <ResidentialOptionBreakdownsPage company={company} page={page} pageNumber={pageNumber} projectName={packetProposal.project?.name} />
+    ),
+  }));
+  const appendixItems = appendixPages.map((page, index) => ({
+    key: `appendix-page-${index}`,
+    sectionId: "appendix_overflow",
+    render: (pageNumber) => (
+      <AppendixPage
+        company={company}
+        page={page}
+        pageNumber={pageNumber}
+        projectName={packetProposal.project?.name}
+      />
+    ),
+  }));
+  const planSheetItems = planSheetPages.map((sheet, index) => ({
+    key: sheet.id || sheet.matchKey || `plan-sheet-page-${index}`,
+    sectionId: "plan_sheet_pages",
+    render: (pageNumber) => (
+      <PlanSheetPage
+        company={company}
+        pageNumber={pageNumber}
+        projectName={packetProposal.project?.name}
+        sheet={sheet}
+      />
+    ),
+  }));
+  const residentialPacketItems = [
+    coverSummaryItem,
+    {
+      key: "residential-pricing-options",
+      sectionId: "residential_pricing_options",
+      render: (pageNumber) => (
+        <ResidentialPricingPage company={company} pageNumber={pageNumber} projectName={packetProposal.project?.name} proposal={packetProposal} />
+      ),
+    },
+    ...residentialOptionBreakdownItems,
+    {
+      key: "residential-scope",
+      sectionId: "residential_scope",
+      render: (pageNumber) => (
+        <ResidentialScopePage
+          company={company}
+          exclusions={appendixPlan.mainExclusions}
+          pageNumber={pageNumber}
+          projectName={packetProposal.project?.name}
+          scopeLeft={scopeLeft}
+          scopeRight={scopeRight}
+          specRows={specRows}
+        />
+      ),
+    },
+    ...planSheetItems,
+    {
+      key: "residential-payment-terms",
+      sectionId: "residential_payment_terms",
+      render: (pageNumber) => (
+        <ResidentialPaymentTermsPage
+          company={company}
+          pageNumber={pageNumber}
+          projectName={packetProposal.project?.name}
+          termsCopy={termsCopy}
+        />
+      ),
+    },
+  ];
+  const standardPacketItems = [
+    coverSummaryItem,
+    detailsPricingItem,
+    ...structuredPacketItems,
+    ...appendixItems,
+    ...planSheetItems,
+  ];
   const packetItems = orderPacketRenderItems(
     packetProposal,
-    [
-      {
-        key: "cover-summary",
-        sectionId: "cover_summary",
-        render: () => (
-          <ProposalPage className="first-page">
-            <CoverHeader company={company} />
-            <CompanyIntro company={company} companyCredentials={companyCredentials} />
-            <ProjectCards proposal={packetProposal} />
-            {showCoverGcPrimeNotes ? <GcPrimeNotes rows={gcPrimeRows} /> : null}
-            <div className="page-one-feature-block">
-              <PhotoBand photos={packetProposal.projectPhotos} />
-              <WhyChoose />
-            </div>
-            <PageFooter company={company} companyCredentials={companyCredentials} compact />
-          </ProposalPage>
-        ),
-      },
-      {
-        key: "details-pricing",
-        sectionId: "details_pricing",
-        render: () => (
-          <ProposalPage>
-            <SectionTitle icon="clipboard" title="Scope of Work" />
-            <div className="two-column section-pad">
-              <ScopeColumn groups={scopeLeft} />
-              <ScopeColumn groups={scopeRight} />
-            </div>
-            {!isResidentialMode && appendixPlan.scopeNeedsAppendix ? <AppendixReferenceNote message="See Appendix for detailed scope backup." /> : null}
-
-            {specRows.length > 0 ? (
-              <>
-                <SectionTitle icon="gear" title="Concrete Specifications" className="section-title-spaced" />
-                <div className="two-column spec-grid">
-                  {specTables.map((rows, index) => (
-                    <SpecTable rows={rows} key={`spec-table-${index}`} />
-                  ))}
-                </div>
-              </>
-            ) : null}
-
-            <SectionTitle icon="dollar" title="Pricing" className="section-title-spaced" />
-            {hasChooseOnePricing ? (
-              <>
-                <ResidentialPricingOptionsTable proposal={packetProposal} />
-                {residentialOptionBreakdownPages.length > 0 ? (
-                  <AppendixReferenceNote message="See Schedule of Values for customer-choice option breakdowns." />
-                ) : null}
-              </>
-            ) : (
-              <>
-                <PricingTable items={lineItems} total={totalProposalPrice} />
-                {visiblePricingSections.length > 0 ? <AlternatesAllowancesTable sections={visiblePricingSections} totals={proposalTotals} /> : null}
-              </>
-            )}
-
-            <div className="two-column lower-grid">
-              <div>
-                <MiniHeading icon="minus" title="Exclusions / Assumptions" />
-                <ul className="bullet-list compact-list">
-                  {appendixPlan.mainExclusions.map((item) => (
-                    <li key={item}>
-                      <span />
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div>
-                <MiniHeading icon="check" title="Terms & Acceptance" />
-                <p className="terms-copy">{termsCopy}</p>
-                <SignatureBlock companyName={company.name} />
-              </div>
-            </div>
-            {!isResidentialMode && appendixPlan.referenceNotes.length > 0 ? <AppendixReferenceNote notes={appendixPlan.referenceNotes} /> : null}
-
-            <div className="footer-push">
-              <PageFooter company={company} companyCredentials={companyCredentials} />
-            </div>
-          </ProposalPage>
-        ),
-      },
-      ...structuredPacketPages.map((page) => ({
-        key: page.key,
-        sectionId: getStructuredPacketBuilderSectionId(page),
-        render: (pageNumber) => (
-          <StructuredPacketPage
-            company={company}
-            page={page}
-            pageNumber={pageNumber}
-            projectName={packetProposal.project?.name}
-          />
-        ),
-      })),
-      ...residentialOptionBreakdownPages.map((page) => ({
-        key: page.key,
-        sectionId: "schedule_of_values",
-        render: (pageNumber) => (
-          <ResidentialOptionBreakdownsPage company={company} page={page} pageNumber={pageNumber} projectName={packetProposal.project?.name} />
-        ),
-      })),
-      ...appendixPages.map((page, index) => ({
-        key: `appendix-page-${index}`,
-        sectionId: "appendix_overflow",
-        render: (pageNumber) => (
-          <AppendixPage
-            company={company}
-            page={page}
-            pageNumber={pageNumber}
-            projectName={packetProposal.project?.name}
-          />
-        ),
-      })),
-      ...planSheetPages.map((sheet, index) => ({
-        key: sheet.id || sheet.matchKey || `plan-sheet-page-${index}`,
-        sectionId: "plan_sheet_pages",
-        render: (pageNumber) => (
-          <PlanSheetPage
-            company={company}
-            pageNumber={pageNumber}
-            projectName={packetProposal.project?.name}
-            sheet={sheet}
-          />
-        ),
-      })),
-    ],
+    isResidentialMode && hasChooseOnePricing ? residentialPacketItems : standardPacketItems,
     getPacketBuilderSectionStatus,
   );
 
@@ -482,7 +517,7 @@ function buildResidentialOptionBreakdownPages(proposal = {}) {
     return [];
   }
 
-  return chunkResidentialOptionBreakdowns(breakdowns, 3).map((options, index, chunks) => ({
+  return chunkResidentialOptionBreakdowns(breakdowns, 2).map((options, index, chunks) => ({
     key: `residential-option-breakdowns-${index}`,
     title: chunks.length > 1 ? `Schedule of Values - Pricing Options (${index + 1})` : "Schedule of Values - Pricing Options",
     options,
@@ -550,6 +585,117 @@ function ResidentialOptionBreakdownsPage({ company, page, pageNumber, projectNam
         <span>Packet Page {pageNumber}</span>
       </footer>
     </ProposalPage>
+  );
+}
+
+function ResidentialPricingPage({ company, pageNumber, projectName, proposal }) {
+  return (
+    <ProposalPage className="structured-packet-page residential-pricing-page">
+      <ResidentialPacketHeader company={company} pageTitle="Customer Pricing Options" projectName={projectName} />
+
+      <div className="structured-packet-body residential-page-body">
+        <div className="structured-accent" />
+        <p className="structured-packet-note">
+          Customer to select one main option. Optional add-ons are shown with each option so the total is clear before acceptance.
+        </p>
+        <ResidentialPricingOptionsTable proposal={proposal} />
+      </div>
+
+      <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
+    </ProposalPage>
+  );
+}
+
+function ResidentialScopePage({ company, exclusions = [], pageNumber, projectName, scopeLeft = [], scopeRight = [], specRows = [] }) {
+  return (
+    <ProposalPage className="structured-packet-page residential-scope-page">
+      <ResidentialPacketHeader company={company} pageTitle="Scope of Work" projectName={projectName} />
+
+      <div className="structured-packet-body residential-page-body">
+        <div className="structured-accent" />
+        <section className="residential-print-section">
+          <h3>Included Scope</h3>
+          {scopeLeft.length > 0 || scopeRight.length > 0 ? (
+            <div className="two-column section-pad residential-scope-grid">
+              <ScopeColumn groups={scopeLeft} />
+              <ScopeColumn groups={scopeRight} />
+            </div>
+          ) : (
+            <p className="residential-empty-note">Included residential concrete scope to be confirmed.</p>
+          )}
+        </section>
+
+        {specRows.length > 0 ? (
+          <section className="residential-print-section">
+            <h3>Concrete / Finish Details</h3>
+            <SpecTable rows={specRows} />
+          </section>
+        ) : null}
+
+        {exclusions.length > 0 ? (
+          <section className="residential-print-section">
+            <h3>Exclusions / Change-Order Triggers</h3>
+            <ul className="bullet-list compact-list residential-clean-list">
+              {exclusions.map((item) => (
+                <li key={item}>
+                  <span />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+      </div>
+
+      <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
+    </ProposalPage>
+  );
+}
+
+function ResidentialPaymentTermsPage({ company, pageNumber, projectName, termsCopy }) {
+  return (
+    <ProposalPage className="structured-packet-page residential-terms-page">
+      <ResidentialPacketHeader company={company} pageTitle="Payment Terms / Acceptance" projectName={projectName} />
+
+      <div className="structured-packet-body residential-page-body residential-terms-body">
+        <div className="structured-accent" />
+        <section className="residential-print-section">
+          <h3>Payment Terms</h3>
+          <p className="terms-copy residential-terms-copy">{termsCopy}</p>
+        </section>
+        <section className="residential-print-section">
+          <h3>Acceptance</h3>
+          <SignatureBlock companyName={company.name} />
+        </section>
+      </div>
+
+      <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
+    </ProposalPage>
+  );
+}
+
+function ResidentialPacketHeader({ company, pageTitle, projectName }) {
+  return (
+    <header className="structured-packet-header residential-packet-header">
+      <div>
+        <p>{company.name}</p>
+        <h2>{pageTitle}</h2>
+      </div>
+      <div>
+        <span>Project</span>
+        <strong>{projectName || "Residential Customer Proposal"}</strong>
+      </div>
+    </header>
+  );
+}
+
+function ResidentialPacketFooter({ company, pageNumber, projectName }) {
+  return (
+    <footer className="structured-packet-footer residential-packet-footer">
+      <span>{projectName || "Residential customer proposal"}</span>
+      <span>{company.name}</span>
+      <span>Page {pageNumber}</span>
+    </footer>
   );
 }
 
@@ -1155,75 +1301,71 @@ function PricingTable({ items, total }) {
 }
 
 function ResidentialPricingOptionsTable({ proposal }) {
-  const options = getResidentialPricingOptions(proposal);
   const addOns = getResidentialOptionalAddOns(proposal);
-  const addOnTotal = addOns.reduce((sum, addOn) => sum + addOn.amount, 0);
+  const optionRows = buildResidentialPricingOptionRows(proposal);
+  const comparisonAddOn = getResidentialComparisonAddOn(addOns);
+  const addOnName = comparisonAddOn?.name || "Optional Add-On";
+  const addOnIsCantilever = /cantilever/i.test(addOnName);
 
-  if (options.length === 0) {
+  if (optionRows.length === 0) {
     return null;
   }
 
   return (
-    <div className="alternates-wrap">
-      <div className="alternates-heading">
-        <h4>Customer to select one</h4>
+    <div className="residential-pricing-options-wrap">
+      <div className="residential-pricing-heading">
+        <h4>Customer to Select One</h4>
         <span>Main finish options are mutually exclusive and are not added together.</span>
       </div>
-      <table className="alternates-table residential-options-table">
-        <thead>
-          <tr>
-            <th>Option</th>
-            <th>Description</th>
-            <th>Total</th>
-            <th>50% Down Payment</th>
-            <th>Final Payment</th>
-          </tr>
-        </thead>
-        <tbody>
-          {options.map((option) => {
-            const optionPrice = option.price;
 
-            return (
-              <tr key={option.id || option.name}>
-                <td>{option.name}</td>
-                <td>{option.description || "-"}</td>
-                <td>{formatResidentialCurrency(optionPrice)}</td>
-                <td>{formatResidentialCurrency(option.downPayment || optionPrice / 2)}</td>
-                <td>{formatResidentialCurrency(option.finalPayment || optionPrice / 2)}</td>
-              </tr>
-            );
-          })}
-          {addOns.length > 0 ? (
-            <tr className="base-bid-row">
-              <td colSpan="5">Optional Add-On</td>
-            </tr>
-          ) : null}
-          {addOns.map((addOn) => (
-            <tr key={addOn.id || addOn.name}>
-              <td>{addOn.name}</td>
-              <td>{addOn.description || "Optional upgrade to selected option."}</td>
-              <td>{formatResidentialCurrency(addOn.amount, { plus: true })}</td>
-              <td>{addOn.included || addOn.selected ? "Selected" : "Optional"}</td>
-              <td>{addOn.appliesTo?.length > 0 ? addOn.appliesTo.join(", ") : "Applies to selected option"}</td>
-            </tr>
-          ))}
-          {addOnTotal > 0
-            ? options.map((option) => {
-                const totalWithAddOn = option.price + addOnTotal;
+      <div className="residential-pricing-option-cards">
+        {optionRows.map((option) => (
+          <section className="residential-pricing-option-card" key={option.id || option.name}>
+            <div className="residential-option-card-heading">
+              <h5>{option.name}</h5>
+              <strong>{formatResidentialCurrency(option.basePrice)}</strong>
+            </div>
+            {option.description ? <p>{option.description}</p> : null}
+            <div className="residential-option-metrics">
+              <p>
+                <span>Base Price:</span>
+                <strong>{formatResidentialCurrency(option.basePrice)}</strong>
+              </p>
+              <p>
+                <span>50% Down:</span>
+                <strong>{formatResidentialCurrency(option.downPayment)}</strong>
+              </p>
+              <p>
+                <span>Final Payment:</span>
+                <strong>{formatResidentialCurrency(option.finalPayment)}</strong>
+              </p>
+              {option.withAddOnTotal > 0 ? (
+                <>
+                  <p>
+                    <span>{addOnIsCantilever ? "With Cantilever Upgrade:" : "With Optional Add-On:"}</span>
+                    <strong>{formatResidentialCurrency(option.withAddOnTotal)}</strong>
+                  </p>
+                  <p>
+                    <span>{addOnIsCantilever ? "With Cantilever Down:" : "With Add-On Down:"}</span>
+                    <strong>{formatResidentialCurrency(option.withAddOnDownPayment)}</strong>
+                  </p>
+                  <p>
+                    <span>{addOnIsCantilever ? "With Cantilever Final:" : "With Add-On Final:"}</span>
+                    <strong>{formatResidentialCurrency(option.withAddOnFinalPayment)}</strong>
+                  </p>
+                </>
+              ) : null}
+            </div>
+          </section>
+        ))}
+      </div>
 
-                return (
-                  <tr key={`${option.id || option.name}-with-add-ons`}>
-                    <td>{`${option.name} with optional add-on`}</td>
-                    <td>Shown for customer comparison if the optional add-on is selected.</td>
-                    <td>{formatResidentialCurrency(totalWithAddOn)}</td>
-                    <td>{formatResidentialCurrency(totalWithAddOn / 2)}</td>
-                    <td>{formatResidentialCurrency(totalWithAddOn / 2)}</td>
-                  </tr>
-                );
-              })
-            : null}
-        </tbody>
-      </table>
+      {comparisonAddOn ? (
+        <div className="residential-add-on-callout">
+          <strong>Optional Add-On:</strong> {comparisonAddOn.name} {formatResidentialCurrency(comparisonAddOn.amount, { plus: true })}
+          {comparisonAddOn.description ? <span>{comparisonAddOn.description}</span> : null}
+        </div>
+      ) : null}
     </div>
   );
 }

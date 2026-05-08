@@ -45,6 +45,57 @@ export function buildResidentialPaymentTermsCopy(proposal = {}) {
   return copyParts.length > 0 ? `Payment Terms: ${copyParts.join(" ")}` : "";
 }
 
+export function buildResidentialPricingOptionRows(proposal = {}) {
+  const options = getResidentialPricingOptions(proposal);
+  const addOns = getResidentialOptionalAddOns(proposal);
+  const comparisonAddOn = getResidentialComparisonAddOn(addOns);
+
+  return options.map((option) => {
+    const basePrice = toResidentialPricingNumber(option.price);
+    const addOnAmount = comparisonAddOn ? toResidentialPricingNumber(comparisonAddOn.amount) : 0;
+    const withAddOnTotal = addOnAmount > 0 ? basePrice + addOnAmount : 0;
+
+    return {
+      id: option.id,
+      name: option.name,
+      description: option.description,
+      basePrice,
+      downPayment: toResidentialPricingNumber(option.downPayment) || basePrice / 2,
+      finalPayment: toResidentialPricingNumber(option.finalPayment) || basePrice / 2,
+      comparisonAddOn,
+      withAddOnTotal,
+      withAddOnDownPayment: withAddOnTotal > 0 ? withAddOnTotal / 2 : 0,
+      withAddOnFinalPayment: withAddOnTotal > 0 ? withAddOnTotal / 2 : 0,
+    };
+  });
+}
+
+export function getResidentialComparisonAddOn(addOns = []) {
+  const normalizedAddOns = Array.isArray(addOns) ? addOns : [];
+
+  return (
+    normalizedAddOns.find((addOn) => /cantilever/i.test(addOn?.name || addOn?.description || "")) ||
+    normalizedAddOns.find((addOn) => toResidentialPricingNumber(addOn?.amount) > 0) ||
+    null
+  );
+}
+
+export function getResidentialPacketPageStructure(proposal = {}) {
+  if (!hasResidentialChooseOnePricing(proposal)) {
+    return ["cover_summary", "details_pricing"];
+  }
+
+  const pages = ["cover_summary", "residential_pricing_options"];
+
+  if (hasResidentialOptionBreakdowns(proposal)) {
+    pages.push("residential_option_breakdowns");
+  }
+
+  pages.push("residential_scope", "residential_payment_terms");
+
+  return pages;
+}
+
 export function formatResidentialMoneyText(value, proposal = {}) {
   let text = String(value ?? "");
 

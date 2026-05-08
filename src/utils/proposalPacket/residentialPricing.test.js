@@ -6,11 +6,13 @@ import {
   RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE,
   buildResidentialPaymentTermsCopy,
   buildResidentialOptionBreakdowns,
+  buildResidentialPricingOptionRows,
   formatResidentialCurrency,
   formatResidentialMoneyText,
   getResidentialCoverDescription,
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
+  getResidentialPacketPageStructure,
   getResidentialPricingOptions,
   hasResidentialChooseOnePricing,
   normalizeResidentialPricingOptions,
@@ -117,6 +119,39 @@ test("keeps optional add-ons separate from mutually exclusive options", () => {
   assert.deepEqual(addOns[0].appliesTo, ["Option 1", "Option 2", "Option 3"]);
 });
 
+test("residential pricing rows show base and with-cantilever totals for every option", () => {
+  const rows = buildResidentialPricingOptionRows(residentialProposal);
+
+  assert.equal(rows.length, 3);
+  assert.deepEqual(
+    rows.map((row) => row.basePrice),
+    [82500, 97500, 90000],
+  );
+  assert.deepEqual(
+    rows.map((row) => row.withAddOnTotal),
+    [91000, 106000, 98500],
+  );
+  assert.deepEqual(
+    rows.map((row) => row.withAddOnDownPayment),
+    [45500, 53000, 49250],
+  );
+  assert.deepEqual(
+    rows.map((row) => row.withAddOnFinalPayment),
+    [45500, 53000, 49250],
+  );
+  assert.ok(rows.every((row) => row.comparisonAddOn.name === "Cantilever-Style Stair Upgrade"));
+});
+
+test("residential choose-one page structure separates pricing, SOV, scope, and terms", () => {
+  assert.deepEqual(getResidentialPacketPageStructure(residentialProposal), [
+    "cover_summary",
+    "residential_pricing_options",
+    "residential_option_breakdowns",
+    "residential_scope",
+    "residential_payment_terms",
+  ]);
+});
+
 test("uses short residential cover copy for choose-one proposals", () => {
   assert.equal(getResidentialCoverSchedule(residentialProposal, "Long schedule text"), RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE);
   assert.equal(getResidentialCoverDescription(residentialProposal, "Long description text"), RESIDENTIAL_CHOOSE_ONE_COVER_DESCRIPTION);
@@ -136,6 +171,32 @@ test("residential choose-one payment terms avoid duplicate GC billing language",
   assert.match(terms, /Final payment is due when the last concrete/);
   assert.doesNotMatch(terms, /A 50% deposit is required/i);
   assert.doesNotMatch(terms, /Progress billings|monthly/i);
+});
+
+test("residential pricing copy avoids GC-style alternate totals", () => {
+  const rows = buildResidentialPricingOptionRows(residentialProposal);
+  const printablePricingCopy = [
+    "Customer to Select One",
+    ...rows.flatMap((row) => [
+      row.name,
+      `Base Price: ${formatResidentialCurrency(row.basePrice)}`,
+      `50% Down: ${formatResidentialCurrency(row.downPayment)}`,
+      `Final Payment: ${formatResidentialCurrency(row.finalPayment)}`,
+      `With Cantilever Upgrade: ${formatResidentialCurrency(row.withAddOnTotal)}`,
+      `With Cantilever Down: ${formatResidentialCurrency(row.withAddOnDownPayment)}`,
+      `With Cantilever Final: ${formatResidentialCurrency(row.withAddOnFinalPayment)}`,
+    ]),
+    `Optional Add-On: ${residentialProposal.optionalAddOns[0].name} ${formatResidentialCurrency(residentialProposal.optionalAddOns[0].amount, { plus: true })}`,
+  ].join("\n");
+
+  assert.match(printablePricingCopy, /Option 1 - Full Scope With Broom Finish/);
+  assert.match(printablePricingCopy, /Option 2 - Full Scope With Stamped Finish/);
+  assert.match(printablePricingCopy, /Option 3 - Full Scope With Sand Finish/);
+  assert.match(printablePricingCopy, /With Cantilever Upgrade: \$91,000/);
+  assert.match(printablePricingCopy, /With Cantilever Upgrade: \$106,000/);
+  assert.match(printablePricingCopy, /With Cantilever Upgrade: \$98,500/);
+  assert.match(printablePricingCopy, /Optional Add-On: Cantilever-Style Stair Upgrade \+\$8,500/);
+  assert.doesNotMatch(printablePricingCopy, /Total if All Alternates Accepted|Add Alternate|Alternate accepted total/i);
 });
 
 test("formats known residential option and add-on amounts inside printed text", () => {
