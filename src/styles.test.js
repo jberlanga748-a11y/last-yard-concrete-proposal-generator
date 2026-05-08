@@ -35,8 +35,23 @@ test("plan sheet images keep contain fit while cover logo and tagline have print
   assert.match(planSheetImage, /object-fit:\s*contain/);
   assert.match(printCoverTagline, /overflow:\s*visible/);
   assert.match(printCoverTagline, /letter-spacing:\s*0\.08em/);
-  assert.match(printCoverLogo, /object-fit:\s*contain/);
-  assert.match(printCoverLogo, /transform:\s*scale\(1\.34\)/);
+  assert.match(printCoverLogo, /width:\s*100%/);
+  assert.match(printCoverLogo, /height:\s*100%/);
+  assert.match(printCoverLogo, /object-fit:\s*cover/);
+  assert.match(printCoverLogo, /transform:\s*scale\(1\.5\)/);
+});
+
+test("footer logo uses larger print-safe sizing without losing containment", () => {
+  const compactFooterLogo = getCssBlock(".compact-footer .logo-seal-small");
+  const printCompactFooterLogo = styles.match(/@media print\s*\{[\s\S]*?\.compact-footer \.logo-seal-small\s*\{([^}]+)\}/)?.[1] || "";
+  const printCompactFooterLogoImage = styles.match(/@media print\s*\{[\s\S]*?\.compact-footer \.logo-seal-small img\s*\{([^}]+)\}/)?.[1] || "";
+
+  assert.match(compactFooterLogo, /width:\s*46px/);
+  assert.match(compactFooterLogo, /height:\s*46px/);
+  assert.match(printCompactFooterLogo, /width:\s*48px/);
+  assert.match(printCompactFooterLogo, /height:\s*48px/);
+  assert.match(printCompactFooterLogoImage, /object-fit:\s*cover/);
+  assert.match(printCompactFooterLogoImage, /transform:\s*scale\(1\.5\)/);
 });
 
 test("residential pricing cards and add-ons use print-safe no-break rules", () => {
