@@ -73,7 +73,12 @@ export function normalizeResidentialLegalAttachment(attachment = {}, index = 0) 
 
 export function buildResidentialLegalSummarySections(proposal = {}) {
   const terms = normalizeResidentialTermsSource(proposal);
-  const paymentText = [terms.paymentTerms, terms.depositScheduling, terms.finalPayment]
+  const cleanedPaymentTerms = cleanLegalText(terms.paymentTerms);
+  const paymentText = [
+    cleanedPaymentTerms,
+    hasDepositLanguage(cleanedPaymentTerms) ? "" : terms.depositScheduling,
+    hasFinalPaymentLanguage(cleanedPaymentTerms) ? "" : terms.finalPayment,
+  ]
     .map(cleanLegalText)
     .filter(Boolean)
     .join(" ");
@@ -179,11 +184,12 @@ function normalizeNoticeStatusBlock(value = {}, defaults = {}) {
 function normalizeResidentialTermsSource(proposal = {}) {
   const legalTerms = isPlainObject(proposal.legalTerms) ? proposal.legalTerms : {};
   const terms = isPlainObject(proposal.terms) ? proposal.terms : {};
+  const explicitPaymentTerms = cleanLegalText(legalTerms.paymentTerms);
 
   return {
-    paymentTerms: firstLegalText(legalTerms.paymentTerms, terms.payment),
-    depositScheduling: firstLegalText(legalTerms.depositScheduling, terms.depositText),
-    finalPayment: firstLegalText(legalTerms.finalPayment, terms.finalPayment),
+    paymentTerms: firstLegalText(explicitPaymentTerms, terms.payment),
+    depositScheduling: firstLegalText(legalTerms.depositScheduling, explicitPaymentTerms ? "" : terms.depositText),
+    finalPayment: firstLegalText(legalTerms.finalPayment, explicitPaymentTerms ? "" : terms.finalPayment),
     changeOrders: firstLegalText(legalTerms.changeOrders, terms.changeOrderLanguage),
     utilityResponsibility: firstLegalText(legalTerms.utilityResponsibility, terms.utilityResponsibility),
     hiddenConditions: firstLegalText(legalTerms.hiddenConditions, terms.hiddenConditions),
@@ -215,6 +221,14 @@ function firstLegalText(...values) {
 
 function cleanLegalText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function hasDepositLanguage(value = "") {
+  return /\b(deposit|down payment|down)\b/i.test(cleanLegalText(value));
+}
+
+function hasFinalPaymentLanguage(value = "") {
+  return /\bfinal payment\b/i.test(cleanLegalText(value));
 }
 
 function isPlainObject(value) {

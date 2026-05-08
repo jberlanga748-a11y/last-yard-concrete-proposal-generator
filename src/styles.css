@@ -4334,6 +4334,92 @@ h4 {
   font-style: normal;
 }
 
+.residential-layout-controls {
+  border-top: 1px solid rgba(6, 43, 69, 0.1);
+  padding-top: 10px;
+}
+
+.residential-layout-controls select {
+  width: 100%;
+  border: 1px solid rgba(6, 43, 69, 0.14);
+  border-radius: 8px;
+  background: white;
+  color: var(--body);
+  font: inherit;
+  padding: 9px 10px;
+}
+
+.residential-simple-estimate-editor-summary {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(202, 162, 75, 0.42);
+  border-radius: 9px;
+  background: #fffaf0;
+  padding: 10px;
+}
+
+.residential-simple-estimate-base {
+  display: grid;
+  gap: 3px;
+}
+
+.residential-simple-estimate-base span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.residential-simple-estimate-base strong {
+  color: var(--blue);
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.residential-simple-estimate-base em {
+  color: var(--ink);
+  font-size: 16px;
+  font-style: normal;
+  font-weight: 950;
+}
+
+.residential-simple-estimate-base p {
+  margin: 0;
+  color: var(--body);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.residential-simple-estimate-total-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.residential-simple-estimate-total-grid p {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  border: 1px solid rgba(6, 43, 69, 0.1);
+  border-radius: 8px;
+  background: white;
+  padding: 8px;
+}
+
+.residential-simple-estimate-total-grid span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.residential-simple-estimate-total-grid strong {
+  color: var(--blue);
+  font-size: 14px;
+  font-weight: 950;
+}
+
 .residential-option-subtable {
   display: grid !important;
   gap: 8px;
@@ -6367,6 +6453,185 @@ h4 {
   line-height: 1.25;
 }
 
+.residential-simple-estimate-body,
+.residential-simple-attachments-body {
+  gap: 14px;
+}
+
+.simple-estimate-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  break-inside: avoid;
+  border: 1px solid rgba(202, 162, 75, 0.48);
+  background: #fffaf0;
+  padding: 14px 16px;
+  page-break-inside: avoid;
+}
+
+.simple-estimate-hero p {
+  margin: 0 0 4px;
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.simple-estimate-hero h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 950;
+  line-height: 1.1;
+}
+
+.simple-estimate-hero span {
+  display: block;
+  margin-top: 4px;
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.simple-estimate-hero strong {
+  color: var(--blue);
+  font-size: 26px;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.simple-estimate-party-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.simple-estimate-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.simple-estimate-pricing-section,
+.simple-estimate-total-section,
+.simple-estimate-photo {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.simple-estimate-pricing-section h3 {
+  margin: 0 0 8px;
+  border-bottom: 2px solid var(--gold);
+  padding-bottom: 7px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.simple-estimate-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--body);
+  font-size: 10.5px;
+}
+
+.simple-estimate-table th {
+  background: var(--blue);
+  color: white;
+  padding: 8px;
+  font-size: 8.6px;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.simple-estimate-table td {
+  border: 1px solid var(--line);
+  padding: 8px;
+  vertical-align: top;
+}
+
+.simple-estimate-table tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.simple-estimate-total-section {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  border: 1px solid var(--line);
+}
+
+.simple-estimate-total-section div {
+  display: grid;
+  gap: 4px;
+  border-right: 1px solid var(--line);
+  background: #f8fafc;
+  padding: 10px;
+}
+
+.simple-estimate-total-section div:last-child {
+  border-right: 0;
+}
+
+.simple-estimate-total-section span {
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.simple-estimate-total-section strong {
+  color: var(--blue);
+  font-size: 15px;
+  font-weight: 950;
+}
+
+.simple-estimate-total-section .simple-estimate-grand-total {
+  background: var(--navy);
+}
+
+.simple-estimate-total-section .simple-estimate-grand-total span,
+.simple-estimate-total-section .simple-estimate-grand-total strong {
+  color: white;
+}
+
+.simple-estimate-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.simple-estimate-photo {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  border: 1px solid var(--line);
+  background: white;
+  padding: 8px;
+}
+
+.simple-estimate-photo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  border-radius: 6px;
+  object-fit: cover;
+  object-position: center;
+}
+
+.simple-estimate-photo figcaption {
+  color: var(--body);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1.3;
+}
+
 .residential-print-section {
   break-inside: avoid;
   page-break-inside: avoid;
@@ -7847,6 +8112,8 @@ h4 {
 
   .proposal-page.residential-pricing-page .structured-packet-body,
   .proposal-page.residential-add-on-page .structured-packet-body,
+  .proposal-page.residential-simple-estimate-page .structured-packet-body,
+  .proposal-page.residential-simple-attachments-page .structured-packet-body,
   .proposal-page.residential-scope-page .structured-packet-body,
   .proposal-page.residential-legal-papers-page .structured-packet-body,
   .proposal-page.residential-terms-page .structured-packet-body {
@@ -7862,6 +8129,8 @@ h4 {
 
   .proposal-page.residential-pricing-page .residential-pricing-heading span,
   .proposal-page.residential-pricing-page .residential-pricing-option-card > p,
+  .proposal-page.residential-simple-estimate-page .simple-estimate-table,
+  .proposal-page.residential-simple-estimate-page .simple-estimate-hero span,
   .proposal-page.residential-legal-papers-page .residential-legal-summary-card p,
   .proposal-page.residential-legal-papers-page .residential-legal-paper-row span,
   .proposal-page.residential-scope-page .residential-empty-note,
@@ -7930,8 +8199,46 @@ h4 {
   }
 
   .proposal-page.residential-add-on-page .residential-option-photo figcaption,
-  .proposal-page.residential-pricing-page .residential-option-photo figcaption {
+  .proposal-page.residential-pricing-page .residential-option-photo figcaption,
+  .proposal-page.residential-simple-attachments-page .simple-estimate-photo figcaption {
     font-size: 8.5px;
+  }
+
+  .proposal-page.residential-simple-estimate-page .simple-estimate-hero {
+    padding: 12px 14px;
+  }
+
+  .proposal-page.residential-simple-estimate-page .simple-estimate-hero h3 {
+    font-size: 20px;
+  }
+
+  .proposal-page.residential-simple-estimate-page .simple-estimate-hero strong {
+    font-size: 24px;
+  }
+
+  .proposal-page.residential-simple-estimate-page .simple-estimate-meta-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .proposal-page.residential-simple-estimate-page .simple-estimate-table th,
+  .proposal-page.residential-simple-estimate-page .simple-estimate-table td {
+    padding: 7px;
+  }
+
+  .proposal-page.residential-simple-estimate-page .simple-estimate-total-section strong {
+    font-size: 14px;
+  }
+
+  .proposal-page.residential-simple-attachments-page .simple-estimate-photo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .proposal-page.residential-simple-attachments-page .simple-estimate-photo img {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    object-position: center;
   }
 
   .proposal-page.residential-scope-page .section-pad,

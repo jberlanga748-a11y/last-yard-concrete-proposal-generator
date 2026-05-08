@@ -8,8 +8,11 @@ import {
 } from "./smartPasteCoverFields.js";
 import { isSmartPasteJsonImportNotes, normalizeSmartPasteNotes } from "./smartPasteNormalizer.js";
 import {
+  BASE_PLUS_ADDONS_PRICING_MODE,
+  CHOOSE_ONE_PRICING_MODE,
   countResidentialOptionImagePlaceholders,
   normalizeResidentialOptionImages,
+  normalizeResidentialPdfLayout,
   normalizeResidentialScheduleOfValues,
 } from "../proposalPacket/residentialPricing.js";
 import { normalizeResidentialLegalPapers } from "../proposalPacket/residentialLegalPapers.js";
@@ -205,7 +208,7 @@ function createSmartPasteSummary(parsedNotes = {}, explicitLineItemCount) {
     pricingMode: values.pricingMode || "",
     pricingOptions: values.pricingOptions || [],
     optionalAddOns: values.optionalAddOns || [],
-    hideTotalIfAllAccepted: values.pricingMode === "choose_one_option",
+    hideTotalIfAllAccepted: values.pricingMode === CHOOSE_ONE_PRICING_MODE || values.pricingMode === BASE_PLUS_ADDONS_PRICING_MODE,
     planSheetCount: parsedNotes.planSheetCount || 0,
     gcPacketTableCount: parsedNotes.gcPacketTableCount || 0,
     sectionsCaptured: parsedNotes.sectionsCaptured || [],
@@ -1027,6 +1030,14 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
   values.packetMode = getPacketModeForProposalMode(proposalMode);
   fields.push("proposal mode");
 
+  if (normalized.residentialPdfLayout) {
+    values.residentialPdfLayout = normalizeResidentialPdfLayout(normalized.residentialPdfLayout, {
+      proposalMode,
+      pricingMode: pricing.pricingMode,
+    });
+    fields.push("residential PDF layout");
+  }
+
   setNormalizedTextValue(values, fields, "projectName", cover.projectName, "project name");
   setNormalizedTextValue(values, fields, "projectLocation", cover.projectLocation, "project location");
   setNormalizedTextValue(values, fields, "projectAddress", cover.projectAddress, "project address");
@@ -1122,6 +1133,8 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
     fields.push("base bid");
   }
 
+  const mirrorAddOnsToPricingSections =
+    pricing.pricingMode !== CHOOSE_ONE_PRICING_MODE && pricing.pricingMode !== BASE_PLUS_ADDONS_PRICING_MODE;
   const normalizedPricingSections = [
     ...(pricing.allowances || []).map((row) => ({
       id: createProposalId(),
@@ -1139,7 +1152,7 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
       amount: toEditableNumber(row.amount),
       included: false,
     })),
-    ...(values.optionalAddOns || []).map((row) => ({
+    ...(mirrorAddOnsToPricingSections ? values.optionalAddOns || [] : []).map((row) => ({
       id: row.id || createProposalId(),
       type: "add_alternate",
       label: row.name || "Optional Add-On",
@@ -1153,6 +1166,16 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
   if (normalizedPricingSections.length > 0 || pricing.acceptedAlternatesNone) {
     values.pricingSections = normalizedPricingSections;
     fields.push("alternates / allowances");
+  } else if (!mirrorAddOnsToPricingSections && values.optionalAddOns?.length > 0) {
+    values.pricingSections = values.optionalAddOns.map((row) => ({
+      id: row.id || createProposalId(),
+      type: "add_alternate",
+      label: row.name || "Optional Add-On",
+      description: row.description || "",
+      amount: toEditableNumber(row.amount),
+      included: row.included === true || row.selected === true,
+      optionalAddOn: true,
+    })).filter((row) => row.amount > 0);
   }
 
   if (pricing.totalProposal > 0) {
@@ -1816,6 +1839,10 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
 
   if (values.pricingMode) {
     nextProposal.pricingMode = values.pricingMode;
+  }
+
+  if (values.residentialPdfLayout) {
+    nextProposal.residentialPdfLayout = values.residentialPdfLayout;
   }
 
   if (values.pricingOptions) {

@@ -1,4 +1,14 @@
 export const CHOOSE_ONE_PRICING_MODE = "choose_one_option";
+export const BASE_PLUS_ADDONS_PRICING_MODE = "base_plus_addons";
+export const RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT = "simple_estimate";
+export const RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT = "proposal_with_photos";
+export const RESIDENTIAL_DETAILED_BACKUP_LAYOUT = "detailed_backup";
+
+export const RESIDENTIAL_PDF_LAYOUT_OPTIONS = [
+  { value: RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT, label: "Simple Estimate" },
+  { value: RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT, label: "Proposal With Photos" },
+  { value: RESIDENTIAL_DETAILED_BACKUP_LAYOUT, label: "Detailed Backup" },
+];
 
 export const RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE = "Estimated duration: 10 working days.";
 
@@ -38,7 +48,7 @@ export function normalizeResidentialTextList(items = []) {
 }
 
 export function buildResidentialPaymentTermsCopy(proposal = {}) {
-  if (hasResidentialChooseOnePricing(proposal)) {
+  if (hasResidentialChooseOnePricing(proposal) || hasResidentialBasePlusAddOnsPricing(proposal)) {
     return [
       "Payment Terms:",
       "50% down payment is required to schedule the project.",
@@ -367,6 +377,10 @@ export function getResidentialComparisonAddOn(addOns = []) {
 }
 
 export function getResidentialPacketPageStructure(proposal = {}) {
+  if (hasResidentialBasePlusAddOnsPricing(proposal) && normalizeResidentialPdfLayout(proposal.residentialPdfLayout, proposal) === RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT) {
+    return ["cover_summary", "residential_simple_estimate", "residential_legal_papers", "residential_payment_terms"];
+  }
+
   if (!hasResidentialChooseOnePricing(proposal)) {
     return ["cover_summary", "details_pricing"];
   }
@@ -759,6 +773,130 @@ export function getResidentialOptionalAddOns(proposal = {}) {
 export function hasResidentialChooseOnePricing(proposal = {}) {
   const pricingMode = proposal.pricingMode || proposal.pricing?.pricingMode || "";
   return pricingMode === CHOOSE_ONE_PRICING_MODE && getResidentialPricingOptions(proposal).length > 0;
+}
+
+export function hasResidentialBasePlusAddOnsPricing(proposal = {}) {
+  const pricingMode = proposal.pricingMode || proposal.pricing?.pricingMode || "";
+  return pricingMode === BASE_PLUS_ADDONS_PRICING_MODE;
+}
+
+export function normalizeResidentialPdfLayout(layout, proposal = {}) {
+  const normalizedLayout = cleanResidentialText(layout || proposal.residentialPdfLayout || proposal.pdfLayout || "");
+  const supportedLayouts = new Set(RESIDENTIAL_PDF_LAYOUT_OPTIONS.map((option) => option.value));
+
+  if (supportedLayouts.has(normalizedLayout)) {
+    return normalizedLayout;
+  }
+
+  if (hasResidentialBasePlusAddOnsPricing(proposal)) {
+    return RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT;
+  }
+
+  if (hasResidentialChooseOnePricing(proposal)) {
+    return RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT;
+  }
+
+  return RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT;
+}
+
+export function getResidentialSimpleEstimateBasePackage(proposal = {}) {
+  const lineItems = Array.isArray(proposal.lineItems) ? proposal.lineItems : [];
+  const normalizedLineItems = lineItems
+    .map((item, index) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const quantity = toResidentialPricingNumber(item.quantity ?? item.qty ?? 1) || 1;
+      const unitPrice = toResidentialPricingNumber(item.unitPrice ?? item.rate ?? item.price);
+      const explicitAmount = toResidentialPricingNumber(item.amount ?? item.total);
+      const amount = explicitAmount || unitPrice * quantity;
+      const description = cleanResidentialText(item.description || item.name || item.label || item.item);
+
+      return description || amount > 0
+        ? {
+            id: cleanResidentialText(item.id) || `base-package-line-${index + 1}`,
+            name: description || "Base Package",
+            description: cleanResidentialText(item.scopeSummary || item.notes || item.detail),
+            quantity,
+            unit: cleanResidentialText(item.unit || item.uom || "LS"),
+            unitPrice: unitPrice || amount,
+            amount,
+          }
+        : null;
+    })
+    .filter(Boolean);
+  const lineItemTotal = normalizedLineItems.reduce((sum, item) => sum + toResidentialPricingNumber(item.amount), 0);
+
+  if (normalizedLineItems.length > 0) {
+    const firstItem = normalizedLineItems[0];
+
+    return {
+      name: firstItem.name || "Base Package",
+      description: cleanResidentialText(proposal.project?.description || firstItem.description || normalizedLineItems.map((item) => item.name).join("; ")),
+      quantity: normalizedLineItems.length === 1 ? firstItem.quantity || 1 : 1,
+      unit: normalizedLineItems.length === 1 ? firstItem.unit || "LS" : "LS",
+      price: normalizedLineItems.length === 1 ? firstItem.amount : lineItemTotal,
+      total: lineItemTotal,
+      lineItems: normalizedLineItems,
+    };
+  }
+
+  const selectedOption = getResidentialPricingOptions(proposal).find((option) => option.selected || option.included) || getResidentialPricingOptions(proposal)[0];
+
+  if (selectedOption) {
+    const price = toResidentialPricingNumber(selectedOption.price);
+
+    return {
+      name: selectedOption.name || "Base Package",
+      description: cleanResidentialText(selectedOption.scopeSummary || selectedOption.description || proposal.project?.description),
+      quantity: 1,
+      unit: "LS",
+      price,
+      total: price,
+      lineItems: [],
+    };
+  }
+
+  const baseBid = toResidentialPricingNumber(proposal.baseBid ?? proposal.pricing?.baseBid ?? proposal.financials?.baseBid);
+
+  return {
+    name: cleanResidentialText(proposal.project?.name || "Base Package"),
+    description: cleanResidentialText(proposal.project?.description),
+    quantity: 1,
+    unit: "LS",
+    price: baseBid,
+    total: baseBid,
+    lineItems: [],
+  };
+}
+
+export function getResidentialSimpleEstimateAddOns(proposal = {}) {
+  return getResidentialOptionalAddOns(proposal).map((addOn) => ({
+    ...addOn,
+    selected: Boolean(addOn.selected || addOn.included),
+    included: Boolean(addOn.included || addOn.selected),
+  }));
+}
+
+export function calculateResidentialSimpleEstimateTotals(proposal = {}) {
+  const basePackage = getResidentialSimpleEstimateBasePackage(proposal);
+  const addOns = getResidentialSimpleEstimateAddOns(proposal);
+  const basePrice = toResidentialPricingNumber(basePackage.total || basePackage.price);
+  const selectedAddOnsTotal = addOns
+    .filter((addOn) => addOn.selected || addOn.included)
+    .reduce((sum, addOn) => sum + toResidentialPricingNumber(addOn.amount), 0);
+  const total = basePrice + selectedAddOnsTotal;
+
+  return {
+    basePackage,
+    addOns,
+    basePrice,
+    selectedAddOnsTotal,
+    total,
+    downPayment: total / 2,
+    finalPayment: total / 2,
+  };
 }
 
 export function buildResidentialOptionBreakdowns(proposal = {}) {

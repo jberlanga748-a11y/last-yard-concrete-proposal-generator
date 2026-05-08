@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  BASE_PLUS_ADDONS_PRICING_MODE,
+  RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT,
+  RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT,
   RESIDENTIAL_CHOOSE_ONE_COVER_DESCRIPTION,
   RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE,
+  calculateResidentialSimpleEstimateTotals,
   buildResidentialPaymentTermsCopy,
   buildResidentialOptionBreakdowns,
   buildResidentialOptionBreakdownPrintPages,
@@ -21,7 +25,9 @@ import {
   getResidentialOptionalAddOns,
   getResidentialPacketPageStructure,
   getResidentialPricingOptions,
+  hasResidentialBasePlusAddOnsPricing,
   hasResidentialChooseOnePricing,
+  normalizeResidentialPdfLayout,
   normalizeResidentialPricingOptions,
   normalizeResidentialOptionalAddOns,
   normalizeResidentialOptionLineItems,
@@ -542,4 +548,53 @@ test("formats known residential option and add-on amounts inside printed text", 
   assert.match(formatted, /\$106,000/);
   assert.match(formatted, /\$53,000/);
   assert.doesNotMatch(formatted, /\b82500\b|\b97500\b|\b90000\b|\b8500\b|\b106000\b|\b53000\b/);
+});
+
+test("residential base-plus-addons defaults to simple estimate layout", () => {
+  const proposal = {
+    proposalMode: "residential",
+    pricingMode: BASE_PLUS_ADDONS_PRICING_MODE,
+    lineItems: [{ description: "Base residential package", quantity: 1, unit: "LS", amount: 40000 }],
+    optionalAddOns: [],
+  };
+
+  assert.equal(hasResidentialBasePlusAddOnsPricing(proposal), true);
+  assert.equal(normalizeResidentialPdfLayout("", proposal), RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT);
+  assert.equal(normalizeResidentialPdfLayout("", residentialProposal), RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT);
+  assert.deepEqual(getResidentialPacketPageStructure(proposal), [
+    "cover_summary",
+    "residential_simple_estimate",
+    "residential_legal_papers",
+    "residential_payment_terms",
+  ]);
+});
+
+test("simple estimate totals include selected add-ons and ignore unselected add-ons", () => {
+  const proposal = {
+    proposalMode: "residential",
+    pricingMode: BASE_PLUS_ADDONS_PRICING_MODE,
+    lineItems: [{ description: "Base Package", quantity: 1, unit: "LS", amount: 40000 }],
+    optionalAddOns: [
+      { name: "Lighting in steps", amount: 7000, selected: true },
+      { name: "Cantilever steps", amount: 10000, selected: false },
+      { name: "Walls", amount: 10000, included: true },
+      { name: "Lighting in walls", amount: 7000, selected: false },
+    ],
+  };
+  const totals = calculateResidentialSimpleEstimateTotals(proposal);
+
+  assert.equal(totals.basePrice, 40000);
+  assert.equal(totals.selectedAddOnsTotal, 17000);
+  assert.equal(totals.total, 57000);
+  assert.equal(totals.downPayment, 28500);
+  assert.equal(totals.finalPayment, 28500);
+  assert.deepEqual(
+    totals.addOns.map((addOn) => [addOn.name, addOn.selected]),
+    [
+      ["Lighting in steps", true],
+      ["Cantilever steps", false],
+      ["Walls", true],
+      ["Lighting in walls", false],
+    ],
+  );
 });

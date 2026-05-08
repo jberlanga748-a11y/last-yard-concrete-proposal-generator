@@ -1,5 +1,6 @@
 import {
   mergeResidentialOptionBreakdowns,
+  normalizeResidentialPdfLayout,
   normalizeResidentialOptionalAddOns,
   normalizeResidentialPricingOptions,
   normalizeResidentialScheduleOfValues,
@@ -18,6 +19,7 @@ const EMPTY_NORMALIZED_SMART_PASTE = {
   proposalMode: "",
   proposalType: "",
   packetMode: "",
+  residentialPdfLayout: "",
   cover: {
     projectName: "",
     projectLocation: "",
@@ -272,12 +274,39 @@ function normalizeSmartPasteJsonImport(notes = "") {
 
   normalizeJsonCover(project, source.cover, normalized);
   normalizeJsonPricing(pricing, source, normalized);
+  normalizeJsonResidentialPdfLayout(source, project, pricing, normalized);
   normalizeJsonScope(scope, source, normalized);
   normalizeJsonPacket(packet, source, normalized);
   normalizeJsonResidentialLegalPapers(source, normalized);
   finalizeNormalizedSmartPaste(normalized);
 
   return normalized;
+}
+
+function normalizeJsonResidentialPdfLayout(source = {}, project = {}, pricing = {}, normalized) {
+  const layout = firstJsonText(
+    source.residentialPdfLayout,
+    source.pdfLayout,
+    source.residentialLayout,
+    source.printLayout,
+    project.residentialPdfLayout,
+    project.pdfLayout,
+    pricing.residentialPdfLayout,
+    pricing.pdfLayout,
+  );
+
+  if (!layout) {
+    return;
+  }
+
+  normalized.residentialPdfLayout = normalizeResidentialPdfLayout(layout, {
+    proposalMode: normalized.proposalMode || normalized.cover?.proposalMode,
+    pricingMode: normalized.pricing?.pricingMode,
+  });
+
+  if (normalized.residentialPdfLayout) {
+    capture(normalized, "residentialPdfLayout");
+  }
 }
 
 function normalizeJsonResidentialLegalPapers(source = {}, normalized) {

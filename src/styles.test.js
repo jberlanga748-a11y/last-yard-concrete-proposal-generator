@@ -123,3 +123,20 @@ test("residential legal papers use print-safe readable cards", () => {
   assert.match(legalPaperRow, /page-break-inside:\s*avoid/);
   assert.match(printLegalBody, /padding:\s*26px\s*34px/);
 });
+
+test("residential simple estimate uses print-safe totals and non-distorting attachment photos", () => {
+  const hero = getCssBlock(".simple-estimate-hero");
+  const table = getCssBlock(".simple-estimate-table");
+  const totalSection = getCssBlock(".simple-estimate-total-section");
+  const photoImage = getCssBlock(".simple-estimate-photo img");
+  const printSimpleBody = styles.match(/@media print\s*\{[\s\S]*?\.proposal-page\.residential-simple-estimate-page \.structured-packet-body,\s*\.proposal-page\.residential-simple-attachments-page \.structured-packet-body/)?.[0] || "";
+
+  assert.match(hero, /break-inside:\s*avoid/);
+  assert.match(hero, /page-break-inside:\s*avoid/);
+  assert.match(table, /border-collapse:\s*collapse/);
+  assert.match(totalSection, /grid-template-columns:\s*repeat\(5,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(photoImage, /aspect-ratio:\s*4\s*\/\s*3/);
+  assert.match(photoImage, /object-fit:\s*cover/);
+  assert.match(photoImage, /object-position:\s*center/);
+  assert.match(printSimpleBody, /residential-simple-estimate-page/);
+});

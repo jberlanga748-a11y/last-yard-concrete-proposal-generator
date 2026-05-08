@@ -42,6 +42,22 @@ test("residential packet includes legal papers before acceptance", () => {
   assert.match(source, /Legal Papers \/ Notices/);
 });
 
+test("residential simple estimate has a dedicated print branch and avoids GC alternate language", () => {
+  assert.match(source, /RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT/);
+  assert.match(source, /useResidentialSimpleEstimate/);
+  assert.match(source, /function ResidentialSimpleEstimatePage/);
+  assert.match(source, /Optional Add-On:/);
+  assert.match(source, /Estimate Total/);
+  assert.doesNotMatch(source.match(/function ResidentialSimpleEstimatePage[\s\S]*?function ResidentialSimpleEstimateAttachmentsPage/)?.[0] || "", /Add Alternate|Total if All Alternates Accepted/);
+});
+
+test("simple estimate attachments render customer-safe captions and photos", () => {
+  assert.match(source, /function ResidentialSimpleEstimateAttachmentsPage/);
+  assert.match(source, /getSimpleEstimatePhotoCaption/);
+  assert.match(source, /simple-estimate-photo-grid/);
+  assert.match(source, /Attached Photos \/ Documents/);
+});
+
 test("proposal packet applies PDF style classes from settings or proposal defaults", () => {
   assert.match(source, /companySettings/);
   assert.match(source, /getProposalPdfStyleClassNames/);

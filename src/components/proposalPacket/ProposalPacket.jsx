@@ -10,6 +10,7 @@ import {
 } from "../../utils/proposalPacket/printContentCleanup.js";
 import {
   buildResidentialPaymentTermsCopy,
+  calculateResidentialSimpleEstimateTotals,
   buildResidentialOptionalAddOnPrintPages,
   buildResidentialOptionBreakdownPrintPages,
   buildResidentialPricingOptionPrintPages,
@@ -21,7 +22,10 @@ import {
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
   getPrintableResidentialOptionImages,
+  hasResidentialBasePlusAddOnsPricing,
   hasResidentialChooseOnePricing,
+  normalizeResidentialPdfLayout,
+  RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT,
   splitResidentialOptionalAddOnsForPrint,
 } from "../../utils/proposalPacket/residentialPricing.js";
 import {
@@ -259,6 +263,10 @@ function ProposalPacketContent({ companySettings, proposal }) {
   const residentialLegalPaperRows = isResidentialMode ? buildResidentialLegalPaperRows({ ...packetProposal, residentialLegalPapers }) : [];
   const visiblePricingSections = isResidentialMode ? [] : appendixPlan.mainPricingSections;
   const hasChooseOnePricing = hasResidentialChooseOnePricing(packetProposal);
+  const hasBasePlusAddOnsPricing = hasResidentialBasePlusAddOnsPricing(packetProposal);
+  const residentialPdfLayout = isResidentialMode ? normalizeResidentialPdfLayout(packetProposal.residentialPdfLayout, packetProposal) : "";
+  const useResidentialSimpleEstimate = isResidentialMode && residentialPdfLayout === RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT && hasBasePlusAddOnsPricing;
+  const simpleEstimateTotals = useResidentialSimpleEstimate ? calculateResidentialSimpleEstimateTotals(packetProposal) : null;
   const residentialPricingOptionPrintPages = buildResidentialPricingOptionPrintPages(packetProposal);
   const { withoutPhotos: residentialTextOptionalAddOns } = splitResidentialOptionalAddOnsForPrint(packetProposal);
   const residentialOptionalAddOnPrintPages = buildResidentialOptionalAddOnPrintPages(packetProposal);
@@ -464,6 +472,48 @@ function ProposalPacketContent({ companySettings, proposal }) {
       ),
     },
   ];
+  const residentialSimpleEstimateItems = [
+    {
+      key: "residential-simple-estimate",
+      sectionId: "residential_simple_estimate",
+      render: (pageNumber) => (
+        <ResidentialSimpleEstimatePage
+          company={company}
+          pageNumber={pageNumber}
+          projectName={packetProposal.project?.name}
+          proposal={packetProposal}
+          totals={simpleEstimateTotals}
+        />
+      ),
+    },
+    ...buildResidentialSimpleEstimateAttachmentPages(packetProposal).map((page) => ({
+      key: page.key,
+      sectionId: "residential_simple_estimate_attachments",
+      render: (pageNumber) => (
+        <ResidentialSimpleEstimateAttachmentsPage
+          company={company}
+          page={page}
+          pageNumber={pageNumber}
+          projectName={packetProposal.project?.name}
+        />
+      ),
+    })),
+    residentialLegalPapersItem,
+    {
+      key: "residential-payment-terms",
+      sectionId: "residential_payment_terms",
+      render: (pageNumber) => (
+        <ResidentialPaymentTermsPage
+          company={company}
+          pageNumber={pageNumber}
+          pdfStyle={pdfStyle}
+          projectName={packetProposal.project?.name}
+          showTermsCopy={residentialLegalSummarySections.length === 0}
+          termsCopy={termsCopy}
+        />
+      ),
+    },
+  ];
   const standardPacketItems = [
     coverSummaryItem,
     detailsPricingItem,
@@ -474,7 +524,7 @@ function ProposalPacketContent({ companySettings, proposal }) {
   ];
   const packetItems = orderPacketRenderItems(
     packetProposal,
-    isResidentialMode && hasChooseOnePricing ? residentialPacketItems : standardPacketItems,
+    useResidentialSimpleEstimate ? residentialSimpleEstimateItems : isResidentialMode && hasChooseOnePricing ? residentialPacketItems : standardPacketItems,
     getPacketBuilderSectionStatus,
   );
 
@@ -641,6 +691,214 @@ function ResidentialOptionBreakdownsPage({ company, page, pageNumber, projectNam
         <span>{company.name}</span>
         <span>Packet Page {pageNumber}</span>
       </footer>
+    </ProposalPage>
+  );
+}
+
+function buildResidentialSimpleEstimateAttachmentPages(proposal = {}, photosPerPage = 6) {
+  if (!hasResidentialBasePlusAddOnsPricing(proposal)) {
+    return [];
+  }
+
+  const projectPhotos = (Array.isArray(proposal.projectPhotos) ? proposal.projectPhotos : [])
+    .filter(hasSimpleEstimateImageSource)
+    .map((photo, index) => ({
+      ...photo,
+      id: photo.id || `project-photo-${index + 1}`,
+      label: getSimpleEstimatePhotoCaption(photo, index),
+    }));
+  const addOnPhotos = getResidentialSimpleAddOnPhotos(proposal);
+  const photos = [...projectPhotos, ...addOnPhotos];
+
+  if (photos.length === 0) {
+    return [];
+  }
+
+  const chunkSize = Math.max(1, photosPerPage);
+  const pages = [];
+
+  for (let index = 0; index < photos.length; index += chunkSize) {
+    pages.push(photos.slice(index, index + chunkSize));
+  }
+
+  return pages.map((pagePhotos, index) => ({
+    key: `residential-simple-estimate-attachments-${index + 1}`,
+    photos: pagePhotos,
+    pageIndex: index,
+    pageCount: pages.length,
+  }));
+}
+
+function getResidentialSimpleAddOnPhotos(proposal = {}) {
+  return getResidentialOptionalAddOns(proposal).flatMap((addOn, addOnIndex) =>
+    getPrintableResidentialOptionImages(addOn.images).map((image, imageIndex) => ({
+      ...image,
+      id: image.id || `add-on-photo-${addOnIndex + 1}-${imageIndex + 1}`,
+      label: getSimpleEstimatePhotoCaption(image, imageIndex, addOn.name || "Optional Add-On"),
+    })),
+  );
+}
+
+function hasSimpleEstimateImageSource(image = {}) {
+  const source = cleanPrintableText(image.dataUrl || image.src || image.imageSrc || image.publicUrl || image.signedUrl || image.storagePath);
+
+  return Boolean(source && !/upload\s+(image|photo)|placeholder/i.test(source));
+}
+
+function getSimpleEstimatePhotoCaption(image = {}, index = 0, fallback = "") {
+  const candidates = [image.caption, image.label, fallback].map(cleanPrintableText).filter(Boolean);
+  const safeCaption = candidates.find((candidate) => !/^(img|dsc|image|photo)[_\-\s]?\d+|\.(png|jpe?g|webp|heic)$/i.test(candidate));
+
+  return safeCaption || ["Existing Area", "Finish Example", "Walkway and Step Example", "Concept Finish"][index % 4];
+}
+
+function ResidentialSimpleEstimatePage({ company, pageNumber, projectName, proposal, totals }) {
+  const estimateTotals = totals || calculateResidentialSimpleEstimateTotals(proposal);
+  const basePackage = estimateTotals.basePackage || {};
+  const project = proposal.project || {};
+  const client = proposal.client || {};
+  const billToLines = [
+    client.companyName || client.contactName || "Customer to be verified",
+    client.companyName && client.contactName ? `Attn: ${client.contactName}` : "",
+    client.phone ? `Phone: ${client.phone}` : "",
+    client.email ? `Email: ${client.email}` : "",
+    project.address || project.location || client.projectAddress ? `Project Address: ${project.address || project.location || client.projectAddress}` : "",
+  ].filter(Boolean);
+  const fromLines = [company.name, company.phone, company.email, company.license, ...(Array.isArray(company.credentials) ? company.credentials : [])].filter(Boolean);
+  const addOns = estimateTotals.addOns || [];
+
+  return (
+    <ProposalPage className="structured-packet-page residential-simple-estimate-page">
+      <ResidentialPacketHeader company={company} pageTitle="Residential Estimate" projectName={projectName} />
+
+      <div className="structured-packet-body residential-page-body residential-simple-estimate-body">
+        <div className="structured-accent" />
+        <section className="simple-estimate-hero">
+          <div>
+            <p>Estimate</p>
+            <h3>{proposal.proposalNumber || "Draft Estimate"}</h3>
+            <span>{project.name || projectName || "Residential concrete project"}</span>
+          </div>
+          <strong>{formatResidentialCurrency(estimateTotals.total)}</strong>
+        </section>
+
+        <section className="simple-estimate-party-grid">
+          <InfoCard title="From" watermark="LY">
+            {fromLines.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </InfoCard>
+          <InfoCard title="Bill To" watermark="CUSTOMER">
+            {billToLines.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </InfoCard>
+        </section>
+
+        <section className="simple-estimate-meta-grid">
+          <Field label="Date of Issue" value={formatDisplayDate(proposal.proposalDate)} />
+          <Field label="Expiration Date" value={formatDisplayDate(proposal.validUntil)} />
+          <Field label="Project / Purchase Order" value={project.purchaseOrder || project.name || proposal.proposalNumber} />
+          <Field label="Amount" value={formatResidentialCurrency(estimateTotals.total)} />
+        </section>
+
+        <section className="simple-estimate-pricing-section">
+          <h3>Estimate Items</h3>
+          <table className="simple-estimate-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Description</th>
+                <th>Price</th>
+                <th>Quantity</th>
+                <th>Total / Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{basePackage.name || "Base Package"}</td>
+                <td>{basePackage.description || project.description || "Residential concrete base package."}</td>
+                <td>{formatResidentialCurrency(estimateTotals.basePrice)}</td>
+                <td>{basePackage.quantity || 1}</td>
+                <td>{formatResidentialCurrency(estimateTotals.basePrice)}</td>
+              </tr>
+              {addOns.map((addOn) => {
+                const selected = Boolean(addOn.selected || addOn.included);
+
+                return (
+                  <tr key={addOn.id || addOn.name}>
+                    <td>Optional Add-On: {addOn.name}</td>
+                    <td>{addOn.description || "Optional customer selection."}</td>
+                    <td>{formatResidentialCurrency(addOn.amount, { plus: true })}</td>
+                    <td>{selected ? 1 : "Optional"}</td>
+                    <td>{selected ? "Selected" : `Not Selected - ${formatResidentialCurrency(addOn.amount, { plus: true })}`}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+
+        <section className="simple-estimate-total-section">
+          <div>
+            <span>Base Price</span>
+            <strong>{formatResidentialCurrency(estimateTotals.basePrice)}</strong>
+          </div>
+          <div>
+            <span>Selected Add-Ons</span>
+            <strong>{formatResidentialCurrency(estimateTotals.selectedAddOnsTotal)}</strong>
+          </div>
+          <div className="simple-estimate-grand-total">
+            <span>Estimate Total</span>
+            <strong>{formatResidentialCurrency(estimateTotals.total)}</strong>
+          </div>
+          <div>
+            <span>50% Down Payment</span>
+            <strong>{formatResidentialCurrency(estimateTotals.downPayment)}</strong>
+          </div>
+          <div>
+            <span>Final Payment</span>
+            <strong>{formatResidentialCurrency(estimateTotals.finalPayment)}</strong>
+          </div>
+        </section>
+      </div>
+
+      <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
+    </ProposalPage>
+  );
+}
+
+function ResidentialSimpleEstimateAttachmentsPage({ company, page, pageNumber, projectName }) {
+  const { getImageAssetSource } = usePacketHelpers();
+  const pageTitle = page.pageCount > 1 ? `Attached Photos / Documents (${page.pageIndex + 1})` : "Attached Photos / Documents";
+  const printablePhotos = page.photos
+    .map((photo, index) => ({
+      ...photo,
+      source: getImageAssetSource(photo),
+      caption: getSimpleEstimatePhotoCaption(photo, index),
+    }))
+    .filter((photo) => photo.source);
+
+  if (printablePhotos.length === 0) {
+    return null;
+  }
+
+  return (
+    <ProposalPage className="structured-packet-page residential-simple-attachments-page">
+      <ResidentialPacketHeader company={company} pageTitle={pageTitle} projectName={projectName} />
+      <div className="structured-packet-body residential-page-body residential-simple-attachments-body">
+        <div className="structured-accent" />
+        <p className="structured-packet-note">Customer-facing photos and attachments included with this estimate.</p>
+        <div className="simple-estimate-photo-grid">
+          {printablePhotos.map((photo, index) => (
+            <figure className="simple-estimate-photo" key={photo.id || `${photo.source}-${index}`}>
+              <img src={photo.source} alt={photo.caption || "Estimate attachment"} />
+              <figcaption>{photo.caption || getSimpleEstimatePhotoCaption(photo, index)}</figcaption>
+            </figure>
+          ))}
+        </div>
+      </div>
+      <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
     </ProposalPage>
   );
 }

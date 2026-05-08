@@ -989,6 +989,56 @@ Base Bid: $350,000`,
   assert.equal(result.summary.sectionsCaptured.length, 0);
 });
 
+test("imports residential base-plus-addons JSON as a simple estimate", () => {
+  const jsonNotes = `${SMART_PASTE_JSON_MARKER}
+${JSON.stringify(
+  {
+    proposalMode: "residential",
+    residentialPdfLayout: "simple_estimate",
+    project: {
+      name: "Residential Step Estimate",
+      location: "Salem, OR",
+      clientGc: "Homeowner",
+    },
+    pricing: {
+      pricingMode: "base_plus_addons",
+      lineItems: [
+        {
+          itemNumber: 1,
+          description: "Base residential step package",
+          quantity: 1,
+          unit: "LS",
+          unitPrice: 40000,
+          amount: 40000,
+          taxable: false,
+        },
+      ],
+      optionalAddOns: [
+        { name: "Lighting in steps", amount: 7000, description: "Optional step lighting.", selected: true },
+        { name: "Cantilever steps", amount: 10000, description: "Optional cantilever upgrade.", selected: false },
+      ],
+    },
+  },
+  null,
+  2,
+)}`;
+  const result = parseSmartPasteNotes(jsonNotes, blankProposalFixture());
+  const totals = calculateProposalTotals(result.proposal);
+
+  assert.equal(result.proposal.proposalMode, "residential");
+  assert.equal(result.proposal.pricingMode, "base_plus_addons");
+  assert.equal(result.proposal.residentialPdfLayout, "simple_estimate");
+  assert.equal(result.proposal.lineItems[0].description, "Base residential step package");
+  assert.equal(result.proposal.optionalAddOns.length, 2);
+  assert.equal(result.proposal.optionalAddOns[0].selected, true);
+  assert.equal(result.proposal.pricingSections[0].included, true);
+  assert.equal(result.proposal.pricingSections[1].included, false);
+  assert.equal(totals.total, 47000);
+  assert.equal(result.summary.hideTotalIfAllAccepted, true);
+  assert.ok(!result.summary.fields.includes("alternates / allowances"));
+  assert.ok(result.summary.applyTargets.includes("Pricing"));
+});
+
 test("imports residential choose-one pricing options from Smart Paste JSON", () => {
   const jsonNotes = `${SMART_PASTE_JSON_MARKER}
 ${JSON.stringify(

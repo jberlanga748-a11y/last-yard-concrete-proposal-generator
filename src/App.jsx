@@ -94,12 +94,18 @@ import {
   hasPrintableText,
 } from "./utils/proposalPacket/printContentCleanup.js";
 import {
+  BASE_PLUS_ADDONS_PRICING_MODE,
+  CHOOSE_ONE_PRICING_MODE,
+  RESIDENTIAL_PDF_LAYOUT_OPTIONS,
+  calculateResidentialSimpleEstimateTotals,
   formatResidentialCurrency,
   getResidentialOptionLineItemTotal,
   getResidentialOptionSovTotal,
   getResidentialOptionTotalWarning,
+  hasResidentialBasePlusAddOnsPricing,
   hasResidentialChooseOnePricing,
   hasResidentialOptionBreakdowns,
+  normalizeResidentialPdfLayout,
   normalizeResidentialOptionImages,
   normalizeResidentialOptionLineItems,
   normalizeResidentialScheduleOfValues,
@@ -3672,10 +3678,18 @@ export default function App() {
       const normalizeItems = collectionKey === "optionalAddOns" ? normalizeOptionalAddOns : normalizePricingOptions;
       const currentItems = normalizeItems(currentProposal[collectionKey]);
       const nextItems = normalizeItems(updater(currentItems, currentProposal));
+      const nextPricingMode =
+        collectionKey === "pricingOptions"
+          ? currentProposal.pricingMode || CHOOSE_ONE_PRICING_MODE
+          : currentProposal.pricingMode || BASE_PLUS_ADDONS_PRICING_MODE;
 
       return {
         ...currentProposal,
-        pricingMode: collectionKey === "pricingOptions" ? "choose_one_option" : currentProposal.pricingMode || "choose_one_option",
+        pricingMode: nextPricingMode,
+        residentialPdfLayout: normalizeResidentialPdfLayout(currentProposal.residentialPdfLayout, {
+          ...currentProposal,
+          pricingMode: nextPricingMode,
+        }),
         [collectionKey]: nextItems,
         updatedAt: new Date().toISOString(),
       };
@@ -3958,6 +3972,10 @@ export default function App() {
 
         if (field === "amount") {
           return { ...addOn, amount: toEditableNumber(value) };
+        }
+
+        if (field === "selected" || field === "included") {
+          return { ...addOn, selected: Boolean(value), included: Boolean(value) };
         }
 
         if (["appliesTo", "notes"].includes(field)) {
@@ -4779,12 +4797,12 @@ export default function App() {
         projectLocation: nextProposal.project?.location || nextProposal.project?.address || nextProposal.client?.projectAddress || "",
       },
       detectedPricing: summarizeSmartPasteDetectedPricing(nextProposal),
-      detectedAlternates:
-        nextProposal.pricingMode === "choose_one_option"
-          ? []
-          : (nextProposal.pricingSections || []).map((section) => ({
-              label: section.label || section.description || "Alternate / allowance",
-              amount: section.amount || 0,
+        detectedAlternates:
+          nextProposal.pricingMode === CHOOSE_ONE_PRICING_MODE || nextProposal.pricingMode === BASE_PLUS_ADDONS_PRICING_MODE
+            ? []
+            : (nextProposal.pricingSections || []).map((section) => ({
+                label: section.label || section.description || "Alternate / allowance",
+                amount: section.amount || 0,
               included: section.included === true,
             })),
       pendingReview: true,
@@ -8617,6 +8635,7 @@ function ProposalEditor({
           optionSovRowChange={onPricingOptionSovRowChange}
           optionSovRowRemove={onPricingOptionSovRowRemove}
           proposal={proposal}
+          proposalChange={onChange}
         />
         <LineItemEditor
           lineItems={proposal.lineItems}
@@ -8930,15 +8949,20 @@ function SmartPasteSummary({ result, onApply, onClear }) {
         <li>{result.fields.length} fields detected</li>
         {result.proposalModeLabel ? <li>Proposal mode: {result.proposalModeLabel}</li> : null}
         <li>{result.lineItemCount} line items detected</li>
-        {result.pricingMode === "choose_one_option" ? (
-          <>
-            <li>Pricing mode: Customer chooses one option</li>
-            <li>Pricing options detected: {(result.pricingOptions || []).length}</li>
-            <li>Optional add-ons detected: {(result.optionalAddOns || []).length}</li>
-          </>
-        ) : (
-          <li>{result.pricingSectionCount || 0} alternates / allowances detected</li>
-        )}
+          {result.pricingMode === CHOOSE_ONE_PRICING_MODE ? (
+            <>
+              <li>Pricing mode: Customer chooses one option</li>
+              <li>Pricing options detected: {(result.pricingOptions || []).length}</li>
+              <li>Optional add-ons detected: {(result.optionalAddOns || []).length}</li>
+            </>
+          ) : result.pricingMode === BASE_PLUS_ADDONS_PRICING_MODE ? (
+            <>
+              <li>Pricing mode: Base package + selected add-ons</li>
+              <li>Optional add-ons detected: {(result.optionalAddOns || []).length}</li>
+            </>
+          ) : (
+            <li>{result.pricingSectionCount || 0} alternates / allowances detected</li>
+          )}
         {(result.pricingOptions || []).length > 0 ? (
           <li>
             Main pricing options:{" "}
@@ -8973,18 +8997,21 @@ function SmartPasteSummary({ result, onApply, onClear }) {
         {result.detectedProjectInfo?.projectName ? <li>Detected project: {result.detectedProjectInfo.projectName}</li> : null}
         {result.detectedProjectInfo?.clientCompany ? <li>Detected client/GC: {result.detectedProjectInfo.clientCompany}</li> : null}
         {result.detectedProjectInfo?.projectLocation ? <li>Detected location: {result.detectedProjectInfo.projectLocation}</li> : null}
-        {result.detectedPricing && result.pricingMode !== "choose_one_option" ? (
-          <li>
-            Detected pricing: base {formatCurrency(result.detectedPricing.baseTotal || 0)}, total if all accepted{" "}
-            {formatCurrency(result.detectedPricing.totalIfAllAccepted || 0)}
-          </li>
-        ) : null}
-        {result.detectedPricing && result.pricingMode === "choose_one_option" ? (
-          <li>
-            Detected pricing: selected/base option{" "}
-            {formatResidentialCurrency(result.detectedPricing.currentTotal || result.detectedPricing.baseTotal || 0)}
-          </li>
-        ) : null}
+          {result.detectedPricing && result.pricingMode !== CHOOSE_ONE_PRICING_MODE && result.pricingMode !== BASE_PLUS_ADDONS_PRICING_MODE ? (
+            <li>
+              Detected pricing: base {formatCurrency(result.detectedPricing.baseTotal || 0)}, total if all accepted{" "}
+              {formatCurrency(result.detectedPricing.totalIfAllAccepted || 0)}
+            </li>
+          ) : null}
+          {result.detectedPricing && result.pricingMode === CHOOSE_ONE_PRICING_MODE ? (
+            <li>
+              Detected pricing: selected/base option{" "}
+              {formatResidentialCurrency(result.detectedPricing.currentTotal || result.detectedPricing.baseTotal || 0)}
+            </li>
+          ) : null}
+          {result.detectedPricing && result.pricingMode === BASE_PLUS_ADDONS_PRICING_MODE ? (
+            <li>Detected pricing: base package {formatResidentialCurrency(result.detectedPricing.baseTotal || 0)}</li>
+          ) : null}
         {(result.detectedAlternates || []).length > 0 ? (
           <li>
             Detected alternates:{" "}
@@ -11561,6 +11588,7 @@ function createBlankProposalDraft(existingProposals, companySettings = getDefaul
     type: getProposalTypeForMode(normalizedMode),
     packetMode: getPacketModeForProposalMode(normalizedMode),
     pdfStyle: getProposalPdfStyleForMode(normalizedSettings.proposalPdfStyle, normalizedMode),
+    residentialPdfLayout: isResidentialProposalMode(normalizedMode) ? normalizeResidentialPdfLayout("", { proposalMode: normalizedMode }) : "",
     templateId: "blank",
     templateName: `${getProposalModeLabel(normalizedMode)} Blank Proposal`,
     contactId: "",
@@ -11623,6 +11651,9 @@ function applyProposalModeToBlankProposal(proposal = {}, mode = DEFAULT_PROPOSAL
     templateName: `${getProposalModeLabel(normalizedMode)} Blank Proposal`,
     pdfStyle: getProposalPdfStyleForMode(pdfStyleSettings, normalizedMode),
     pricingMode: isResidentialProposalMode(normalizedMode) ? proposal.pricingMode || "" : proposal.pricingMode || "",
+    residentialPdfLayout: isResidentialProposalMode(normalizedMode)
+      ? normalizeResidentialPdfLayout(proposal.residentialPdfLayout, { ...proposal, proposalMode: normalizedMode })
+      : proposal.residentialPdfLayout || "",
     pricingOptions: isResidentialProposalMode(normalizedMode) ? proposal.pricingOptions || [] : [],
     optionalAddOns: isResidentialProposalMode(normalizedMode) ? proposal.optionalAddOns || [] : [],
     residentialLegalPapers: isResidentialProposalMode(normalizedMode)
@@ -13527,6 +13558,7 @@ function ResidentialPricingOptionsEditorSummary({
   optionSovRowChange,
   optionSovRowRemove,
   proposal,
+  proposalChange,
 }) {
   const isResidentialBuilder = isResidentialProposalMode(inferProposalModeFromProposal(proposal)) || hasResidentialChooseOnePricing(proposal);
 
@@ -13537,26 +13569,61 @@ function ResidentialPricingOptionsEditorSummary({
   const options = normalizePricingOptions(proposal.pricingOptions || []);
   const addOns = normalizeOptionalAddOns(proposal.optionalAddOns || []);
   const selectedOption = options.find((option) => option.selected || option.included) || options[0] || null;
+  const pricingMode = proposal.pricingMode || (options.length > 0 ? CHOOSE_ONE_PRICING_MODE : BASE_PLUS_ADDONS_PRICING_MODE);
+  const isBasePlusAddOns = pricingMode === BASE_PLUS_ADDONS_PRICING_MODE;
+  const pdfLayout = normalizeResidentialPdfLayout(proposal.residentialPdfLayout, { ...proposal, pricingMode });
+  const simpleEstimateTotals = calculateResidentialSimpleEstimateTotals({ ...proposal, optionalAddOns: addOns, pricingMode });
+
+  function handlePricingModeChange(nextMode) {
+    proposalChange?.("pricingMode", nextMode);
+    proposalChange?.("residentialPdfLayout", normalizeResidentialPdfLayout("", { ...proposal, pricingMode: nextMode }));
+  }
 
   return (
     <div className="editor-totals residential-options-editor-summary residential-options-builder" id="pricing-options-summary">
       <div className="editor-totals-heading">
-        <span>Residential Options</span>
-        <strong>{formatResidentialCurrency(selectedOption?.price || 0)}</strong>
+        <span>{isBasePlusAddOns ? "Residential Estimate" : "Residential Options"}</span>
+        <strong>{formatResidentialCurrency(isBasePlusAddOns ? simpleEstimateTotals.total : selectedOption?.price || 0)}</strong>
+      </div>
+      <div className="residential-option-editor-grid residential-layout-controls">
+        <label className="editor-field">
+          <span>Residential Pricing Mode</span>
+          <select value={pricingMode} onChange={(event) => handlePricingModeChange(event.target.value)}>
+            <option value={CHOOSE_ONE_PRICING_MODE}>Customer Chooses One Option</option>
+            <option value={BASE_PLUS_ADDONS_PRICING_MODE}>Base Package + Selected Add-Ons</option>
+          </select>
+        </label>
+        <label className="editor-field">
+          <span>Residential PDF Layout</span>
+          <select value={pdfLayout} onChange={(event) => proposalChange?.("residentialPdfLayout", event.target.value)}>
+            {RESIDENTIAL_PDF_LAYOUT_OPTIONS.map((option) => (
+              <option value={option.value} key={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       <div className="residential-builder-actions">
-        <button className="editor-secondary-button" type="button" onClick={() => optionAdd?.()}>
-          Add Option
-        </button>
+        {!isBasePlusAddOns ? (
+          <button className="editor-secondary-button" type="button" onClick={() => optionAdd?.()}>
+            Add Option
+          </button>
+        ) : null}
         <button className="editor-secondary-button" type="button" onClick={() => addOnAdd?.()}>
           Add Optional Add-On
         </button>
       </div>
       {message ? <p className="asset-upload-message">{message}</p> : null}
       <p className="pricing-helper-text">
-        Build as many customer-choice options as needed. The customer selects one main option; optional add-ons stay separate.
+        {isBasePlusAddOns
+          ? "Use line items below for the base package. Select add-ons here to build the customer estimate total."
+          : "Build as many customer-choice options as needed. The customer selects one main option; optional add-ons stay separate."}
       </p>
-      {options.length === 0 ? (
+      {isBasePlusAddOns ? (
+        <ResidentialBasePlusAddOnsEditor addOns={addOns} totals={simpleEstimateTotals} />
+      ) : null}
+      {!isBasePlusAddOns && options.length === 0 ? (
         <div className="residential-option-empty-state">
           <p>No residential options yet. Add an option to price finishes, walls, curbs, steps, or other customer choices.</p>
           <button className="editor-secondary-button" type="button" onClick={() => optionAdd?.()}>
@@ -13564,7 +13631,7 @@ function ResidentialPricingOptionsEditorSummary({
           </button>
         </div>
       ) : null}
-      {options.map((option, optionIndex) => (
+      {!isBasePlusAddOns && options.map((option, optionIndex) => (
         <ResidentialPricingOptionEditorCard
           key={option.id || option.name || optionIndex}
           index={optionIndex}
@@ -13605,6 +13672,49 @@ function ResidentialPricingOptionsEditorSummary({
           ))}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function ResidentialBasePlusAddOnsEditor({ addOns = [], totals = {} }) {
+  const selectedAddOns = addOns.filter((addOn) => addOn.selected || addOn.included);
+  const basePackage = totals.basePackage || {};
+
+  return (
+    <div className="residential-simple-estimate-editor-summary">
+      <div className="residential-simple-estimate-base">
+        <span>Base Package</span>
+        <strong>{basePackage.name || "Base package line items"}</strong>
+        <em>{formatResidentialCurrency(totals.basePrice || 0)}</em>
+        <p>{basePackage.description || "Use the regular Line Items table below for the base package scope and price."}</p>
+      </div>
+      <div className="residential-simple-estimate-total-grid">
+        <p>
+          <span>Base Price</span>
+          <strong>{formatResidentialCurrency(totals.basePrice || 0)}</strong>
+        </p>
+        <p>
+          <span>Selected Add-Ons</span>
+          <strong>{formatResidentialCurrency(totals.selectedAddOnsTotal || 0)}</strong>
+        </p>
+        <p>
+          <span>Estimate Total</span>
+          <strong>{formatResidentialCurrency(totals.total || 0)}</strong>
+        </p>
+        <p>
+          <span>50% Down</span>
+          <strong>{formatResidentialCurrency(totals.downPayment || 0)}</strong>
+        </p>
+        <p>
+          <span>Final Payment</span>
+          <strong>{formatResidentialCurrency(totals.finalPayment || 0)}</strong>
+        </p>
+      </div>
+      <p className="pricing-helper-text">
+        {selectedAddOns.length > 0
+          ? `Selected add-ons: ${selectedAddOns.map((addOn) => addOn.name).join(", ")}.`
+          : "No optional add-ons are selected for the current customer total."}
+      </p>
     </div>
   );
 }
@@ -13908,6 +14018,10 @@ function ResidentialOptionalAddOnEditorCard({
           Delete
         </button>
       </div>
+      <label className="checkbox-field residential-default-option-toggle">
+        <input type="checkbox" checked={Boolean(addOn.selected || addOn.included)} onChange={(event) => onChange?.(index, "selected", event.target.checked)} />
+        <span>Selected for simple estimate total</span>
+      </label>
       <div className="residential-option-editor-grid">
         <EditorField label="Add-On Name" path={`optionalAddOns.${index}.name`} value={addOn.name} onChange={(_, value) => onChange?.(index, "name", value)} />
         <EditorField
@@ -14213,6 +14327,7 @@ function createEditableProposal(seedProposal) {
     packetMode,
     packetBuilder: isGcPrimePacketMode(proposalMode) || packetMode === "full_gc_packet" ? normalizePacketBuilder(proposal.packetBuilder) : [],
     pdfStyle: normalizeProposalPdfStyle(proposal.pdfStyle, proposalMode),
+    residentialPdfLayout: isResidentialProposalMode(proposalMode) ? normalizeResidentialPdfLayout(proposal.residentialPdfLayout, proposal) : proposal.residentialPdfLayout || "",
     revisionNumber,
     revisionLabel,
     revisionDate: proposal.revisionDate || proposal.proposalDate || "",

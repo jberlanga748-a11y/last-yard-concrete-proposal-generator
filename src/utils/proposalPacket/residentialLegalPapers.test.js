@@ -50,6 +50,22 @@ test("residential legal summary renders homeowner legal term sections", () => {
   assert.match(sections[0].body, /Final payment due/);
 });
 
+test("residential legal summary avoids duplicating default deposit language when explicit payment terms exist", () => {
+  const sections = buildResidentialLegalSummarySections({
+    legalTerms: {
+      paymentTerms: "50% down payment is required to schedule the project.",
+    },
+    terms: {
+      depositText: "A 50% deposit is required to schedule the project.",
+      finalPayment: "Final payment is due upon completion.",
+    },
+  });
+  const paymentSection = sections.find((section) => section.title === "Payment Terms");
+
+  assert.equal(paymentSection.body, "50% down payment is required to schedule the project.");
+  assert.doesNotMatch(paymentSection.body, /A 50% deposit/);
+});
+
 test("residential legal paper statuses and attachments are printable rows", () => {
   const rows = buildResidentialLegalPaperRows({
     residentialLegalPapers: {
