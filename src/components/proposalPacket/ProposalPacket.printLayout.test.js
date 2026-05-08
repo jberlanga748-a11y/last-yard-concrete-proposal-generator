@@ -16,6 +16,14 @@ test("residential pricing option cards are rendered from paginated print chunks"
   assert.match(source, /residentialPricingItems/);
 });
 
+test("residential pricing option cards render generic option details and add-on totals", () => {
+  assert.match(source, /option\.finishType/);
+  assert.match(source, /option\.includedScope/);
+  assert.match(source, /option\.excludedScope/);
+  assert.match(source, /option\.addOnComparisons/);
+  assert.match(source, /With \{addOnLabel\}/);
+});
+
 test("residential option SOV pages use weighted pagination instead of a hard two-option split", () => {
   assert.match(source, /buildResidentialOptionBreakdownPrintPages/);
   assert.doesNotMatch(source, /chunkResidentialOptionBreakdowns\(breakdowns,\s*2\)/);
@@ -25,6 +33,13 @@ test("residential optional add-ons with photos render on dedicated print pages",
   assert.match(source, /buildResidentialOptionalAddOnPrintPages/);
   assert.match(source, /residentialOptionalAddOnItems/);
   assert.match(source, /function ResidentialOptionalAddOnPage/);
+});
+
+test("residential packet includes legal papers before acceptance", () => {
+  assert.match(source, /function ResidentialLegalPapersPage/);
+  assert.match(source, /residentialLegalSummarySections/);
+  assert.match(source, /sectionId: "residential_legal_papers"/);
+  assert.match(source, /Legal Papers \/ Notices/);
 });
 
 test("proposal packet applies PDF style classes from settings or proposal defaults", () => {

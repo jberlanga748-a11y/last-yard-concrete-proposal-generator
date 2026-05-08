@@ -17,7 +17,6 @@ import {
   formatResidentialCurrency,
   formatResidentialMoneyText,
   formatResidentialMoneyTextList,
-  getResidentialComparisonAddOn,
   getResidentialCoverDescription,
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
@@ -1490,9 +1489,6 @@ function ResidentialPricingOptionsTable({ addOns: addOnsOverride, optionRows: op
   const allAddOns = getResidentialOptionalAddOns(proposal);
   const addOns = addOnsOverride || allAddOns;
   const optionRows = optionRowsOverride || buildResidentialPricingOptionRows(proposal);
-  const comparisonAddOn = getResidentialComparisonAddOn(allAddOns);
-  const addOnName = comparisonAddOn?.name || "Optional Add-On";
-  const addOnIsCantilever = /cantilever/i.test(addOnName);
   const labels = getProposalToneLabels(pdfStyle);
 
   if (optionRows.length === 0) {
@@ -1514,6 +1510,28 @@ function ResidentialPricingOptionsTable({ addOns: addOnsOverride, optionRows: op
               <strong>{formatResidentialCurrency(option.basePrice)}</strong>
             </div>
             {option.description ? <p>{option.description}</p> : null}
+            {option.finishType ? <p className="residential-option-finish">Finish: {option.finishType}</p> : null}
+            {option.scopeSummary ? <p className="residential-option-scope-summary">{option.scopeSummary}</p> : null}
+            {option.includedScope?.length > 0 ? (
+              <div className="residential-option-scope-list">
+                <strong>Included:</strong>
+                <ul>
+                  {option.includedScope.slice(0, 4).map((item) => (
+                    <li key={item}>{formatResidentialMoneyText(item, proposal)}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {option.excludedScope?.length > 0 ? (
+              <div className="residential-option-scope-list">
+                <strong>Not included:</strong>
+                <ul>
+                  {option.excludedScope.slice(0, 3).map((item) => (
+                    <li key={item}>{formatResidentialMoneyText(item, proposal)}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <div className="residential-option-metrics">
               <p>
                 <span>Base Price:</span>
@@ -1527,18 +1545,38 @@ function ResidentialPricingOptionsTable({ addOns: addOnsOverride, optionRows: op
                 <span>Final Payment:</span>
                 <strong>{formatResidentialCurrency(option.finalPayment)}</strong>
               </p>
-              {option.withAddOnTotal > 0 ? (
+              {(option.addOnComparisons || []).map(({ addOn, total, downPayment, finalPayment }) => {
+                const addOnLabel = addOn?.name || "Optional Add-On";
+
+                return (
+                  <Fragment key={`${option.id || option.name}-${addOn?.id || addOnLabel}`}>
+                    <p>
+                      <span>With {addOnLabel}:</span>
+                      <strong>{formatResidentialCurrency(total)}</strong>
+                    </p>
+                    <p>
+                      <span>With add-on down:</span>
+                      <strong>{formatResidentialCurrency(downPayment)}</strong>
+                    </p>
+                    <p>
+                      <span>With add-on final:</span>
+                      <strong>{formatResidentialCurrency(finalPayment)}</strong>
+                    </p>
+                  </Fragment>
+                );
+              })}
+              {option.withAddOnTotal > 0 && (!option.addOnComparisons || option.addOnComparisons.length === 0) ? (
                 <>
                   <p>
-                    <span>{addOnIsCantilever ? "With Cantilever Upgrade:" : "With Optional Add-On:"}</span>
+                    <span>With Optional Add-On:</span>
                     <strong>{formatResidentialCurrency(option.withAddOnTotal)}</strong>
                   </p>
                   <p>
-                    <span>{addOnIsCantilever ? "With Cantilever Down:" : "With Add-On Down:"}</span>
+                    <span>With Add-On Down:</span>
                     <strong>{formatResidentialCurrency(option.withAddOnDownPayment)}</strong>
                   </p>
                   <p>
-                    <span>{addOnIsCantilever ? "With Cantilever Final:" : "With Add-On Final:"}</span>
+                    <span>With Add-On Final:</span>
                     <strong>{formatResidentialCurrency(option.withAddOnFinalPayment)}</strong>
                   </p>
                 </>

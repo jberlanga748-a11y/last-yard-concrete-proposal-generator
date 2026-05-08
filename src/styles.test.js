@@ -77,6 +77,17 @@ test("residential pricing cards and add-ons use print-safe no-break rules", () =
   assert.match(printPhotoImage, /object-position:\s*center/);
 });
 
+test("residential option builder has responsive manual editing grids", () => {
+  const editorGrid = getCssBlock(".residential-option-editor-grid");
+  const lineItemRow = getCssBlock(".residential-option-line-item-row");
+  const totalsNote = getCssBlock(".residential-option-totals-note");
+
+  assert.match(editorGrid, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(lineItemRow, /grid-template-columns:\s*minmax\(180px,\s*1\.7fr\)/);
+  assert.match(styles, /\.residential-option-sov-row\s*\{[\s\S]*?grid-template-columns:\s*minmax\(150px,\s*1fr\)/);
+  assert.match(totalsNote, /flex-wrap:\s*wrap/);
+});
+
 test("proposal PDF style classes control readability and pricing emphasis", () => {
   const largeBody = getCssBlock(".proposal-grid.proposal-style-body-large");
   const boldHeading = getCssBlock(".proposal-grid.proposal-style-heading-bold");

@@ -95,10 +95,15 @@ import {
 } from "./utils/proposalPacket/printContentCleanup.js";
 import {
   formatResidentialCurrency,
+  getResidentialOptionLineItemTotal,
+  getResidentialOptionSovTotal,
+  getResidentialOptionTotalWarning,
   hasResidentialChooseOnePricing,
   hasResidentialOptionBreakdowns,
   normalizeResidentialOptionImages,
+  normalizeResidentialOptionLineItems,
   normalizeResidentialScheduleOfValues,
+  normalizeResidentialTextList,
   removeResidentialItemImage,
 } from "./utils/proposalPacket/residentialPricing.js";
 import {
@@ -3649,6 +3654,321 @@ export default function App() {
     }
   }
 
+  function updateResidentialPricingOptions(updater) {
+    updateResidentialOptionCollection("pricingOptions", updater);
+  }
+
+  function updateResidentialOptionalAddOns(updater) {
+    updateResidentialOptionCollection("optionalAddOns", updater);
+  }
+
+  function updateResidentialOptionCollection(collectionKey, updater) {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    setProposalDirty(true);
+    setProposalDraft((currentProposal) => {
+      const normalizeItems = collectionKey === "optionalAddOns" ? normalizeOptionalAddOns : normalizePricingOptions;
+      const currentItems = normalizeItems(currentProposal[collectionKey]);
+      const nextItems = normalizeItems(updater(currentItems, currentProposal));
+
+      return {
+        ...currentProposal,
+        pricingMode: collectionKey === "pricingOptions" ? "choose_one_option" : currentProposal.pricingMode || "choose_one_option",
+        [collectionKey]: nextItems,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  }
+
+  function createResidentialPricingOptionDraft(index = 0, seed = {}) {
+    const price = toEditableNumber(seed.price ?? seed.amount ?? seed.total);
+
+    return {
+      id: createProposalId(),
+      name: seed.name || seed.label || `Option ${index + 1}`,
+      description: seed.description || "",
+      finishType: seed.finishType || "",
+      scopeSummary: seed.scopeSummary || "",
+      includedScope: normalizeResidentialTextList(seed.includedScope),
+      excludedScope: normalizeResidentialTextList(seed.excludedScope),
+      lineItems: normalizeResidentialOptionLineItems(seed.lineItems),
+      scheduleOfValues: normalizeResidentialScheduleOfValues(seed.scheduleOfValues),
+      notes: normalizeResidentialTextList(seed.notes),
+      price,
+      downPayment: toEditableNumber(seed.downPayment) || (price > 0 ? price / 2 : 0),
+      finalPayment: toEditableNumber(seed.finalPayment) || (price > 0 ? price / 2 : 0),
+      included: Boolean(seed.included),
+      selected: Boolean(seed.selected),
+      images: normalizeResidentialOptionImages(seed.images),
+    };
+  }
+
+  function createResidentialOptionalAddOnDraft(index = 0, seed = {}) {
+    return {
+      id: createProposalId(),
+      name: seed.name || seed.label || `Optional Add-On ${index + 1}`,
+      description: seed.description || "",
+      amount: toEditableNumber(seed.amount ?? seed.price ?? seed.total),
+      appliesTo: normalizeResidentialTextList(seed.appliesTo),
+      optionTotals: Array.isArray(seed.optionTotals) ? seed.optionTotals : [],
+      notes: normalizeResidentialTextList(seed.notes),
+      included: Boolean(seed.included),
+      selected: Boolean(seed.selected),
+      images: normalizeResidentialOptionImages(seed.images),
+    };
+  }
+
+  function moveResidentialArrayItem(items, fromIndex, toIndex) {
+    if (toIndex < 0 || toIndex >= items.length || fromIndex === toIndex) {
+      return items;
+    }
+
+    const nextItems = [...items];
+    const [item] = nextItems.splice(fromIndex, 1);
+    nextItems.splice(toIndex, 0, item);
+
+    return nextItems;
+  }
+
+  function addResidentialPricingOption() {
+    updateResidentialPricingOptions((items) => [
+      ...items,
+      createResidentialPricingOptionDraft(items.length, {
+        included: items.length === 0,
+        selected: items.length === 0,
+      }),
+    ]);
+  }
+
+  function duplicateResidentialPricingOption(index) {
+    updateResidentialPricingOptions((items) => {
+      const source = items[index];
+
+      if (!source) {
+        return items;
+      }
+
+      const duplicate = createResidentialPricingOptionDraft(items.length, {
+        ...source,
+        name: `${source.name || `Option ${index + 1}`} Copy`,
+        included: false,
+        selected: false,
+        images: normalizeResidentialOptionImages(source.images).map((image) => ({ ...image, id: createProposalId() })),
+      });
+
+      return [...items.slice(0, index + 1), duplicate, ...items.slice(index + 1)];
+    });
+  }
+
+  function removeResidentialPricingOption(index) {
+    updateResidentialPricingOptions((items) => {
+      const nextItems = items.filter((_, itemIndex) => itemIndex !== index);
+
+      if (!nextItems.some((item) => item.included || item.selected) && nextItems[0]) {
+        nextItems[0] = { ...nextItems[0], included: true, selected: true };
+      }
+
+      return nextItems;
+    });
+  }
+
+  function moveResidentialPricingOption(index, direction) {
+    updateResidentialPricingOptions((items) => moveResidentialArrayItem(items, index, index + direction));
+  }
+
+  function updateResidentialPricingOption(index, field, value) {
+    updateResidentialPricingOptions((items) =>
+      items
+        .map((option, itemIndex) => {
+          if (itemIndex !== index) {
+            return option;
+          }
+
+          if (field === "selected") {
+            return { ...option, selected: Boolean(value), included: Boolean(value) };
+          }
+
+          if (["price", "downPayment", "finalPayment"].includes(field)) {
+            return { ...option, [field]: toEditableNumber(value) };
+          }
+
+          if (["includedScope", "excludedScope", "notes"].includes(field)) {
+            return { ...option, [field]: normalizeResidentialTextList(value) };
+          }
+
+          return { ...option, [field]: value };
+        })
+        .map((option, itemIndex) => (field === "selected" && value ? { ...option, selected: itemIndex === index, included: itemIndex === index } : option)),
+    );
+  }
+
+  function addResidentialOptionSovRow(index) {
+    updateResidentialPricingOptions((items) =>
+      items.map((option, itemIndex) =>
+        itemIndex === index
+          ? {
+              ...option,
+              scheduleOfValues: [
+                ...normalizeResidentialScheduleOfValues(option.scheduleOfValues),
+                { id: createProposalId(), item: "", description: "", pricingBasis: "", amount: 0 },
+              ],
+            }
+          : option,
+      ),
+    );
+  }
+
+  function updateResidentialOptionSovRow(optionIndex, rowIndex, field, value) {
+    updateResidentialPricingOptions((items) =>
+      items.map((option, itemIndex) => {
+        if (itemIndex !== optionIndex) {
+          return option;
+        }
+
+        const rows = normalizeResidentialScheduleOfValues(option.scheduleOfValues);
+
+        return {
+          ...option,
+          scheduleOfValues: rows.map((row, currentRowIndex) =>
+            currentRowIndex === rowIndex ? { ...row, [field]: field === "amount" ? toEditableNumber(value) : value } : row,
+          ),
+        };
+      }),
+    );
+  }
+
+  function removeResidentialOptionSovRow(optionIndex, rowIndex) {
+    updateResidentialPricingOptions((items) =>
+      items.map((option, itemIndex) =>
+        itemIndex === optionIndex
+          ? {
+              ...option,
+              scheduleOfValues: normalizeResidentialScheduleOfValues(option.scheduleOfValues).filter((_, currentRowIndex) => currentRowIndex !== rowIndex),
+            }
+          : option,
+      ),
+    );
+  }
+
+  function addResidentialOptionLineItem(index) {
+    updateResidentialPricingOptions((items) =>
+      items.map((option, itemIndex) => {
+        if (itemIndex !== index) {
+          return option;
+        }
+
+        const rows = normalizeResidentialOptionLineItems(option.lineItems);
+
+        return {
+          ...option,
+          lineItems: [
+            ...rows,
+            {
+              id: createProposalId(),
+              itemNumber: String(rows.length + 1),
+              description: "",
+              quantity: 1,
+              unit: "LS",
+              unitPrice: 0,
+              amount: 0,
+            },
+          ],
+        };
+      }),
+    );
+  }
+
+  function updateResidentialOptionLineItem(optionIndex, rowIndex, field, value) {
+    updateResidentialPricingOptions((items) =>
+      items.map((option, itemIndex) => {
+        if (itemIndex !== optionIndex) {
+          return option;
+        }
+
+        const rows = normalizeResidentialOptionLineItems(option.lineItems);
+
+        return {
+          ...option,
+          lineItems: rows.map((row, currentRowIndex) =>
+            currentRowIndex === rowIndex
+              ? {
+                  ...row,
+                  [field]: ["quantity", "unitPrice", "amount"].includes(field) ? toEditableNumber(value) : value,
+                }
+              : row,
+          ),
+        };
+      }),
+    );
+  }
+
+  function removeResidentialOptionLineItem(optionIndex, rowIndex) {
+    updateResidentialPricingOptions((items) =>
+      items.map((option, itemIndex) =>
+        itemIndex === optionIndex
+          ? {
+              ...option,
+              lineItems: normalizeResidentialOptionLineItems(option.lineItems).filter((_, currentRowIndex) => currentRowIndex !== rowIndex),
+            }
+          : option,
+      ),
+    );
+  }
+
+  function addResidentialOptionalAddOn() {
+    updateResidentialOptionalAddOns((items) => [...items, createResidentialOptionalAddOnDraft(items.length)]);
+  }
+
+  function duplicateResidentialOptionalAddOn(index) {
+    updateResidentialOptionalAddOns((items) => {
+      const source = items[index];
+
+      if (!source) {
+        return items;
+      }
+
+      const duplicate = createResidentialOptionalAddOnDraft(items.length, {
+        ...source,
+        name: `${source.name || `Optional Add-On ${index + 1}`} Copy`,
+        included: false,
+        selected: false,
+        images: normalizeResidentialOptionImages(source.images).map((image) => ({ ...image, id: createProposalId() })),
+      });
+
+      return [...items.slice(0, index + 1), duplicate, ...items.slice(index + 1)];
+    });
+  }
+
+  function removeResidentialOptionalAddOn(index) {
+    updateResidentialOptionalAddOns((items) => items.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  function moveResidentialOptionalAddOn(index, direction) {
+    updateResidentialOptionalAddOns((items) => moveResidentialArrayItem(items, index, index + direction));
+  }
+
+  function updateResidentialOptionalAddOn(index, field, value) {
+    updateResidentialOptionalAddOns((items) =>
+      items.map((addOn, itemIndex) => {
+        if (itemIndex !== index) {
+          return addOn;
+        }
+
+        if (field === "amount") {
+          return { ...addOn, amount: toEditableNumber(value) };
+        }
+
+        if (["appliesTo", "notes"].includes(field)) {
+          return { ...addOn, [field]: normalizeResidentialTextList(value) };
+        }
+
+        return { ...addOn, [field]: value };
+      }),
+    );
+  }
+
   function updateResidentialPricingOptionImage(optionIndex, imageIndex, updates) {
     updateResidentialItemImage("pricingOptions", optionIndex, imageIndex, updates);
   }
@@ -5183,12 +5503,28 @@ export default function App() {
                 onScopeTitleChange={updateScopeSectionTitle}
                 onConcreteSpecChange={updateConcreteSpec}
                 onGcPrimeChange={updateGcPrimeField}
+                onPricingOptionAdd={addResidentialPricingOption}
+                onPricingOptionChange={updateResidentialPricingOption}
+                onPricingOptionDuplicate={duplicateResidentialPricingOption}
                 onPricingOptionImageChange={updateResidentialPricingOptionImage}
                 onPricingOptionImageRemove={removeResidentialPricingOptionImage}
                 onPricingOptionImageUpload={uploadResidentialPricingOptionImage}
+                onPricingOptionLineItemAdd={addResidentialOptionLineItem}
+                onPricingOptionLineItemChange={updateResidentialOptionLineItem}
+                onPricingOptionLineItemRemove={removeResidentialOptionLineItem}
+                onPricingOptionMove={moveResidentialPricingOption}
+                onPricingOptionRemove={removeResidentialPricingOption}
+                onPricingOptionSovRowAdd={addResidentialOptionSovRow}
+                onPricingOptionSovRowChange={updateResidentialOptionSovRow}
+                onPricingOptionSovRowRemove={removeResidentialOptionSovRow}
+                onOptionalAddOnAdd={addResidentialOptionalAddOn}
+                onOptionalAddOnChange={updateResidentialOptionalAddOn}
+                onOptionalAddOnDuplicate={duplicateResidentialOptionalAddOn}
                 onOptionalAddOnImageChange={updateResidentialOptionalAddOnImage}
                 onOptionalAddOnImageRemove={removeResidentialOptionalAddOnImage}
                 onOptionalAddOnImageUpload={uploadResidentialOptionalAddOnImage}
+                onOptionalAddOnMove={moveResidentialOptionalAddOn}
+                onOptionalAddOnRemove={removeResidentialOptionalAddOn}
                 onProjectPhotoChange={updateProjectPhoto}
                 onProjectPhotoUpload={uploadProjectPhoto}
                 onAddPlanSheet={addPlanSheet}
@@ -7873,12 +8209,28 @@ function ProposalEditor({
   onGcPrimeChange,
   onProjectPhotoChange,
   onProjectPhotoUpload,
+  onPricingOptionAdd,
+  onPricingOptionChange,
+  onPricingOptionDuplicate,
   onPricingOptionImageChange,
   onPricingOptionImageRemove,
   onPricingOptionImageUpload,
+  onPricingOptionLineItemAdd,
+  onPricingOptionLineItemChange,
+  onPricingOptionLineItemRemove,
+  onPricingOptionMove,
+  onPricingOptionRemove,
+  onPricingOptionSovRowAdd,
+  onPricingOptionSovRowChange,
+  onPricingOptionSovRowRemove,
+  onOptionalAddOnAdd,
+  onOptionalAddOnChange,
+  onOptionalAddOnDuplicate,
   onOptionalAddOnImageChange,
   onOptionalAddOnImageRemove,
   onOptionalAddOnImageUpload,
+  onOptionalAddOnMove,
+  onOptionalAddOnRemove,
   onAddPlanSheet,
   onPlanSheetChange,
   onPlanSheetImageUpload,
@@ -8241,13 +8593,29 @@ function ProposalEditor({
           <a href="#pricing-summary" onClick={(event) => openEditorAccordionSection(event, "pricing-section")}>Pricing Summary</a>
         </nav>
         <ResidentialPricingOptionsEditorSummary
+          addOnAdd={onOptionalAddOnAdd}
+          addOnChange={onOptionalAddOnChange}
+          addOnDuplicate={onOptionalAddOnDuplicate}
           addOnImageChange={onOptionalAddOnImageChange}
           addOnImageRemove={onOptionalAddOnImageRemove}
           addOnImageUpload={onOptionalAddOnImageUpload}
+          addOnMove={onOptionalAddOnMove}
+          addOnRemove={onOptionalAddOnRemove}
           message={assetUploadMessage}
+          optionAdd={onPricingOptionAdd}
+          optionAddLineItem={onPricingOptionLineItemAdd}
+          optionAddSovRow={onPricingOptionSovRowAdd}
+          optionChange={onPricingOptionChange}
+          optionDuplicate={onPricingOptionDuplicate}
           optionImageChange={onPricingOptionImageChange}
           optionImageRemove={onPricingOptionImageRemove}
           optionImageUpload={onPricingOptionImageUpload}
+          optionLineItemChange={onPricingOptionLineItemChange}
+          optionLineItemRemove={onPricingOptionLineItemRemove}
+          optionMove={onPricingOptionMove}
+          optionRemove={onPricingOptionRemove}
+          optionSovRowChange={onPricingOptionSovRowChange}
+          optionSovRowRemove={onPricingOptionSovRowRemove}
           proposal={proposal}
         />
         <LineItemEditor
@@ -10384,9 +10752,9 @@ function withImageSafetyMetadata(asset = {}, originalFile = {}, preparedImage = 
   };
 }
 
-function attachResidentialOptionImageToProposal(proposal = {}, collectionKey, itemIndex, asset = {}, uploadedBy = "") {
-  const normalizeItems = collectionKey === "optionalAddOns" ? normalizeOptionalAddOns : normalizePricingOptions;
-  const items = normalizeItems(proposal[collectionKey]).map((item, currentItemIndex) => {
+  function attachResidentialOptionImageToProposal(proposal = {}, collectionKey, itemIndex, asset = {}, uploadedBy = "") {
+    const normalizeItems = collectionKey === "optionalAddOns" ? normalizeOptionalAddOns : normalizePricingOptions;
+    const items = normalizeItems(proposal[collectionKey]).map((item, currentItemIndex) => {
     if (currentItemIndex !== itemIndex) {
       return item;
     }
@@ -10423,10 +10791,10 @@ function attachResidentialOptionImageToProposal(proposal = {}, collectionKey, it
     ...proposal,
     [collectionKey]: items,
     updatedAt: new Date().toISOString(),
-  };
-}
+    };
+  }
 
-function formatUploadResultMessage(prefix, asset = {}, preparedImage = {}) {
+  function formatUploadResultMessage(prefix, asset = {}, preparedImage = {}) {
   const pieces = [prefix];
   const fileLabel = formatSelectedFileLabel({
     name: asset.fileName || preparedImage.file?.name,
@@ -13135,67 +13503,456 @@ function normalizePricingSections(pricingSections = []) {
 }
 
 function ResidentialPricingOptionsEditorSummary({
+  addOnAdd,
+  addOnChange,
+  addOnDuplicate,
   addOnImageChange,
   addOnImageRemove,
   addOnImageUpload,
+  addOnMove,
+  addOnRemove,
   message = "",
+  optionAdd,
+  optionAddLineItem,
+  optionAddSovRow,
+  optionChange,
+  optionDuplicate,
   optionImageChange,
   optionImageRemove,
   optionImageUpload,
+  optionLineItemChange,
+  optionLineItemRemove,
+  optionMove,
+  optionRemove,
+  optionSovRowChange,
+  optionSovRowRemove,
   proposal,
 }) {
-  if (!hasResidentialChooseOnePricing(proposal)) {
+  const isResidentialBuilder = isResidentialProposalMode(inferProposalModeFromProposal(proposal)) || hasResidentialChooseOnePricing(proposal);
+
+  if (!isResidentialBuilder) {
     return null;
   }
 
-  const options = proposal.pricingOptions || [];
-  const addOns = proposal.optionalAddOns || [];
+  const options = normalizePricingOptions(proposal.pricingOptions || []);
+  const addOns = normalizeOptionalAddOns(proposal.optionalAddOns || []);
+  const selectedOption = options.find((option) => option.selected || option.included) || options[0] || null;
 
   return (
-    <div className="editor-totals residential-options-editor-summary" id="pricing-options-summary">
+    <div className="editor-totals residential-options-editor-summary residential-options-builder" id="pricing-options-summary">
       <div className="editor-totals-heading">
-        <span>Customer to Select One Pricing Option</span>
-        <strong>{formatResidentialCurrency(options.find((option) => option.selected || option.included)?.price || options[0]?.price || 0)}</strong>
+        <span>Residential Options</span>
+        <strong>{formatResidentialCurrency(selectedOption?.price || 0)}</strong>
+      </div>
+      <div className="residential-builder-actions">
+        <button className="editor-secondary-button" type="button" onClick={() => optionAdd?.()}>
+          Add Option
+        </button>
+        <button className="editor-secondary-button" type="button" onClick={() => addOnAdd?.()}>
+          Add Optional Add-On
+        </button>
       </div>
       {message ? <p className="asset-upload-message">{message}</p> : null}
-      {options.map((option, optionIndex) => (
-        <div className="residential-option-editor-card" key={option.id || option.name}>
-          <div className="residential-option-editor-row">
-            <span>{option.name}</span>
-            <strong>{formatResidentialCurrency(option.price)}</strong>
-          </div>
-          <ResidentialOptionPhotosEditor
-            images={option.images}
-            itemLabel={option.name}
-            onCaptionChange={(imageIndex, value) => optionImageChange?.(optionIndex, imageIndex, { caption: value })}
-            onRemove={(imageIndex) => optionImageRemove?.(optionIndex, imageIndex)}
-            onUpload={(file) => optionImageUpload?.(optionIndex, file)}
-          />
+      <p className="pricing-helper-text">
+        Build as many customer-choice options as needed. The customer selects one main option; optional add-ons stay separate.
+      </p>
+      {options.length === 0 ? (
+        <div className="residential-option-empty-state">
+          <p>No residential options yet. Add an option to price finishes, walls, curbs, steps, or other customer choices.</p>
+          <button className="editor-secondary-button" type="button" onClick={() => optionAdd?.()}>
+            Add First Option
+          </button>
         </div>
+      ) : null}
+      {options.map((option, optionIndex) => (
+        <ResidentialPricingOptionEditorCard
+          key={option.id || option.name || optionIndex}
+          index={optionIndex}
+          option={option}
+          optionCount={options.length}
+          onAddLineItem={optionAddLineItem}
+          onAddSovRow={optionAddSovRow}
+          onChange={optionChange}
+          onDuplicate={optionDuplicate}
+          onImageChange={optionImageChange}
+          onImageRemove={optionImageRemove}
+          onImageUpload={optionImageUpload}
+          onLineItemChange={optionLineItemChange}
+          onLineItemRemove={optionLineItemRemove}
+          onMove={optionMove}
+          onRemove={optionRemove}
+          onSovRowChange={optionSovRowChange}
+          onSovRowRemove={optionSovRowRemove}
+        />
       ))}
       {addOns.length > 0 ? (
         <div className="residential-add-on-editor-group">
-          <span>Optional Add-On</span>
+          <span>Optional Add-Ons</span>
           {addOns.map((addOn, addOnIndex) => (
-            <div className="residential-option-editor-card" key={addOn.id || addOn.name}>
-              <div className="residential-option-editor-row">
-                <span>{addOn.name}</span>
-                <strong>{formatResidentialCurrency(addOn.amount, { plus: true })}</strong>
-              </div>
-              <ResidentialOptionPhotosEditor
-                images={addOn.images}
-                itemLabel={addOn.name}
-                onCaptionChange={(imageIndex, value) => addOnImageChange?.(addOnIndex, imageIndex, { caption: value })}
-                onRemove={(imageIndex) => addOnImageRemove?.(addOnIndex, imageIndex)}
-                onUpload={(file) => addOnImageUpload?.(addOnIndex, file)}
-              />
-            </div>
+            <ResidentialOptionalAddOnEditorCard
+              addOn={addOn}
+              addOnCount={addOns.length}
+              index={addOnIndex}
+              key={addOn.id || addOn.name || addOnIndex}
+              onChange={addOnChange}
+              onDuplicate={addOnDuplicate}
+              onImageChange={addOnImageChange}
+              onImageRemove={addOnImageRemove}
+              onImageUpload={addOnImageUpload}
+              onMove={addOnMove}
+              onRemove={addOnRemove}
+            />
           ))}
         </div>
       ) : null}
-      <p className="pricing-helper-text">Main options are mutually exclusive. Optional add-ons are separate from the selected option.</p>
     </div>
   );
+}
+
+function ResidentialPricingOptionEditorCard({
+  index,
+  option,
+  optionCount,
+  onAddLineItem,
+  onAddSovRow,
+  onChange,
+  onDuplicate,
+  onImageChange,
+  onImageRemove,
+  onImageUpload,
+  onLineItemChange,
+  onLineItemRemove,
+  onMove,
+  onRemove,
+  onSovRowChange,
+  onSovRowRemove,
+}) {
+  const lineItems = normalizeResidentialOptionLineItems(option.lineItems);
+  const scheduleOfValues = normalizeResidentialScheduleOfValues(option.scheduleOfValues);
+  const lineItemTotal = getResidentialOptionLineItemTotal(option);
+  const sovTotal = getResidentialOptionSovTotal(option);
+  const totalWarning = getResidentialOptionTotalWarning(option);
+
+  return (
+    <div className="residential-option-editor-card">
+      <div className="residential-option-editor-card-heading">
+        <div>
+          <p>Option {index + 1}</p>
+          <h4>{option.name || `Option ${index + 1}`}</h4>
+        </div>
+        <strong>{formatResidentialCurrency(option.price)}</strong>
+      </div>
+
+      <div className="residential-builder-actions compact">
+        <button className="editor-secondary-button" type="button" disabled={index === 0} onClick={() => onMove?.(index, -1)}>
+          Move Up
+        </button>
+        <button className="editor-secondary-button" type="button" disabled={index >= optionCount - 1} onClick={() => onMove?.(index, 1)}>
+          Move Down
+        </button>
+        <button className="editor-secondary-button" type="button" onClick={() => onDuplicate?.(index)}>
+          Duplicate
+        </button>
+        <button className="editor-secondary-button danger" type="button" onClick={() => onRemove?.(index)}>
+          Delete
+        </button>
+      </div>
+
+      <label className="checkbox-field residential-default-option-toggle">
+        <input type="checkbox" checked={Boolean(option.selected || option.included)} onChange={(event) => onChange?.(index, "selected", event.target.checked)} />
+        <span>Default/base option for current proposal total</span>
+      </label>
+
+      <div className="residential-option-editor-grid">
+        <EditorField label="Option Name" path={`pricingOptions.${index}.name`} value={option.name} onChange={(_, value) => onChange?.(index, "name", value)} />
+        <EditorField
+          label="Finish Type"
+          path={`pricingOptions.${index}.finishType`}
+          value={option.finishType || ""}
+          placeholder="Broom, stamped, sand, exposed aggregate..."
+          onChange={(_, value) => onChange?.(index, "finishType", value)}
+        />
+        <EditorField
+          label="Option Total"
+          path={`pricingOptions.${index}.price`}
+          type="number"
+          value={option.price ?? ""}
+          onChange={(_, value) => onChange?.(index, "price", value)}
+        />
+        <EditorField
+          label="Down Payment"
+          path={`pricingOptions.${index}.downPayment`}
+          type="number"
+          value={option.downPayment ?? ""}
+          onChange={(_, value) => onChange?.(index, "downPayment", value)}
+        />
+        <EditorField
+          label="Final Payment"
+          path={`pricingOptions.${index}.finalPayment`}
+          type="number"
+          value={option.finalPayment ?? ""}
+          onChange={(_, value) => onChange?.(index, "finalPayment", value)}
+        />
+      </div>
+
+      <EditorField
+        label="Short Description"
+        path={`pricingOptions.${index}.description`}
+        multiline
+        value={option.description || ""}
+        onChange={(_, value) => onChange?.(index, "description", value)}
+      />
+      <EditorField
+        label="Scope Summary"
+        path={`pricingOptions.${index}.scopeSummary`}
+        multiline
+        value={option.scopeSummary || ""}
+        onChange={(_, value) => onChange?.(index, "scopeSummary", value)}
+      />
+
+      <div className="residential-option-editor-grid">
+        <EditorField
+          label="Included Scope Bullets"
+          path={`pricingOptions.${index}.includedScope`}
+          multiline
+          value={formatResidentialEditorList(option.includedScope)}
+          placeholder="One bullet per line"
+          onChange={(_, value) => onChange?.(index, "includedScope", value)}
+        />
+        <EditorField
+          label="Excluded Scope Bullets"
+          path={`pricingOptions.${index}.excludedScope`}
+          multiline
+          value={formatResidentialEditorList(option.excludedScope)}
+          placeholder="One bullet per line"
+          onChange={(_, value) => onChange?.(index, "excludedScope", value)}
+        />
+      </div>
+
+      <div className="residential-option-totals-note">
+        <span>Line item total: {formatResidentialCurrency(lineItemTotal)}</span>
+        <span>SOV total: {formatResidentialCurrency(sovTotal)}</span>
+        {totalWarning ? <strong>{totalWarning}</strong> : <em>Totals look aligned.</em>}
+      </div>
+
+      <ResidentialOptionLineItemsEditor
+        lineItems={lineItems}
+        optionIndex={index}
+        onAdd={onAddLineItem}
+        onChange={onLineItemChange}
+        onRemove={onLineItemRemove}
+      />
+      <ResidentialOptionSovEditor
+        optionIndex={index}
+        rows={scheduleOfValues}
+        onAdd={onAddSovRow}
+        onChange={onSovRowChange}
+        onRemove={onSovRowRemove}
+      />
+
+      <EditorField
+        label="Option Notes"
+        path={`pricingOptions.${index}.notes`}
+        multiline
+        value={formatResidentialEditorList(option.notes)}
+        onChange={(_, value) => onChange?.(index, "notes", value)}
+      />
+
+      <ResidentialOptionPhotosEditor
+        images={option.images}
+        itemLabel={option.name}
+        onCaptionChange={(imageIndex, value) => onImageChange?.(index, imageIndex, { caption: value })}
+        onRemove={(imageIndex) => onImageRemove?.(index, imageIndex)}
+        onUpload={(file) => onImageUpload?.(index, file)}
+      />
+    </div>
+  );
+}
+
+function ResidentialOptionLineItemsEditor({ lineItems = [], optionIndex, onAdd, onChange, onRemove }) {
+  return (
+    <div className="residential-option-subtable">
+      <div className="residential-option-subtable-heading">
+        <span>Option Line Items</span>
+        <button className="editor-secondary-button" type="button" onClick={() => onAdd?.(optionIndex)}>
+          Add Line Item
+        </button>
+      </div>
+      {lineItems.length > 0 ? (
+        <div className="residential-option-row-list">
+          {lineItems.map((row, rowIndex) => (
+            <div className="residential-option-line-item-row" key={row.id || rowIndex}>
+              <EditorField
+                label="Description"
+                path={`pricingOptions.${optionIndex}.lineItems.${rowIndex}.description`}
+                value={row.description || ""}
+                onChange={(_, value) => onChange?.(optionIndex, rowIndex, "description", value)}
+              />
+              <EditorField
+                label="Qty"
+                path={`pricingOptions.${optionIndex}.lineItems.${rowIndex}.quantity`}
+                type="number"
+                value={row.quantity ?? ""}
+                onChange={(_, value) => onChange?.(optionIndex, rowIndex, "quantity", value)}
+              />
+              <EditorField
+                label="Unit"
+                path={`pricingOptions.${optionIndex}.lineItems.${rowIndex}.unit`}
+                value={row.unit || ""}
+                onChange={(_, value) => onChange?.(optionIndex, rowIndex, "unit", value)}
+              />
+              <EditorField
+                label="Unit Price"
+                path={`pricingOptions.${optionIndex}.lineItems.${rowIndex}.unitPrice`}
+                type="number"
+                value={row.unitPrice ?? ""}
+                onChange={(_, value) => onChange?.(optionIndex, rowIndex, "unitPrice", value)}
+              />
+              <EditorField
+                label="Amount"
+                path={`pricingOptions.${optionIndex}.lineItems.${rowIndex}.amount`}
+                type="number"
+                value={row.amount ?? ""}
+                onChange={(_, value) => onChange?.(optionIndex, rowIndex, "amount", value)}
+              />
+              <button className="editor-secondary-button" type="button" onClick={() => onRemove?.(optionIndex, rowIndex)}>
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="pricing-helper-text">Optional. Use line items when you want the option total to calculate from rows.</p>
+      )}
+    </div>
+  );
+}
+
+function ResidentialOptionSovEditor({ optionIndex, rows = [], onAdd, onChange, onRemove }) {
+  return (
+    <div className="residential-option-subtable">
+      <div className="residential-option-subtable-heading">
+        <span>Option SOV / Price Breakdown</span>
+        <button className="editor-secondary-button" type="button" onClick={() => onAdd?.(optionIndex)}>
+          Add SOV Row
+        </button>
+      </div>
+      {rows.length > 0 ? (
+        <div className="residential-option-row-list">
+          {rows.map((row, rowIndex) => (
+            <div className="residential-option-sov-row" key={row.id || rowIndex}>
+              <EditorField
+                label="Item"
+                path={`pricingOptions.${optionIndex}.scheduleOfValues.${rowIndex}.item`}
+                value={row.item || ""}
+                onChange={(_, value) => onChange?.(optionIndex, rowIndex, "item", value)}
+              />
+              <EditorField
+                label="Description"
+                path={`pricingOptions.${optionIndex}.scheduleOfValues.${rowIndex}.description`}
+                value={row.description || ""}
+                onChange={(_, value) => onChange?.(optionIndex, rowIndex, "description", value)}
+              />
+              <EditorField
+                label="Amount"
+                path={`pricingOptions.${optionIndex}.scheduleOfValues.${rowIndex}.amount`}
+                type="number"
+                value={row.amount ?? ""}
+                onChange={(_, value) => onChange?.(optionIndex, rowIndex, "amount", value)}
+              />
+              <button className="editor-secondary-button" type="button" onClick={() => onRemove?.(optionIndex, rowIndex)}>
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="pricing-helper-text">Optional. Add customer-facing option breakdown rows when useful.</p>
+      )}
+    </div>
+  );
+}
+
+function ResidentialOptionalAddOnEditorCard({
+  addOn,
+  addOnCount,
+  index,
+  onChange,
+  onDuplicate,
+  onImageChange,
+  onImageRemove,
+  onImageUpload,
+  onMove,
+  onRemove,
+}) {
+  return (
+    <div className="residential-option-editor-card">
+      <div className="residential-option-editor-card-heading">
+        <div>
+          <p>Optional Add-On</p>
+          <h4>{addOn.name || `Optional Add-On ${index + 1}`}</h4>
+        </div>
+        <strong>{formatResidentialCurrency(addOn.amount, { plus: true })}</strong>
+      </div>
+      <div className="residential-builder-actions compact">
+        <button className="editor-secondary-button" type="button" disabled={index === 0} onClick={() => onMove?.(index, -1)}>
+          Move Up
+        </button>
+        <button className="editor-secondary-button" type="button" disabled={index >= addOnCount - 1} onClick={() => onMove?.(index, 1)}>
+          Move Down
+        </button>
+        <button className="editor-secondary-button" type="button" onClick={() => onDuplicate?.(index)}>
+          Duplicate
+        </button>
+        <button className="editor-secondary-button danger" type="button" onClick={() => onRemove?.(index)}>
+          Delete
+        </button>
+      </div>
+      <div className="residential-option-editor-grid">
+        <EditorField label="Add-On Name" path={`optionalAddOns.${index}.name`} value={addOn.name} onChange={(_, value) => onChange?.(index, "name", value)} />
+        <EditorField
+          label="Add-On Price"
+          path={`optionalAddOns.${index}.amount`}
+          type="number"
+          value={addOn.amount ?? ""}
+          onChange={(_, value) => onChange?.(index, "amount", value)}
+        />
+      </div>
+      <EditorField
+        label="Description"
+        path={`optionalAddOns.${index}.description`}
+        multiline
+        value={addOn.description || ""}
+        onChange={(_, value) => onChange?.(index, "description", value)}
+      />
+      <EditorField
+        label="Applies To Options"
+        path={`optionalAddOns.${index}.appliesTo`}
+        multiline
+        value={formatResidentialEditorList(addOn.appliesTo)}
+        placeholder="Leave blank to apply to all options"
+        onChange={(_, value) => onChange?.(index, "appliesTo", value)}
+      />
+      <EditorField
+        label="Add-On Notes"
+        path={`optionalAddOns.${index}.notes`}
+        multiline
+        value={formatResidentialEditorList(addOn.notes)}
+        onChange={(_, value) => onChange?.(index, "notes", value)}
+      />
+      <ResidentialOptionPhotosEditor
+        images={addOn.images}
+        itemLabel={addOn.name}
+        onCaptionChange={(imageIndex, value) => onImageChange?.(index, imageIndex, { caption: value })}
+        onRemove={(imageIndex) => onImageRemove?.(index, imageIndex)}
+        onUpload={(file) => onImageUpload?.(index, file)}
+      />
+    </div>
+  );
+}
+
+function formatResidentialEditorList(items = []) {
+  return normalizeResidentialTextList(items).join("\n");
 }
 
 function ResidentialOptionPhotosEditor({ images = [], itemLabel = "Pricing option", onCaptionChange, onRemove, onUpload }) {
@@ -13273,24 +14030,54 @@ function normalizePricingOptions(pricingOptions = []) {
 
   return pricingOptions
     .map((option, index) => {
-      const price = toEditableNumber(option?.price ?? option?.amount ?? option?.total);
+      if (!option || typeof option !== "object") {
+        return null;
+      }
+
+      const lineItems = normalizeResidentialOptionLineItems(option?.lineItems ?? option?.items);
+      const scheduleOfValues = normalizeResidentialScheduleOfValues(
+        option?.scheduleOfValues ?? option?.sov ?? option?.breakdown ?? option?.optionBreakdown,
+      );
+      const lineItemTotal = lineItems.reduce((sum, row) => sum + toEditableNumber(row.amount), 0);
+      const sovTotal = scheduleOfValues.reduce((sum, row) => sum + toEditableNumber(row.amount), 0);
+      const price = toEditableNumber(option?.price ?? option?.amount ?? option?.total) || lineItemTotal || sovTotal;
+      const name = option?.name ?? option?.label ?? `Option ${index + 1}`;
+      const images = normalizeResidentialOptionImages(option?.images || option?.optionPhotos || option?.photos);
+      const includedScope = normalizeResidentialTextList(option?.includedScope ?? option?.inclusions);
+      const excludedScope = normalizeResidentialTextList(option?.excludedScope ?? option?.exclusions);
+      const notes = normalizeResidentialTextList(option?.optionNotes ?? option?.notesList ?? option?.notes);
 
       return {
         id: option?.id || createProposalId(),
-        name: option?.name ?? option?.label ?? `Option ${index + 1}`,
+        name,
         description: option?.description ?? "",
+        finishType: option?.finishType ?? option?.finish ?? option?.finishOption ?? "",
+        scopeSummary: option?.scopeSummary ?? option?.summary ?? "",
+        includedScope,
+        excludedScope,
+        lineItems,
+        notes,
         price,
         downPayment: toEditableNumber(option?.downPayment) || price / 2,
         finalPayment: toEditableNumber(option?.finalPayment) || price / 2,
         included: Boolean(option?.included === true || option?.selected === true || (!hasExplicitSelection && index === 0)),
         selected: Boolean(option?.selected === true || option?.included === true || (!hasExplicitSelection && index === 0)),
-        images: normalizeResidentialOptionImages(option?.images || option?.optionPhotos || option?.photos),
-        scheduleOfValues: normalizeResidentialScheduleOfValues(
-          option?.scheduleOfValues ?? option?.sov ?? option?.breakdown ?? option?.optionBreakdown,
-        ),
+        images,
+        scheduleOfValues,
       };
     })
-    .filter((option) => option.name && option.price > 0);
+    .filter(
+      (option) =>
+        option &&
+        (option.name ||
+          option.description ||
+          option.price > 0 ||
+          option.images.length > 0 ||
+          option.includedScope.length > 0 ||
+          option.excludedScope.length > 0 ||
+          option.lineItems.length > 0 ||
+          option.scheduleOfValues.length > 0),
+    );
 }
 
 function normalizeOptionalAddOns(optionalAddOns = []) {
@@ -13299,17 +14086,33 @@ function normalizeOptionalAddOns(optionalAddOns = []) {
   }
 
   return optionalAddOns
-    .map((addOn) => ({
-      id: addOn?.id || createProposalId(),
-      name: addOn?.name ?? addOn?.label ?? "Optional Add-On",
-      description: addOn?.description ?? "",
-      amount: toEditableNumber(addOn?.amount ?? addOn?.price ?? addOn?.total),
-      appliesTo: Array.isArray(addOn?.appliesTo) ? addOn.appliesTo : [],
-      included: Boolean(addOn?.included ?? addOn?.selected),
-      selected: Boolean(addOn?.selected ?? addOn?.included),
-      images: normalizeResidentialOptionImages(addOn?.images || addOn?.optionPhotos || addOn?.photos),
-    }))
-    .filter((addOn) => addOn.name && addOn.amount > 0);
+    .map((addOn) => {
+      if (!addOn || typeof addOn !== "object") {
+        return null;
+      }
+
+      return {
+        id: addOn.id || createProposalId(),
+        name: addOn.name ?? addOn.label ?? "Optional Add-On",
+        description: addOn.description ?? "",
+        amount: toEditableNumber(addOn.amount ?? addOn.price ?? addOn.total),
+        appliesTo: Array.isArray(addOn.appliesTo) ? addOn.appliesTo : normalizeResidentialTextList(addOn.appliesTo),
+        optionTotals: Array.isArray(addOn.optionTotals)
+          ? addOn.optionTotals.map((row) => ({
+              optionId: row?.optionId ?? "",
+              optionName: row?.optionName ?? row?.name ?? row?.label ?? "",
+              total: toEditableNumber(row?.total ?? row?.price ?? row?.amount),
+              downPayment: toEditableNumber(row?.downPayment),
+              finalPayment: toEditableNumber(row?.finalPayment),
+            }))
+          : [],
+        notes: normalizeResidentialTextList(addOn.addOnNotes ?? addOn.notesList ?? addOn.notes),
+        included: Boolean(addOn.included ?? addOn.selected),
+        selected: Boolean(addOn.selected ?? addOn.included),
+        images: normalizeResidentialOptionImages(addOn.images || addOn.optionPhotos || addOn.photos),
+      };
+    })
+    .filter((addOn) => addOn && (addOn.name || addOn.description || addOn.amount > 0 || addOn.images.length > 0 || addOn.notes.length > 0));
 }
 
 function createEmptyAddendumRecord() {

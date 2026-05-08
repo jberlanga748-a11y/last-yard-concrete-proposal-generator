@@ -14,6 +14,8 @@ import {
   formatResidentialCurrency,
   formatResidentialMoneyText,
   getPrintableResidentialOptionImages,
+  getResidentialOptionLineItemTotal,
+  getResidentialOptionTotalWarning,
   getResidentialCoverDescription,
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
@@ -22,6 +24,7 @@ import {
   hasResidentialChooseOnePricing,
   normalizeResidentialPricingOptions,
   normalizeResidentialOptionalAddOns,
+  normalizeResidentialOptionLineItems,
   removeResidentialItemImage,
   replaceResidentialItemImage,
   splitResidentialOptionalAddOnsForPrint,
@@ -128,6 +131,64 @@ test("normalizes all residential pricing options and keeps JSON amounts numeric"
   assert.equal(options[1].images[0].src, "data:image/png;base64,stamped");
 });
 
+test("residential pricing options are generic and preserve manual-builder fields", () => {
+  const options = normalizeResidentialPricingOptions([
+    {
+      name: "Option 1 - Broom with walls",
+      finishType: "Broom",
+      scopeSummary: "Walkway, steps, walls, and curb.",
+      includedScope: ["Side walls", "Curb included"],
+      excludedScope: "Sealer\nDecorative border",
+      lineItems: [
+        { description: "Site preparation", quantity: 1, unit: "LS", unitPrice: 5000, amount: 5000 },
+        { description: "Concrete placement and finish", quantity: 1, unit: "LS", amount: 77500 },
+      ],
+      notes: ["Customer-friendly option note"],
+    },
+    {
+      name: "Option 2 - Stamped without walls",
+      price: 97000,
+      finishType: "Stamped",
+    },
+    {
+      name: "Option 3 - Sand finish",
+      price: 90000,
+      finishType: "Sand",
+    },
+    {
+      name: "Option 4 - Broom without curb",
+      price: 79000,
+      finishType: "Broom",
+    },
+  ]);
+
+  assert.equal(options.length, 4);
+  assert.equal(options[0].price, 82500);
+  assert.equal(options[0].finishType, "Broom");
+  assert.deepEqual(options[0].includedScope, ["Side walls", "Curb included"]);
+  assert.deepEqual(options[0].excludedScope, ["Sealer", "Decorative border"]);
+  assert.equal(options[0].lineItems.length, 2);
+  assert.equal(getResidentialOptionLineItemTotal(options[0]), 82500);
+  assert.equal(options[3].name, "Option 4 - Broom without curb");
+});
+
+test("option line item total warning is helpful and non-blocking", () => {
+  const option = normalizeResidentialPricingOptions([
+    {
+      name: "Option with manual override",
+      price: 90000,
+      lineItems: [
+        { description: "Site preparation", amount: 5000 },
+        { description: "Concrete placement", amount: 80000 },
+      ],
+    },
+  ])[0];
+
+  assert.equal(normalizeResidentialOptionLineItems(option.lineItems).length, 2);
+  assert.equal(getResidentialOptionLineItemTotal(option), 85000);
+  assert.match(getResidentialOptionTotalWarning(option), /\$85,000.*\$90,000/);
+});
+
 test("preserves optional add-on image placeholders from Smart Paste JSON", () => {
   const addOns = normalizeResidentialOptionalAddOns(residentialProposal.optionalAddOns);
 
@@ -135,6 +196,31 @@ test("preserves optional add-on image placeholders from Smart Paste JSON", () =>
   assert.equal(addOns[0].images.length, 1);
   assert.equal(addOns[0].images[0].label, "Cantilever stair example");
   assert.equal(addOns[0].images[0].uploadRequired, true);
+});
+
+test("generic optional add-ons apply to selected options without becoming main choices", () => {
+  const proposal = {
+    pricingMode: "choose_one_option",
+    pricingOptions: [
+      { name: "Option 1 - Broom with walls", price: 82500 },
+      { name: "Option 2 - Stamped with walls", price: 97500 },
+      { name: "Option 3 - Sand without cantilever", price: 90000 },
+      { name: "Option 4 - Broom without walls", price: 72000 },
+    ],
+    optionalAddOns: [
+      { name: "Sealer", amount: 1200, appliesTo: ["Option 1", "Option 4"] },
+      { name: "Extra curb", amount: 3400, appliesTo: ["Option 2"] },
+    ],
+  };
+  const rows = buildResidentialPricingOptionRows(proposal);
+
+  assert.equal(rows.length, 4);
+  assert.deepEqual(
+    rows.map((row) => row.addOnComparisons.map((comparison) => comparison.addOn.name)),
+    [["Sealer"], ["Extra curb"], [], ["Sealer"]],
+  );
+  assert.equal(rows[0].addOnComparisons[0].total, 83700);
+  assert.equal(rows[1].addOnComparisons[0].total, 100900);
 });
 
 test("prints uploaded option images but hides placeholder-only images", () => {
@@ -391,6 +477,7 @@ test("residential choose-one page structure separates pricing, SOV, scope, and t
     "residential_pricing_options",
     "residential_option_breakdowns",
     "residential_scope",
+    "residential_legal_papers",
     "residential_payment_terms",
   ]);
 });

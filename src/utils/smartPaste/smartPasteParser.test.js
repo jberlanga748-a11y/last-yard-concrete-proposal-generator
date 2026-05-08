@@ -1011,6 +1011,15 @@ ${JSON.stringify(
           downPayment: 41250,
           finalPayment: 41250,
           included: true,
+          finishType: "Broom",
+          scopeSummary: "Full residential walkway, steps, walls, curbs, and broom finish.",
+          includedScope: ["Side walls", "Curbs", "Broom finish"],
+          excludedScope: ["Sealer"],
+          lineItems: [
+            { description: "Site preparation", quantity: 1, unit: "LS", amount: 7500 },
+            { description: "Concrete placement and broom finish", quantity: 1, unit: "LS", amount: 75000 },
+          ],
+          notes: ["Customer selects one main option."],
           images: [
             {
               label: "Broom finish example",
@@ -1069,6 +1078,10 @@ ${JSON.stringify(
           amount: 8500,
           description: "Optional upgrade to selected option.",
           appliesTo: ["Option 1", "Option 2", "Option 3"],
+          optionTotals: [
+            { optionName: "Option 1 - Full Scope With Broom Finish", total: 91000, downPayment: 45500, finalPayment: 45500 },
+          ],
+          notes: ["Add-on is separate from main options."],
           images: [
             {
               label: "Cantilever stair example",
@@ -1119,6 +1132,13 @@ ${JSON.stringify(
   assert.equal(result.proposal.pricingOptions[0].price, 82500);
   assert.equal(result.proposal.pricingOptions[0].downPayment, 41250);
   assert.equal(result.proposal.pricingOptions[0].finalPayment, 41250);
+  assert.equal(result.proposal.pricingOptions[0].finishType, "Broom");
+  assert.equal(result.proposal.pricingOptions[0].scopeSummary, "Full residential walkway, steps, walls, curbs, and broom finish.");
+  assert.deepEqual(result.proposal.pricingOptions[0].includedScope, ["Side walls", "Curbs", "Broom finish"]);
+  assert.deepEqual(result.proposal.pricingOptions[0].excludedScope, ["Sealer"]);
+  assert.equal(result.proposal.pricingOptions[0].lineItems.length, 2);
+  assert.equal(result.proposal.pricingOptions[0].lineItems[1].amount, 75000);
+  assert.deepEqual(result.proposal.pricingOptions[0].notes, ["Customer selects one main option."]);
   assert.equal(result.proposal.pricingOptions[0].images[0].label, "Broom finish example");
   assert.equal(result.proposal.pricingOptions[0].images[0].uploadRequired, true);
   assert.equal(result.proposal.pricingOptions[1].images[0].src, "data:image/png;base64,stamped");
@@ -1132,6 +1152,8 @@ ${JSON.stringify(
   assert.equal(result.proposal.optionalAddOns.length, 1);
   assert.equal(result.proposal.optionalAddOns[0].name, "Cantilever-Style Stair Upgrade");
   assert.equal(result.proposal.optionalAddOns[0].amount, 8500);
+  assert.equal(result.proposal.optionalAddOns[0].optionTotals[0].total, 91000);
+  assert.deepEqual(result.proposal.optionalAddOns[0].notes, ["Add-on is separate from main options."]);
   assert.equal(result.proposal.optionalAddOns[0].images[0].label, "Cantilever stair example");
   assert.equal(result.proposal.residentialLegalPapers.informationNoticeToOwner.status, "needs_review");
   assert.equal(result.proposal.residentialLegalPapers.rightToCancelNotice.status, "provided_separately");
