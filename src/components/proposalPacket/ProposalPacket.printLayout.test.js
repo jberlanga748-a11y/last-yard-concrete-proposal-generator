@@ -21,3 +21,9 @@ test("residential optional add-ons with photos render on dedicated print pages",
   assert.match(source, /residentialOptionalAddOnItems/);
   assert.match(source, /function ResidentialOptionalAddOnPage/);
 });
+
+test("proposal packet applies PDF style classes from settings or proposal defaults", () => {
+  assert.match(source, /companySettings/);
+  assert.match(source, /getProposalPdfStyleClassNames/);
+  assert.match(source, /proposal-grid \$\{pdfStyleClassNames\}/);
+});

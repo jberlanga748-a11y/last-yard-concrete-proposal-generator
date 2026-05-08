@@ -30,6 +30,11 @@ import {
   isGcPrimePacketMode,
   isResidentialProposalMode,
 } from "../../utils/proposals/proposalModes.js";
+import {
+  getProposalPdfStyleClassNames,
+  getProposalPdfStyleForMode,
+  normalizeProposalPdfStyle,
+} from "../../utils/proposalPacket/proposalPdfStyle.js";
 
 const legacyLogoSrc = "/assets/last-yard-logo.jpg";
 const logoSrc = legacyLogoSrc;
@@ -131,10 +136,10 @@ function usePacketHelpers() {
 
   return helpers;
 }
-export function ProposalPreview({ proposal, helpers }) {
+export function ProposalPreview({ companySettings, proposal, helpers }) {
   return (
     <PacketRenderContext.Provider value={helpers}>
-      <ProposalPacketContent proposal={proposal} />
+      <ProposalPacketContent companySettings={companySettings} proposal={proposal} />
     </PacketRenderContext.Provider>
   );
 }
@@ -196,7 +201,7 @@ function formatResidentialTextObject(value = {}, proposal = {}, skipKeys = []) {
   );
 }
 
-function ProposalPacketContent({ proposal }) {
+function ProposalPacketContent({ companySettings, proposal }) {
   const {
     buildAppendixPlan,
     buildConcreteSpecRows,
@@ -210,6 +215,11 @@ function ProposalPacketContent({ proposal }) {
   } = usePacketHelpers();
   const cleanedProposal = cleanProposalForPrint(proposal);
   const proposalMode = inferProposalModeFromProposal(cleanedProposal);
+  const settingsPdfStyle = companySettings?.proposalPdfStyle
+    ? getProposalPdfStyleForMode(companySettings.proposalPdfStyle, proposalMode)
+    : null;
+  const pdfStyle = normalizeProposalPdfStyle(settingsPdfStyle || cleanedProposal.pdfStyle, proposalMode);
+  const pdfStyleClassNames = getProposalPdfStyleClassNames(pdfStyle, proposalMode);
   const isResidentialMode = isResidentialProposalMode(proposalMode);
   const packetProposal = isResidentialMode ? formatResidentialProposalTextForPrint(cleanedProposal) : cleanedProposal;
   const company = packetProposal.company;
@@ -379,6 +389,7 @@ function ProposalPacketContent({ proposal }) {
         projectName={packetProposal.project?.name}
         proposal={packetProposal}
         addOns={page.showAddOns ? residentialTextOptionalAddOns : []}
+        pdfStyle={pdfStyle}
         showAddOns={page.showAddOns}
       />
     ),
@@ -408,6 +419,7 @@ function ProposalPacketContent({ proposal }) {
           company={company}
           exclusions={appendixPlan.mainExclusions}
           pageNumber={pageNumber}
+          pdfStyle={pdfStyle}
           projectName={packetProposal.project?.name}
           scopeLeft={scopeLeft}
           scopeRight={scopeRight}
@@ -423,6 +435,7 @@ function ProposalPacketContent({ proposal }) {
         <ResidentialPaymentTermsPage
           company={company}
           pageNumber={pageNumber}
+          pdfStyle={pdfStyle}
           projectName={packetProposal.project?.name}
           termsCopy={termsCopy}
         />
@@ -443,7 +456,7 @@ function ProposalPacketContent({ proposal }) {
   );
 
   return (
-    <section className="proposal-grid">
+    <section className={`proposal-grid ${pdfStyleClassNames}`}>
       {packetItems.map((item, index) => (
         <Fragment key={item.key}>{item.render(index + 1)}</Fragment>
       ))}
@@ -626,6 +639,7 @@ function ResidentialPricingPage({
   pageCount = 1,
   pageIndex = 0,
   pageNumber,
+  pdfStyle,
   projectName,
   proposal,
   showAddOns = true,
@@ -641,7 +655,13 @@ function ResidentialPricingPage({
         <p className="structured-packet-note">
           Customer to select one main option. Optional add-ons are shown with each option so the total is clear before acceptance.
         </p>
-        <ResidentialPricingOptionsTable addOns={addOns} optionRows={optionRows} proposal={proposal} showAddOns={showAddOns} />
+        <ResidentialPricingOptionsTable
+          addOns={addOns}
+          optionRows={optionRows}
+          pdfStyle={pdfStyle}
+          proposal={proposal}
+          showAddOns={showAddOns}
+        />
       </div>
 
       <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
@@ -676,7 +696,9 @@ function ResidentialOptionalAddOnPage({ company, page, pageNumber, projectName }
   );
 }
 
-function ResidentialScopePage({ company, exclusions = [], pageNumber, projectName, scopeLeft = [], scopeRight = [], specRows = [] }) {
+function ResidentialScopePage({ company, exclusions = [], pageNumber, pdfStyle, projectName, scopeLeft = [], scopeRight = [], specRows = [] }) {
+  const labels = getProposalToneLabels(pdfStyle);
+
   return (
     <ProposalPage className="structured-packet-page residential-scope-page">
       <ResidentialPacketHeader company={company} pageTitle="Scope of Work" projectName={projectName} />
@@ -684,7 +706,7 @@ function ResidentialScopePage({ company, exclusions = [], pageNumber, projectNam
       <div className="structured-packet-body residential-page-body">
         <div className="structured-accent" />
         <section className="residential-print-section">
-          <h3>Included Scope</h3>
+          <h3>{labels.includedScope}</h3>
           {scopeLeft.length > 0 || scopeRight.length > 0 ? (
             <div className="two-column section-pad residential-scope-grid">
               <ScopeColumn groups={scopeLeft} />
@@ -704,7 +726,7 @@ function ResidentialScopePage({ company, exclusions = [], pageNumber, projectNam
 
         {exclusions.length > 0 ? (
           <section className="residential-print-section">
-            <h3>Exclusions / Change-Order Triggers</h3>
+            <h3>{labels.exclusions}</h3>
             <ul className="bullet-list compact-list residential-clean-list">
               {exclusions.map((item) => (
                 <li key={item}>
@@ -722,7 +744,9 @@ function ResidentialScopePage({ company, exclusions = [], pageNumber, projectNam
   );
 }
 
-function ResidentialPaymentTermsPage({ company, pageNumber, projectName, termsCopy }) {
+function ResidentialPaymentTermsPage({ company, pageNumber, pdfStyle, projectName, termsCopy }) {
+  const labels = getProposalToneLabels(pdfStyle);
+
   return (
     <ProposalPage className="structured-packet-page residential-terms-page">
       <ResidentialPacketHeader company={company} pageTitle="Payment Terms / Acceptance" projectName={projectName} />
@@ -730,11 +754,11 @@ function ResidentialPaymentTermsPage({ company, pageNumber, projectName, termsCo
       <div className="structured-packet-body residential-page-body residential-terms-body">
         <div className="structured-accent" />
         <section className="residential-print-section">
-          <h3>Payment Terms</h3>
+          <h3>{labels.paymentTerms}</h3>
           <p className="terms-copy residential-terms-copy">{termsCopy}</p>
         </section>
         <section className="residential-print-section">
-          <h3>Acceptance</h3>
+          <h3>{labels.acceptance}</h3>
           <SignatureBlock companyName={company.name} />
         </section>
       </div>
@@ -777,6 +801,39 @@ function chunkResidentialOptionBreakdowns(items, chunkSize) {
   }
 
   return chunks;
+}
+
+function getProposalToneLabels(pdfStyle = {}) {
+  if (pdfStyle.proposalTone === "gc_technical") {
+    return {
+      acceptance: "Acceptance",
+      exclusions: "Scope Clarifications / Exclusions",
+      includedScope: "Scope Included",
+      paymentTerms: "Legal / Terms",
+      pricingOptions: "Pricing Options",
+      pricingOptionsNote: "Pricing selections are shown separately and are not added together unless accepted.",
+    };
+  }
+
+  if (pdfStyle.proposalTone === "commercial_professional") {
+    return {
+      acceptance: "Signature / Acceptance",
+      exclusions: "Exclusions / Clarifications",
+      includedScope: "Inclusions",
+      paymentTerms: "Payment Terms",
+      pricingOptions: "Pricing Options",
+      pricingOptionsNote: "Main pricing options are mutually exclusive and are not added together.",
+    };
+  }
+
+  return {
+    acceptance: "Acceptance",
+    exclusions: "Exclusions / Change-Order Triggers",
+    includedScope: "What's Included",
+    paymentTerms: "Payment Terms",
+    pricingOptions: "Customer to Select One",
+    pricingOptionsNote: "Main finish options are mutually exclusive and are not added together.",
+  };
 }
 
 function hasResidentialPlanSheetPrintData(sheet = {}) {
@@ -1370,7 +1427,7 @@ function PricingTable({ items, total }) {
   );
 }
 
-function ResidentialPricingOptionsTable({ addOns: addOnsOverride, optionRows: optionRowsOverride, proposal, showAddOns = true }) {
+function ResidentialPricingOptionsTable({ addOns: addOnsOverride, optionRows: optionRowsOverride, pdfStyle, proposal, showAddOns = true }) {
   const { getImageAssetSource } = usePacketHelpers();
   const allAddOns = getResidentialOptionalAddOns(proposal);
   const addOns = addOnsOverride || allAddOns;
@@ -1378,6 +1435,7 @@ function ResidentialPricingOptionsTable({ addOns: addOnsOverride, optionRows: op
   const comparisonAddOn = getResidentialComparisonAddOn(allAddOns);
   const addOnName = comparisonAddOn?.name || "Optional Add-On";
   const addOnIsCantilever = /cantilever/i.test(addOnName);
+  const labels = getProposalToneLabels(pdfStyle);
 
   if (optionRows.length === 0) {
     return null;
@@ -1386,8 +1444,8 @@ function ResidentialPricingOptionsTable({ addOns: addOnsOverride, optionRows: op
   return (
     <div className="residential-pricing-options-wrap">
       <div className="residential-pricing-heading">
-        <h4>Customer to Select One</h4>
-        <span>Main finish options are mutually exclusive and are not added together.</span>
+        <h4>{labels.pricingOptions}</h4>
+        <span>{labels.pricingOptionsNote}</span>
       </div>
 
       <div className="residential-pricing-option-cards">

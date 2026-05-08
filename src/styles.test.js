@@ -61,3 +61,16 @@ test("residential pricing cards and add-ons use print-safe no-break rules", () =
   assert.match(printPhotoImage, /object-fit:\s*cover/);
   assert.match(printPhotoImage, /object-position:\s*center/);
 });
+
+test("proposal PDF style classes control readability and pricing emphasis", () => {
+  const largeBody = getCssBlock(".proposal-grid.proposal-style-body-large");
+  const boldHeading = getCssBlock(".proposal-grid.proposal-style-heading-bold");
+  const boldPricing = getCssBlock(".proposal-grid.proposal-style-pricing-bold");
+  const residentialFriendly = getCssBlock(".proposal-grid.proposal-style-tone-residential-friendly .residential-pricing-heading");
+
+  assert.match(styles, /\.proposal-grid\s*\{[\s\S]*--packet-body-scale:\s*1/);
+  assert.match(largeBody, /--packet-body-scale:\s*1\.08/);
+  assert.match(boldHeading, /--packet-heading-weight:\s*950/);
+  assert.match(boldPricing, /--packet-pricing-weight:\s*950/);
+  assert.match(residentialFriendly, /background:\s*#fffaf0/);
+});

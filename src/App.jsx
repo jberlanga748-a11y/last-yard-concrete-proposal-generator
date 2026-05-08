@@ -101,6 +101,20 @@ import {
   removeResidentialItemImage,
 } from "./utils/proposalPacket/residentialPricing.js";
 import {
+  PROPOSAL_PDF_BODY_TEXT_SIZE_LABELS,
+  PROPOSAL_PDF_BODY_TEXT_SIZE_OPTIONS,
+  PROPOSAL_PDF_HEADING_STYLE_LABELS,
+  PROPOSAL_PDF_HEADING_STYLE_OPTIONS,
+  PROPOSAL_PDF_PRICING_EMPHASIS_LABELS,
+  PROPOSAL_PDF_PRICING_EMPHASIS_OPTIONS,
+  PROPOSAL_PDF_TONE_LABELS,
+  PROPOSAL_PDF_TONE_OPTIONS,
+  getDefaultProposalPdfStyleSettings,
+  getProposalPdfStyleForMode,
+  normalizeProposalPdfStyle,
+  normalizeProposalPdfStyleSettings,
+} from "./utils/proposalPacket/proposalPdfStyle.js";
+import {
   DEFAULT_PROPOSAL_MODE,
   getBlankProposalModeOptions,
   getBlankProposalModePath,
@@ -179,6 +193,21 @@ const CONTACT_TYPES = [
   "Property Manager",
   "Builder",
   "Other",
+];
+
+const PROPOSAL_PDF_STYLE_MODE_OPTIONS = [
+  {
+    mode: "residential",
+    helper: "Larger, friendlier customer proposal defaults with bolder pricing.",
+  },
+  {
+    mode: "commercial_subcontractor",
+    helper: "GC-facing proposal defaults with strong headings and clear pricing.",
+  },
+  {
+    mode: "gc_prime_packet",
+    helper: "Technical packet defaults that keep dense tables readable.",
+  },
 ];
 
 const EMAIL_TEMPLATE_OPTIONS = [
@@ -750,6 +779,7 @@ export default function App() {
         nextProposal.type = nextProposal.proposalType;
         nextProposal.packetMode = getPacketModeForProposalMode(proposalMode);
         nextProposal.packetBuilder = isGcPrimePacketMode(proposalMode) ? normalizePacketBuilder(nextProposal.packetBuilder) : [];
+        nextProposal.pdfStyle = getProposalPdfStyleForMode(companySettings.proposalPdfStyle, proposalMode);
       }
 
       if (path === "status") {
@@ -5103,7 +5133,7 @@ export default function App() {
               />
             )}
             <div className="preview-pane">
-              <ProposalPreview helpers={proposalPacketHelpers} proposal={proposalDraft} />
+              <ProposalPreview companySettings={companySettings} helpers={proposalPacketHelpers} proposal={proposalDraft} />
             </div>
           </div>
         </>
@@ -6993,6 +7023,16 @@ function CompanySettingsView({
         </SettingsAccordionSection>
 
         <SettingsAccordionSection
+          title="Proposal PDF Style"
+          helper="Readability defaults for proposal print/PDF output. Existing proposal data stays unchanged."
+        >
+          <ProposalPdfStyleSettingsPanel
+            settings={settings.proposalPdfStyle}
+            onChange={(nextSettings) => onChange("proposalPdfStyle", nextSettings)}
+          />
+        </SettingsAccordionSection>
+
+        <SettingsAccordionSection
           title="Legal / Scope Protection"
           helper="These defaults protect Last Yard's scope. New proposals use these terms unless edited."
         >
@@ -7142,6 +7182,92 @@ function SettingsAccordionSection({ children, defaultOpen = false, helper = "", 
       </summary>
       <div className="settings-accordion-content">{children}</div>
     </details>
+  );
+}
+
+function ProposalPdfStyleSettingsPanel({ settings = {}, onChange }) {
+  const normalizedSettings = normalizeProposalPdfStyleSettings(settings);
+
+  function updateModeStyle(mode, field, value) {
+    onChange(
+      normalizeProposalPdfStyleSettings({
+        ...normalizedSettings,
+        [mode]: normalizeProposalPdfStyle(
+          {
+            ...normalizedSettings[mode],
+            [field]: value,
+          },
+          mode,
+        ),
+      }),
+    );
+  }
+
+  return (
+    <div className="proposal-pdf-style-settings">
+      <p className="settings-helper-text">
+        These settings adjust packet typography and labels for PDF output. They do not change pricing calculations or proposal wording data.
+      </p>
+      <div className="proposal-pdf-style-grid">
+        {PROPOSAL_PDF_STYLE_MODE_OPTIONS.map(({ mode, helper }) => {
+          const style = normalizedSettings[mode];
+
+          return (
+            <section className="proposal-pdf-style-card" key={mode}>
+              <div>
+                <h3>{getProposalModeLabel(mode)}</h3>
+                <p>{helper}</p>
+              </div>
+              <div className="proposal-pdf-style-controls">
+                <SettingsSelect
+                  label="Body text size"
+                  value={style.bodyTextSize}
+                  options={PROPOSAL_PDF_BODY_TEXT_SIZE_OPTIONS}
+                  labels={PROPOSAL_PDF_BODY_TEXT_SIZE_LABELS}
+                  onChange={(value) => updateModeStyle(mode, "bodyTextSize", value)}
+                />
+                <SettingsSelect
+                  label="Heading style"
+                  value={style.headingStyle}
+                  options={PROPOSAL_PDF_HEADING_STYLE_OPTIONS}
+                  labels={PROPOSAL_PDF_HEADING_STYLE_LABELS}
+                  onChange={(value) => updateModeStyle(mode, "headingStyle", value)}
+                />
+                <SettingsSelect
+                  label="Proposal tone"
+                  value={style.proposalTone}
+                  options={PROPOSAL_PDF_TONE_OPTIONS}
+                  labels={PROPOSAL_PDF_TONE_LABELS}
+                  onChange={(value) => updateModeStyle(mode, "proposalTone", value)}
+                />
+                <SettingsSelect
+                  label="Pricing emphasis"
+                  value={style.pricingEmphasis}
+                  options={PROPOSAL_PDF_PRICING_EMPHASIS_OPTIONS}
+                  labels={PROPOSAL_PDF_PRICING_EMPHASIS_LABELS}
+                  onChange={(value) => updateModeStyle(mode, "pricingEmphasis", value)}
+                />
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SettingsSelect({ label, labels = {}, onChange, options = [], value }) {
+  return (
+    <label className="editor-field">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {labels[option] || formatOptionLabel(option)}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -10100,7 +10226,9 @@ function getInitialProposalForRoute(route, proposals, companySettings = getDefau
 function getProposalDraftForRoute(route, proposals, companySettings = getDefaultCompanySettings(), proposalOverride = null) {
   const draft = proposalOverride ? createEditableProposal(proposalOverride) : getInitialProposalForRoute(route, proposals, companySettings);
 
-  return route.blank ? applyProposalModeToBlankProposal(cleanTrueBlankProposalState(draft), route.blankMode || draft.proposalMode) : draft;
+  return route.blank
+    ? applyProposalModeToBlankProposal(cleanTrueBlankProposalState(draft), route.blankMode || draft.proposalMode, companySettings.proposalPdfStyle)
+    : draft;
 }
 
 function loadSavedProposals(companySettings = getDefaultCompanySettings()) {
@@ -10782,6 +10910,7 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
 
 function createBlankProposalDraft(existingProposals, companySettings = getDefaultCompanySettings(), proposalMode = DEFAULT_PROPOSAL_MODE) {
   const normalizedMode = normalizeProposalMode(proposalMode) || DEFAULT_PROPOSAL_MODE;
+  const normalizedSettings = normalizeCompanySettings(companySettings);
   const baseProposal = cleanTrueBlankProposalState(createNewProposalDraft(existingProposals, companySettings));
   const blankProposal = createEditableProposal({
     ...baseProposal,
@@ -10789,6 +10918,7 @@ function createBlankProposalDraft(existingProposals, companySettings = getDefaul
     proposalType: getProposalTypeForMode(normalizedMode),
     type: getProposalTypeForMode(normalizedMode),
     packetMode: getPacketModeForProposalMode(normalizedMode),
+    pdfStyle: getProposalPdfStyleForMode(normalizedSettings.proposalPdfStyle, normalizedMode),
     templateId: "blank",
     templateName: `${getProposalModeLabel(normalizedMode)} Blank Proposal`,
     contactId: "",
@@ -10832,13 +10962,14 @@ function createBlankProposalDraft(existingProposals, companySettings = getDefaul
     proposalNotes: "",
   });
 
-  return applyProposalModeToBlankProposal(cleanTrueBlankProposalState(blankProposal), normalizedMode);
+  return applyProposalModeToBlankProposal(cleanTrueBlankProposalState(blankProposal), normalizedMode, normalizedSettings.proposalPdfStyle);
 }
 
-function applyProposalModeToBlankProposal(proposal = {}, mode = DEFAULT_PROPOSAL_MODE) {
+function applyProposalModeToBlankProposal(proposal = {}, mode = DEFAULT_PROPOSAL_MODE, proposalPdfStyleSettings = null) {
   const normalizedMode = normalizeProposalMode(mode) || DEFAULT_PROPOSAL_MODE;
   const proposalType = getProposalTypeForMode(normalizedMode);
   const packetMode = getPacketModeForProposalMode(normalizedMode);
+  const pdfStyleSettings = proposalPdfStyleSettings || getDefaultProposalPdfStyleSettings();
   const nextProposal = {
     ...proposal,
     proposalMode: normalizedMode,
@@ -10847,6 +10978,7 @@ function applyProposalModeToBlankProposal(proposal = {}, mode = DEFAULT_PROPOSAL
     packetMode,
     templateId: "blank",
     templateName: `${getProposalModeLabel(normalizedMode)} Blank Proposal`,
+    pdfStyle: getProposalPdfStyleForMode(pdfStyleSettings, normalizedMode),
     pricingMode: isResidentialProposalMode(normalizedMode) ? proposal.pricingMode || "" : proposal.pricingMode || "",
     pricingOptions: isResidentialProposalMode(normalizedMode) ? proposal.pricingOptions || [] : [],
     optionalAddOns: isResidentialProposalMode(normalizedMode) ? proposal.optionalAddOns || [] : [],
@@ -12239,6 +12371,7 @@ function getDefaultCompanySettings() {
     defaultExclusions: SEED_PROPOSAL.exclusions.join("\n"),
     defaultWarrantyNote: "",
     defaultSignatureBlock: terms.acceptance,
+    proposalPdfStyle: getDefaultProposalPdfStyleSettings(),
   };
 }
 
@@ -12304,6 +12437,7 @@ function normalizeCompanySettings(settings = {}) {
     defaultSignatureBlock: hasTextValue(settings.defaultSignatureBlock)
       ? settings.defaultSignatureBlock
       : defaults.defaultSignatureBlock,
+    proposalPdfStyle: normalizeProposalPdfStyleSettings(settings.proposalPdfStyle || defaults.proposalPdfStyle),
   };
 }
 
@@ -12389,11 +12523,13 @@ function applyCompanyLegalDefaultsToProposal(sourceProposal, settings = getDefau
 function applyCompanySettingsToProposal(sourceProposal, settings, proposalDate = new Date()) {
   const normalizedSettings = normalizeCompanySettings(settings);
   const nextProposal = cloneObject(sourceProposal);
+  const proposalMode = inferProposalModeFromProposal(nextProposal);
   const validUntil = new Date(proposalDate);
   validUntil.setDate(validUntil.getDate() + getExpirationDays(normalizedSettings));
 
   return applyCompanyLegalDefaultsToProposal({
     ...nextProposal,
+    pdfStyle: getProposalPdfStyleForMode(normalizedSettings.proposalPdfStyle, proposalMode),
     company: {
       ...nextProposal.company,
       name: normalizedSettings.companyName,
@@ -12995,6 +13131,7 @@ function createEditableProposal(seedProposal) {
     type: proposalType,
     packetMode,
     packetBuilder: isGcPrimePacketMode(proposalMode) || packetMode === "full_gc_packet" ? normalizePacketBuilder(proposal.packetBuilder) : [],
+    pdfStyle: normalizeProposalPdfStyle(proposal.pdfStyle, proposalMode),
     revisionNumber,
     revisionLabel,
     revisionDate: proposal.revisionDate || proposal.proposalDate || "",

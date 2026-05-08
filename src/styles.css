@@ -843,6 +843,7 @@ h4 {
 
 .proposal-actions label,
 .settings-grid label,
+.proposal-pdf-style-controls label,
 .contact-form-grid label,
 .list-filters label {
   display: grid;
@@ -856,6 +857,7 @@ h4 {
 .settings-grid input,
 .settings-grid select,
 .settings-grid textarea,
+.proposal-pdf-style-controls select,
 .contact-form-grid input,
 .contact-form-grid select,
 .contact-form-grid textarea,
@@ -1493,6 +1495,54 @@ h4 {
 
 .legal-settings-grid textarea {
   min-height: 94px;
+}
+
+.settings-helper-text {
+  margin: 0 0 14px;
+  color: #556171;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.proposal-pdf-style-settings {
+  display: grid;
+  gap: 14px;
+}
+
+.proposal-pdf-style-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.proposal-pdf-style-card {
+  display: grid;
+  align-content: start;
+  gap: 13px;
+  border: 1px solid rgba(6, 43, 69, 0.12);
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 13px;
+}
+
+.proposal-pdf-style-card h3 {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.proposal-pdf-style-card p {
+  margin-top: 3px;
+  color: #556171;
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.proposal-pdf-style-controls {
+  display: grid;
+  gap: 10px;
 }
 
 .storage-diagnostics-details {
@@ -4228,12 +4278,63 @@ h4 {
 }
 
 .proposal-grid {
+  --packet-body-scale: 1;
+  --packet-body-font-size: 11px;
+  --packet-line-height: 1.35;
+  --packet-metric-font-size: 10.5px;
+  --packet-print-body-font-size: 10.5px;
+  --packet-print-metric-font-size: 9.5px;
+  --packet-heading-weight: 850;
+  --packet-pricing-weight: 850;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   justify-items: center;
   gap: 24px;
   max-width: 900px;
   margin: 0 auto;
+}
+
+.proposal-grid.proposal-style-body-compact {
+  --packet-body-scale: 0.94;
+  --packet-body-font-size: 10.3px;
+  --packet-line-height: 1.3;
+  --packet-metric-font-size: 9.9px;
+  --packet-print-body-font-size: 9.8px;
+  --packet-print-metric-font-size: 9px;
+}
+
+.proposal-grid.proposal-style-body-standard {
+  --packet-body-scale: 1;
+  --packet-body-font-size: 11px;
+  --packet-line-height: 1.35;
+  --packet-metric-font-size: 10.5px;
+  --packet-print-body-font-size: 10.5px;
+  --packet-print-metric-font-size: 9.5px;
+}
+
+.proposal-grid.proposal-style-body-large {
+  --packet-body-scale: 1.08;
+  --packet-body-font-size: 11.9px;
+  --packet-line-height: 1.42;
+  --packet-metric-font-size: 11.3px;
+  --packet-print-body-font-size: 11.2px;
+  --packet-print-metric-font-size: 10.3px;
+}
+
+.proposal-grid.proposal-style-heading-standard {
+  --packet-heading-weight: 850;
+}
+
+.proposal-grid.proposal-style-heading-bold {
+  --packet-heading-weight: 950;
+}
+
+.proposal-grid.proposal-style-pricing-standard {
+  --packet-pricing-weight: 850;
+}
+
+.proposal-grid.proposal-style-pricing-bold {
+  --packet-pricing-weight: 950;
 }
 
 .proposal-page {
@@ -6040,6 +6141,61 @@ h4 {
   text-transform: uppercase;
 }
 
+.proposal-grid.proposal-pdf-style .structured-packet-note,
+.proposal-grid.proposal-pdf-style .residential-pricing-heading span,
+.proposal-grid.proposal-pdf-style .residential-pricing-option-card > p,
+.proposal-grid.proposal-pdf-style .residential-add-on-callout,
+.proposal-grid.proposal-pdf-style .residential-add-on-print-description,
+.proposal-grid.proposal-pdf-style .residential-empty-note,
+.proposal-grid.proposal-pdf-style .residential-terms-copy {
+  font-size: var(--packet-body-font-size);
+  line-height: var(--packet-line-height);
+}
+
+.proposal-grid.proposal-pdf-style .residential-pricing-heading h4,
+.proposal-grid.proposal-pdf-style .residential-print-section h3,
+.proposal-grid.proposal-pdf-style .residential-option-breakdown-heading h3,
+.proposal-grid.proposal-pdf-style .structured-packet-header h2,
+.proposal-grid.proposal-pdf-style .section-title h3,
+.proposal-grid.proposal-pdf-style .mini-heading h4 {
+  font-weight: var(--packet-heading-weight);
+}
+
+.proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-pricing-heading h4,
+.proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-print-section h3 {
+  font-size: 16px;
+}
+
+.proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-option-card-heading h5 {
+  font-size: 13px;
+}
+
+.proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-option-metrics p,
+.proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-scope-page .bullet-list,
+.proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-scope-page .spec-table {
+  font-size: var(--packet-metric-font-size);
+  line-height: var(--packet-line-height);
+}
+
+.proposal-grid.proposal-style-pricing-bold .residential-option-card-heading strong,
+.proposal-grid.proposal-style-pricing-bold .residential-option-metrics strong,
+.proposal-grid.proposal-style-pricing-bold .residential-option-breakdown-heading span,
+.proposal-grid.proposal-style-pricing-bold .residential-option-sov-table tfoot td,
+.proposal-grid.proposal-style-pricing-bold .residential-add-on-print-heading strong,
+.proposal-grid.proposal-style-pricing-bold .pricing-table tfoot td,
+.proposal-grid.proposal-style-pricing-bold .alternates-table tfoot td {
+  font-weight: var(--packet-pricing-weight);
+}
+
+.proposal-grid.proposal-style-tone-residential-friendly .residential-pricing-heading {
+  background: #fffaf0;
+}
+
+.proposal-grid.proposal-style-tone-commercial-professional .residential-pricing-heading,
+.proposal-grid.proposal-style-tone-gc-technical .residential-pricing-heading {
+  background: #f8fafc;
+}
+
 .residential-scope-grid {
   padding: 10px 0 0;
 }
@@ -6146,6 +6302,10 @@ h4 {
   }
 
   .proposal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .proposal-pdf-style-grid {
     grid-template-columns: 1fr;
   }
 
@@ -7470,6 +7630,41 @@ h4 {
   .proposal-page.residential-terms-page .signature-grid {
     margin-top: 16px;
     font-size: 10px;
+  }
+
+  .proposal-grid.proposal-pdf-style .structured-packet-note,
+  .proposal-grid.proposal-pdf-style .residential-pricing-heading span,
+  .proposal-grid.proposal-pdf-style .residential-pricing-option-card > p,
+  .proposal-grid.proposal-pdf-style .residential-add-on-callout,
+  .proposal-grid.proposal-pdf-style .residential-add-on-print-description,
+  .proposal-grid.proposal-pdf-style .residential-empty-note,
+  .proposal-grid.proposal-pdf-style .residential-terms-copy {
+    font-size: var(--packet-print-body-font-size);
+    line-height: var(--packet-line-height);
+  }
+
+  .proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-pricing-heading h4,
+  .proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-print-section h3 {
+    font-size: 15px;
+  }
+
+  .proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-option-card-heading h5 {
+    font-size: 12px;
+  }
+
+  .proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-option-metrics p,
+  .proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-scope-page .bullet-list,
+  .proposal-grid.proposal-style-body-large.proposal-style-mode-residential .residential-scope-page .spec-table {
+    font-size: var(--packet-print-metric-font-size);
+    line-height: var(--packet-line-height);
+  }
+
+  .proposal-grid.proposal-style-pricing-bold .residential-option-card-heading strong,
+  .proposal-grid.proposal-style-pricing-bold .residential-option-metrics strong,
+  .proposal-grid.proposal-style-pricing-bold .residential-option-breakdown-heading span,
+  .proposal-grid.proposal-style-pricing-bold .residential-option-sov-table tfoot td,
+  .proposal-grid.proposal-style-pricing-bold .residential-add-on-print-heading strong {
+    font-weight: var(--packet-pricing-weight);
   }
 
   .cover-header,
