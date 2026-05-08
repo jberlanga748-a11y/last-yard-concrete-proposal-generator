@@ -52,6 +52,21 @@ test("production logged-out print route does not render proposal PDF content", (
   assert.equal(gate.shouldShowLogin, true);
 });
 
+test("production logged-out customer portal route is the public auth-gate exception", () => {
+  const gate = getAuthGateState({
+    authLoading: false,
+    authUser: null,
+    isDev: false,
+    route: { view: "customerPortal", public: true, shareToken: "lyp_public", path: "/proposal-view/lyp_public" },
+  });
+
+  assert.equal(gate.canRenderProtectedContent, true);
+  assert.equal(gate.shouldShowAuthLoading, false);
+  assert.equal(gate.shouldShowLogin, false);
+  assert.equal(gate.publicRoute, true);
+  assert.equal(gate.reason, "public-customer-portal");
+});
+
 test("production auth loading state does not render protected content", () => {
   const gate = getAuthGateState({
     authLoading: true,

@@ -1,4 +1,5 @@
 import { supabase } from "../../supabaseClient.js";
+import { normalizeCustomerShareToken } from "../customerPortal.js";
 import { createCloudFallbackId, isPlainObject, isUuid } from "./cloudSync.js";
 
 function normalizeProposalForCloud(proposal = {}, deps = {}) {
@@ -77,6 +78,27 @@ export async function fetchCloudProposals(companyId, deps = {}) {
   }
 
   return (data || []).map((row) => normalizeCloudProposalRow(row, deps));
+}
+
+export async function fetchCloudProposalByShareToken(shareToken, deps = {}) {
+  const normalizedToken = normalizeCustomerShareToken(shareToken);
+
+  if (!normalizedToken) {
+    return null;
+  }
+
+  const { data, error } = await supabase
+    .from("proposals")
+    .select("id,proposal_data,created_at,updated_at")
+    .filter("proposal_data->>customerShareToken", "eq", normalizedToken)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data ? normalizeCloudProposalRow(data, deps) : null;
 }
 
 export async function saveCloudProposals(companyId, proposals = [], deps = {}) {

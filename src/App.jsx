@@ -50,6 +50,7 @@ import {
   saveCloudContact,
 } from "./utils/cloud/contactCloud.js";
 import {
+  fetchCloudProposalByShareToken,
   fetchCloudProposals,
   loadOrMergeCloudProposals,
   mergeProposalCollections,
@@ -97,8 +98,12 @@ import {
   BASE_PLUS_ADDONS_PRICING_MODE,
   CHOOSE_ONE_PRICING_MODE,
   RESIDENTIAL_PDF_LAYOUT_OPTIONS,
+  buildResidentialPaymentTermsCopy,
+  buildResidentialPricingOptionRows,
   calculateResidentialSimpleEstimateTotals,
   formatResidentialCurrency,
+  getPrintableResidentialOptionImages,
+  getResidentialOptionalAddOns,
   getResidentialOptionLineItemTotal,
   getResidentialOptionSovTotal,
   getResidentialOptionTotalWarning,
@@ -115,6 +120,8 @@ import {
 import {
   RESIDENTIAL_LEGAL_NOTICE_STATUS_OPTIONS,
   RESIDENTIAL_TERMS_TEMPLATE_OPTIONS,
+  buildResidentialLegalPaperRows,
+  buildResidentialLegalSummarySections,
   getResidentialLegalStatusLabel,
   getResidentialTermsTemplateLabel,
   normalizeResidentialLegalAttachment,
@@ -163,6 +170,15 @@ import {
   saveActivityLogToLocalStorage,
 } from "./utils/activityLog.js";
 import { getAuthGateState, getLogoutCleanupState } from "./utils/authSession.js";
+import {
+  createCustomerShareToken,
+  findCustomerProposalByShareToken,
+  getCustomerPortalLink,
+  getCustomerPortalUnavailableMessage,
+  getCustomerSafeImageCaption,
+  getCustomerShareFields,
+  normalizeCustomerShareToken,
+} from "./utils/customerPortal.js";
 import {
   getPermissionRoleLabel,
   getRolePermissions,
@@ -452,6 +468,12 @@ export default function App() {
   const [proposalDraft, setProposalDraft] = useState(() =>
     getInitialProposalForRoute(parseRoute(window.location.pathname), loadSavedProposals(loadCompanySettings()), loadCompanySettings()),
   );
+  const [customerPortalState, setCustomerPortalState] = useState(() => ({
+    loading: false,
+    proposal: null,
+    reason: "",
+    message: "",
+  }));
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [saveMessage, setSaveMessage] = useState("");
@@ -490,6 +512,7 @@ export default function App() {
   const isPriceLibraryView = route.view === "priceLibrary";
   const isBidsView = route.view === "bids";
   const isActivityView = route.view === "activity";
+  const isCustomerPortalView = route.view === "customerPortal";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
   const authGate = getAuthGateState({ authLoading, authUser, isDev: import.meta.env.DEV, route });
   const permissionRole = normalizePermissionRole(authUser ? cloudSync.currentRole : authGate.localDevelopmentMode ? "local" : "viewer");
@@ -607,6 +630,104 @@ export default function App() {
       window.history.replaceState({}, "", route.path);
     }
   }, [route.path]);
+
+  useEffect(() => {
+    if (!isCustomerPortalView) {
+      setCustomerPortalState((currentState) =>
+        currentState.loading || currentState.proposal || currentState.message
+          ? {
+              loading: false,
+              proposal: null,
+              reason: "",
+              message: "",
+            }
+          : currentState,
+      );
+      return undefined;
+    }
+
+    let isCancelled = false;
+    const token = route.shareToken;
+
+    async function loadCustomerPortalProposal() {
+      setCustomerPortalState({
+        loading: true,
+        proposal: null,
+        reason: "",
+        message: "Loading proposal...",
+      });
+
+      const localResult = findCustomerProposalByShareToken(savedProposals, token);
+
+      if (isCancelled) {
+        return;
+      }
+
+      if (localResult.available) {
+        setCustomerPortalState({
+          loading: false,
+          proposal: createEditableProposal(localResult.proposal),
+          reason: "available",
+          message: "",
+        });
+        return;
+      }
+
+      if (localResult.reason === "disabled" || localResult.reason === "expired" || localResult.reason === "missing-token") {
+        setCustomerPortalState({
+          loading: false,
+          proposal: null,
+          reason: localResult.reason,
+          message: getCustomerPortalUnavailableMessage(localResult.reason),
+        });
+        return;
+      }
+
+      if (isSupabaseConfigured && supabase) {
+        try {
+          const cloudProposal = await fetchCloudProposalByShareToken(token, proposalCloudDeps);
+          const cloudResult = findCustomerProposalByShareToken(cloudProposal ? [cloudProposal] : [], token);
+
+          if (isCancelled) {
+            return;
+          }
+
+          setCustomerPortalState({
+            loading: false,
+            proposal: cloudResult.available ? createEditableProposal(cloudResult.proposal) : null,
+            reason: cloudResult.reason,
+            message: cloudResult.available ? "" : getCustomerPortalUnavailableMessage(cloudResult.reason),
+          });
+          return;
+        } catch (error) {
+          if (isCancelled) {
+            return;
+          }
+
+          setCustomerPortalState({
+            loading: false,
+            proposal: null,
+            reason: "load-error",
+            message: "This proposal link could not be loaded. Please contact Last Yard Concrete for help.",
+          });
+          return;
+        }
+      }
+
+      setCustomerPortalState({
+        loading: false,
+        proposal: null,
+        reason: localResult.reason,
+        message: getCustomerPortalUnavailableMessage(localResult.reason),
+      });
+    }
+
+    loadCustomerPortalProposal();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [isCustomerPortalView, route.shareToken, savedProposals]);
 
   useEffect(() => {
     function handlePopState() {
@@ -2469,6 +2590,135 @@ export default function App() {
       entityLabel: formatProposalNumberWithRevision(proposalToSave),
       notes: proposalToSave.project?.name || "",
     });
+  }
+
+  function createUniqueCustomerShareToken() {
+    const existingTokens = new Set(savedProposals.map((proposal) => getCustomerShareFields(proposal).customerShareToken).filter(Boolean));
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const token = createCustomerShareToken();
+
+      if (!existingTokens.has(token)) {
+        return token;
+      }
+    }
+
+    return createCustomerShareToken();
+  }
+
+  function getCurrentCustomerPortalUrl(proposal = proposalDraft) {
+    return getCustomerPortalLink(window.location.origin, proposal.customerShareToken);
+  }
+
+  async function commitCustomerPortalShareSettings(nextProposal, message = "Customer portal link settings saved.") {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    const savedAt = new Date().toISOString();
+    const proposalToSave = createEditableProposal({
+      ...nextProposal,
+      updatedAt: savedAt,
+    });
+
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, proposalToSave));
+    setProposalDraft(proposalToSave);
+    setProposalDirty(false);
+    setValidationNotice("");
+    setSaveState((currentState) => ({
+      ...currentState,
+      isSaving: false,
+      lastLocalSavedAt: savedAt,
+      status: canUseCloudSync(authUser) ? "Saved locally. Syncing to cloud..." : "Saved locally",
+    }));
+
+    if (route.view === "new") {
+      navigate(`/proposals/${proposalToSave.id}`, { proposal: proposalToSave, replace: true, skipUnsavedCheck: true });
+    }
+
+    if (canUseCloudSync(authUser)) {
+      const synced = await syncSingleProposalToCloud(proposalToSave, "Customer portal link synced to Supabase.");
+      setSaveMessage(
+        synced
+          ? `${message} Link is ready to share.`
+          : `${message} Saved locally, but cloud sync failed. Resolve cloud sync before sharing the public link.`,
+      );
+    } else {
+      setSaveMessage(`${message} Saved locally. Sign in and sync before sharing this link outside this browser.`);
+      markProposalsNeedCloudSync("Customer portal link changed locally. Sync proposals to update Supabase.");
+    }
+
+    recordActivity({
+      action: proposalToSave.customerShareEnabled ? "Customer portal link enabled" : "Customer portal link disabled",
+      entityType: "proposal",
+      entityId: proposalToSave.id,
+      entityLabel: formatProposalNumberWithRevision(proposalToSave),
+      notes: proposalToSave.customerShareExpiresAt ? `Expires: ${proposalToSave.customerShareExpiresAt}` : "",
+    });
+  }
+
+  async function updateCustomerShareEnabled(enabled) {
+    const existingFields = getCustomerShareFields(proposalDraft);
+    const now = new Date().toISOString();
+    const nextProposal = {
+      ...proposalDraft,
+      customerShareEnabled: enabled === true,
+      customerShareToken: enabled === true ? existingFields.customerShareToken || createUniqueCustomerShareToken() : existingFields.customerShareToken,
+      customerShareCreatedAt:
+        enabled === true ? existingFields.customerShareCreatedAt || now : existingFields.customerShareCreatedAt,
+    };
+
+    await commitCustomerPortalShareSettings(
+      nextProposal,
+      enabled === true ? "Customer portal link enabled." : "Customer portal link disabled.",
+    );
+  }
+
+  async function regenerateCustomerShareToken() {
+    const existingFields = getCustomerShareFields(proposalDraft);
+
+    if (
+      existingFields.customerShareToken &&
+      !window.confirm("Regenerate the customer portal link? The previous customer link will stop working after this proposal syncs.")
+    ) {
+      return;
+    }
+
+    await commitCustomerPortalShareSettings(
+      {
+        ...proposalDraft,
+        customerShareEnabled: true,
+        customerShareToken: createUniqueCustomerShareToken(),
+        customerShareCreatedAt: new Date().toISOString(),
+      },
+      "Customer portal link generated.",
+    );
+  }
+
+  async function updateCustomerShareExpiration(customerShareExpiresAt) {
+    await commitCustomerPortalShareSettings(
+      {
+        ...proposalDraft,
+        customerShareExpiresAt,
+      },
+      "Customer portal expiration updated.",
+    );
+  }
+
+  async function copyCustomerShareLink() {
+    const url = getCurrentCustomerPortalUrl();
+
+    if (!url) {
+      setSaveMessage("Generate a customer portal link before copying.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setSaveMessage("Customer portal link copied.");
+    } catch {
+      setSaveMessage(`Customer portal link: ${url}`);
+    }
   }
 
   async function saveSubmittedPacketRecord() {
@@ -5228,6 +5478,27 @@ export default function App() {
   );
   const backupShortcut = <BackupShortcutCard onOpenBackup={() => navigate("/backup")} />;
 
+  if (isCustomerPortalView) {
+    return (
+      <main className="customer-portal-shell">
+        <style>{`
+          @media print {
+            @page { size: letter portrait; margin: 0.35in; }
+          }
+        `}</style>
+        <CustomerProposalPortalView
+          companySettings={companySettings}
+          helpers={proposalPacketHelpers}
+          message={customerPortalState.message}
+          proposal={customerPortalState.proposal}
+          reason={customerPortalState.reason}
+          loading={customerPortalState.loading}
+          onPrint={() => window.print()}
+        />
+      </main>
+    );
+  }
+
   if (!authGate.canRenderProtectedContent) {
     return (
       <main className="app-shell auth-gated-shell">
@@ -5590,6 +5861,11 @@ export default function App() {
                 smartPasteResult={smartPasteResult}
                 validation={proposalValidation}
                 validationNotice={validationNotice}
+                customerPortalUrl={getCurrentCustomerPortalUrl(proposalDraft)}
+                onCustomerShareCopy={copyCustomerShareLink}
+                onCustomerShareEnableChange={updateCustomerShareEnabled}
+                onCustomerShareExpirationChange={updateCustomerShareExpiration}
+                onCustomerShareRegenerate={regenerateCustomerShareToken}
               />
             )}
             <div className="preview-pane">
@@ -5612,6 +5888,400 @@ function AuthLoadingScreen() {
       </div>
     </section>
   );
+}
+
+function CustomerProposalPortalView({ companySettings = {}, helpers = {}, loading = false, message = "", proposal = null, onPrint }) {
+  if (loading) {
+    return (
+      <section className="customer-portal-unavailable">
+        <img src={logoSrc} alt="Last Yard Concrete" />
+        <h1>Loading proposal</h1>
+        <p>{message || "Opening your Last Yard Concrete proposal..."}</p>
+      </section>
+    );
+  }
+
+  if (!proposal) {
+    return (
+      <section className="customer-portal-unavailable">
+        <img src={logoSrc} alt="Last Yard Concrete" />
+        <h1>Proposal Unavailable</h1>
+        <p>{message || getCustomerPortalUnavailableMessage()}</p>
+      </section>
+    );
+  }
+
+  const company = getCustomerPortalCompany(proposal, companySettings);
+  const projectAddress = proposal.project?.address || proposal.project?.location || proposal.client?.projectAddress || "";
+  const isResidential = isResidentialProposalMode(inferProposalModeFromProposal(proposal));
+
+  return (
+    <div className="customer-portal-page">
+      <header className="customer-portal-toolbar no-print">
+        <div>
+          <strong>Customer Proposal View</strong>
+          <span>Read-only proposal from {company.name}</span>
+        </div>
+        <button type="button" onClick={onPrint}>
+          Print / Save PDF
+        </button>
+      </header>
+
+      <article className="customer-portal-document">
+        <CustomerPortalHero company={company} proposal={proposal} projectAddress={projectAddress} />
+        <CustomerPortalPricing proposal={proposal} />
+        <CustomerPortalProjectPhotos proposal={proposal} />
+        <CustomerPortalScope proposal={proposal} />
+        <CustomerPortalPaymentAndLegal company={company} proposal={proposal} />
+
+        {!isResidential ? (
+          <CustomerPortalCommercialNotice helpers={helpers} proposal={proposal} />
+        ) : null}
+      </article>
+    </div>
+  );
+}
+
+function CustomerPortalHero({ company = {}, projectAddress = "", proposal = {} }) {
+  const customerName = proposal.client?.companyName || proposal.client?.contactName || "Customer";
+  const contactDetails = [proposal.client?.contactName, proposal.client?.phone, proposal.client?.email].filter(Boolean).join(" | ");
+  const projectName = proposal.project?.name || "Proposal";
+
+  return (
+    <section className="customer-portal-hero">
+      <div className="customer-portal-brand">
+        <img src={logoSrc} alt="Last Yard Concrete" />
+        <div>
+          <strong>{company.name}</strong>
+          <span>{[company.phone, company.email].filter(Boolean).join(" | ")}</span>
+          {company.credentials ? <span>{company.credentials}</span> : null}
+        </div>
+      </div>
+      <div className="customer-portal-title-block">
+        <p>Proposal / Estimate</p>
+        <h1>{projectName}</h1>
+        {projectAddress ? <span>{projectAddress}</span> : null}
+      </div>
+      <div className="customer-portal-summary-grid">
+        <div>
+          <span>Prepared For</span>
+          <strong>{customerName}</strong>
+          {contactDetails ? <small>{contactDetails}</small> : null}
+        </div>
+        <div>
+          <span>Proposal Number</span>
+          <strong>{proposal.proposalNumber || "To be assigned"}</strong>
+          <small>{proposal.proposalDate ? `Issued ${formatDisplayDate(proposal.proposalDate)}` : ""}</small>
+        </div>
+        <div>
+          <span>Valid Until</span>
+          <strong>{proposal.validUntil ? formatDisplayDate(proposal.validUntil) : "See proposal terms"}</strong>
+        </div>
+      </div>
+      {proposal.project?.description ? <p className="customer-portal-description">{cleanPrintableTextBlock(proposal.project.description)}</p> : null}
+    </section>
+  );
+}
+
+function CustomerPortalPricing({ proposal = {} }) {
+  if (hasResidentialChooseOnePricing(proposal)) {
+    return <CustomerPortalChooseOnePricing proposal={proposal} />;
+  }
+
+  if (hasResidentialBasePlusAddOnsPricing(proposal)) {
+    return <CustomerPortalSimpleEstimatePricing proposal={proposal} />;
+  }
+
+  const totals = calculateProposalTotals(proposal);
+  const lineItems = (proposal.lineItems || []).filter((item) => item?.description || Number(item?.amount || 0) > 0);
+
+  return (
+    <section className="customer-portal-section">
+      <div className="customer-portal-section-heading">
+        <span>Pricing</span>
+        <strong>{formatCurrency(totals.total)}</strong>
+      </div>
+      {lineItems.length > 0 ? (
+        <div className="customer-portal-table">
+          {lineItems.map((item, index) => (
+            <div className="customer-portal-table-row" key={item.id || `line-item-${index}`}>
+              <span>{item.description || `Item ${index + 1}`}</span>
+              <span>{item.quantity || 1} {item.unit || "LS"}</span>
+              <strong>{formatCurrency(item.amount ?? item.unitPrice ?? 0)}</strong>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p>Proposal total: {formatCurrency(totals.total)}</p>
+      )}
+    </section>
+  );
+}
+
+function CustomerPortalSimpleEstimatePricing({ proposal = {} }) {
+  const totals = calculateResidentialSimpleEstimateTotals(proposal);
+
+  return (
+    <section className="customer-portal-section">
+      <div className="customer-portal-section-heading">
+        <span>Estimate Total</span>
+        <strong>{formatResidentialCurrency(totals.total)}</strong>
+      </div>
+      <div className="customer-portal-table">
+        <div className="customer-portal-table-row customer-portal-table-row-primary">
+          <span>{totals.basePackage.name || "Base Package"}</span>
+          <span>{totals.basePackage.description || "Included residential concrete package"}</span>
+          <strong>{formatResidentialCurrency(totals.basePrice)}</strong>
+        </div>
+        {totals.addOns.map((addOn, index) => (
+          <div className="customer-portal-table-row" key={addOn.id || `portal-addon-${index}`}>
+            <span>Optional Add-On: {addOn.name}</span>
+            <span>{addOn.selected || addOn.included ? "Selected" : "Not Selected"}</span>
+            <strong>{addOn.selected || addOn.included ? formatResidentialCurrency(addOn.amount) : `Optional +${formatResidentialCurrency(addOn.amount)}`}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="customer-portal-payment-mini">
+        <span>50% Down: {formatResidentialCurrency(totals.downPayment)}</span>
+        <span>Final Payment: {formatResidentialCurrency(totals.finalPayment)}</span>
+      </div>
+      <CustomerPortalAddOnPhotos addOns={totals.addOns} />
+    </section>
+  );
+}
+
+function CustomerPortalChooseOnePricing({ proposal = {} }) {
+  const optionRows = buildResidentialPricingOptionRows(proposal);
+  const optionalAddOns = getResidentialOptionalAddOns(proposal);
+
+  return (
+    <section className="customer-portal-section">
+      <div className="customer-portal-section-heading">
+        <span>Customer to Select One</span>
+        <strong>{optionRows.length} option{optionRows.length === 1 ? "" : "s"}</strong>
+      </div>
+      <div className="customer-portal-option-grid">
+        {optionRows.map((option, index) => (
+          <article className="customer-portal-option-card" key={option.id || option.name || `portal-option-${index}`}>
+            <div>
+              <span>Option {index + 1}</span>
+              <h2>{option.name || `Option ${index + 1}`}</h2>
+              {option.description ? <p>{option.description}</p> : null}
+              {option.finishType ? <small>Finish: {option.finishType}</small> : null}
+            </div>
+            <div className="customer-portal-price-stack">
+              <strong>{formatResidentialCurrency(option.basePrice)}</strong>
+              <span>50% Down: {formatResidentialCurrency(option.downPayment)}</span>
+              <span>Final: {formatResidentialCurrency(option.finalPayment)}</span>
+            </div>
+            {option.withAddOnTotal > 0 ? (
+              <div className="customer-portal-with-addon">
+                <span>With optional add-on: {formatResidentialCurrency(option.withAddOnTotal)}</span>
+                <span>Down: {formatResidentialCurrency(option.withAddOnDownPayment)}</span>
+                <span>Final: {formatResidentialCurrency(option.withAddOnFinalPayment)}</span>
+              </div>
+            ) : null}
+            <CustomerPortalPhotoGrid images={option.images} fallbackCaption="Finish Example" />
+          </article>
+        ))}
+      </div>
+
+      {optionalAddOns.length > 0 ? (
+        <div className="customer-portal-addons">
+          <h2>Optional Add-Ons</h2>
+          {optionalAddOns.map((addOn, index) => (
+            <article className="customer-portal-addon-row" key={addOn.id || addOn.name || `portal-option-addon-${index}`}>
+              <div>
+                <strong>{addOn.name}</strong>
+                {addOn.description ? <span>{addOn.description}</span> : null}
+              </div>
+              <strong>+{formatResidentialCurrency(addOn.amount)}</strong>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      <CustomerPortalAddOnPhotos addOns={optionalAddOns} />
+    </section>
+  );
+}
+
+function CustomerPortalAddOnPhotos({ addOns = [] }) {
+  const addOnsWithPhotos = addOns
+    .map((addOn) => ({ ...addOn, printableImages: getPrintableResidentialOptionImages(addOn.images) }))
+    .filter((addOn) => addOn.printableImages.length > 0);
+
+  if (addOnsWithPhotos.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="customer-portal-addon-photos">
+      {addOnsWithPhotos.map((addOn, index) => (
+        <article key={addOn.id || addOn.name || `portal-addon-photos-${index}`}>
+          <h3>Optional Add-On: {addOn.name}</h3>
+          <CustomerPortalPhotoGrid images={addOn.printableImages} fallbackCaption="Optional Add-On Photo" />
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function CustomerPortalProjectPhotos({ proposal = {} }) {
+  const photos = normalizeProjectPhotos(proposal.projectPhotos).filter((photo) => getImageAssetSource(photo));
+
+  if (photos.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="customer-portal-section">
+      <div className="customer-portal-section-heading">
+        <span>Project Photos</span>
+        <strong>{photos.length}</strong>
+      </div>
+      <CustomerPortalPhotoGrid images={photos} fallbackCaption="Existing Area" />
+    </section>
+  );
+}
+
+function CustomerPortalPhotoGrid({ fallbackCaption = "Project Photo", images = [] }) {
+  const printableImages = (Array.isArray(images) ? images : [])
+    .map((image) => ({
+      image,
+      src: getImageAssetSource(image),
+      caption: getCustomerSafeImageCaption(image, fallbackCaption),
+    }))
+    .filter((image) => image.src);
+
+  if (printableImages.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="customer-portal-photo-grid">
+      {printableImages.map((image, index) => (
+        <figure className="customer-portal-photo-tile" key={image.image.id || image.src || `portal-photo-${index}`}>
+          <img src={image.src} alt={image.caption} loading="lazy" />
+          {image.caption ? <figcaption>{image.caption}</figcaption> : null}
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+function CustomerPortalScope({ proposal = {} }) {
+  const scopeSections = cleanPrintableScopeSections(proposal.scopeSections);
+  const exclusions = cleanPrintableTextList(proposal.exclusions);
+  const assumptions = cleanPrintableTextList(proposal.assumptions);
+
+  if (scopeSections.length === 0 && exclusions.length === 0 && assumptions.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="customer-portal-section">
+      <div className="customer-portal-section-heading">
+        <span>Scope & Notes</span>
+      </div>
+      {scopeSections.map((section, index) => (
+        <article className="customer-portal-scope-block" key={section.id || section.title || `portal-scope-${index}`}>
+          <h2>{section.title || `Scope ${index + 1}`}</h2>
+          <ul>
+            {(section.items || section.bullets || []).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </article>
+      ))}
+      {assumptions.length > 0 ? <CustomerPortalBulletList title="Assumptions" items={assumptions} /> : null}
+      {exclusions.length > 0 ? <CustomerPortalBulletList title="Exclusions / Change-Order Notes" items={exclusions} /> : null}
+    </section>
+  );
+}
+
+function CustomerPortalBulletList({ items = [], title = "" }) {
+  return (
+    <article className="customer-portal-scope-block">
+      <h2>{title}</h2>
+      <ul>
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </article>
+  );
+}
+
+function CustomerPortalPaymentAndLegal({ company = {}, proposal = {} }) {
+  const isResidential = isResidentialProposalMode(inferProposalModeFromProposal(proposal));
+  const paymentTerms = isResidential ? buildResidentialPaymentTermsCopy(proposal) : cleanPrintableTextBlock(proposal.terms?.payment || proposal.terms?.acceptance || "");
+  const legalSections = isResidential ? buildResidentialLegalSummarySections(proposal) : [];
+  const legalRows = isResidential ? buildResidentialLegalPaperRows(proposal) : [];
+
+  if (!paymentTerms && legalSections.length === 0 && legalRows.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="customer-portal-section customer-portal-legal-section">
+      <div className="customer-portal-section-heading">
+        <span>Payment & Customer Terms</span>
+      </div>
+      {paymentTerms ? <p>{paymentTerms}</p> : null}
+      {legalSections.length > 0 ? (
+        <div className="customer-portal-legal-grid">
+          {legalSections.map((section) => (
+            <article key={section.title}>
+              <strong>{section.title}</strong>
+              <span>{section.body}</span>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {legalRows.length > 0 ? (
+        <div className="customer-portal-legal-notices">
+          <h2>Legal Papers / Notices</h2>
+          {legalRows.map((row) => (
+            <div className="customer-portal-notice-row" key={row.key}>
+              <span>{row.title}</span>
+              <strong>{row.status}</strong>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <p className="customer-portal-contact-note">Questions? Contact {company.name} at {[company.phone, company.email].filter(Boolean).join(" or ")}.</p>
+    </section>
+  );
+}
+
+function CustomerPortalCommercialNotice({ proposal = {} }) {
+  const totals = calculateProposalTotals(proposal);
+
+  return (
+    <section className="customer-portal-section customer-portal-commercial-note">
+      <div className="customer-portal-section-heading">
+        <span>Proposal Summary</span>
+        <strong>{formatCurrency(totals.total)}</strong>
+      </div>
+      <p>
+        This public view is a customer-safe summary. Full subcontractor or GC packet details remain available only in the signed-in Last Yard workspace.
+      </p>
+    </section>
+  );
+}
+
+function getCustomerPortalCompany(proposal = {}, companySettings = {}) {
+  const company = proposal.company || {};
+  const credentials = Array.isArray(company.credentials)
+    ? company.credentials.join(" | ")
+    : company.credentials || companySettings.credentialsText || "";
+
+  return {
+    name: company.name || companySettings.companyName || "Last Yard Concrete",
+    phone: company.phone || companySettings.phone || "",
+    email: company.email || companySettings.email || "",
+    credentials,
+  };
 }
 
 function DashboardView({
@@ -8204,6 +8874,72 @@ function ValidationPanel({ className = "", notice = "", validation }) {
   );
 }
 
+function CustomerPortalLinkEditor({
+  proposal = {},
+  portalUrl = "",
+  onCopy,
+  onEnableChange,
+  onExpirationChange,
+  onRegenerate,
+}) {
+  const shareFields = getCustomerShareFields(proposal);
+
+  return (
+    <EditorSection id="customer-portal-section" title="Customer Portal Link">
+      <p className="smart-paste-help">
+        Phase 1 customer portal is read-only. Anyone with an enabled link can view the customer-safe proposal without signing in.
+      </p>
+
+      <label className="editor-field checkbox-field">
+        <input
+          type="checkbox"
+          checked={shareFields.customerShareEnabled}
+          onChange={(event) => onEnableChange?.(event.target.checked)}
+        />
+        <span>Enable customer link</span>
+      </label>
+
+      <div className="customer-portal-link-panel">
+        <label className="editor-field">
+          <span>Share Link</span>
+          <input
+            readOnly
+            value={portalUrl || "Generate a link before sharing."}
+            onFocus={(event) => event.target.select()}
+          />
+        </label>
+
+        <label className="editor-field">
+          <span>Optional Expiration Date</span>
+          <input
+            type="date"
+            value={shareFields.customerShareExpiresAt}
+            onChange={(event) => onExpirationChange?.(event.target.value)}
+          />
+        </label>
+
+        <div className="customer-portal-status-card">
+          <strong>{shareFields.customerShareEnabled ? "Link enabled" : "Link disabled"}</strong>
+          <span>Created: {shareFields.customerShareCreatedAt ? formatCloudSyncTime(shareFields.customerShareCreatedAt) : "Not generated yet"}</span>
+          <span>Last viewed: {shareFields.customerShareLastViewedAt ? formatCloudSyncTime(shareFields.customerShareLastViewedAt) : "Not tracked yet"}</span>
+        </div>
+      </div>
+
+      <div className="editor-section-actions">
+        <button type="button" onClick={onRegenerate}>
+          {shareFields.customerShareToken ? "Regenerate Link" : "Generate Link"}
+        </button>
+        <button type="button" onClick={onCopy} disabled={!portalUrl}>
+          Copy Link
+        </button>
+        <button type="button" onClick={() => onEnableChange?.(false)} disabled={!shareFields.customerShareEnabled}>
+          Disable Link
+        </button>
+      </div>
+    </EditorSection>
+  );
+}
+
 function ProposalEditor({
   aiProposalLoading = "",
   aiProposalMessage = "",
@@ -8292,6 +9028,11 @@ function ProposalEditor({
   validationNotice,
   smartPasteNotes,
   smartPasteResult,
+  customerPortalUrl = "",
+  onCustomerShareCopy,
+  onCustomerShareEnableChange,
+  onCustomerShareExpirationChange,
+  onCustomerShareRegenerate,
 }) {
   const proposalTotals = calculateProposalTotals(proposal);
   const proposalMode = inferProposalModeFromProposal(proposal);
@@ -8427,6 +9168,15 @@ function ProposalEditor({
           multiline
         />
       </EditorSection>
+
+      <CustomerPortalLinkEditor
+        proposal={proposal}
+        portalUrl={customerPortalUrl}
+        onCopy={onCustomerShareCopy}
+        onEnableChange={onCustomerShareEnableChange}
+        onExpirationChange={onCustomerShareExpirationChange}
+        onRegenerate={onCustomerShareRegenerate}
+      />
 
       <EditorSection id="client-contact-section" title="Client / Prepared For">
         <EditorField
@@ -8809,6 +9559,7 @@ function EditorNavigation({ proposal, showTemplatePicker = false }) {
     showTemplatePicker ? ["Proposal Template", "proposal-template-section"] : null,
     ["Smart Paste", "smart-paste-section"],
     ["Proposal Info", "proposal-info-section"],
+    ["Customer Portal", "customer-portal-section"],
     ["Client / Contact", "saved-contact-section"],
     ["Project Summary", "project-summary-section"],
     ["Photos", "project-photos-section"],
@@ -10663,6 +11414,17 @@ function parseRoute(pathname) {
 
   if (segments[0] === "price-library") {
     return { view: "priceLibrary", path: "/price-library" };
+  }
+
+  if (segments[0] === "proposal-view") {
+    const shareToken = normalizeCustomerShareToken(decodeURIComponent(segments[1] || ""));
+
+    return {
+      view: "customerPortal",
+      public: true,
+      shareToken,
+      path: shareToken ? `/proposal-view/${shareToken}` : "/proposal-view",
+    };
   }
 
   if (segments[0] !== "proposals") {
@@ -14407,6 +15169,11 @@ function createEditableProposal(seedProposal) {
     revisionNotes: proposal.revisionNotes || "",
     parentProposalId: proposal.parentProposalId || "",
     previousTotal: proposal.previousTotal ?? "",
+    customerShareEnabled: proposal.customerShareEnabled === true,
+    customerShareToken: normalizeCustomerShareToken(proposal.customerShareToken),
+    customerShareCreatedAt: proposal.customerShareCreatedAt || "",
+    customerShareExpiresAt: proposal.customerShareExpiresAt || "",
+    customerShareLastViewedAt: proposal.customerShareLastViewedAt || "",
     ...getDefaultTrackingFields(),
     sentDate: proposal.sentDate || "",
     sentToName: proposal.sentToName || "",

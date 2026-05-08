@@ -5,6 +5,18 @@ export function isDevelopmentLocalMode({ isDev = false } = {}) {
 export function getAuthGateState({ authLoading = false, authUser = null, isDev = false, route = {} } = {}) {
   const localDevelopmentMode = isDevelopmentLocalMode({ isDev });
 
+  if (route.view === "customerPortal" || route.public === true) {
+    return {
+      canRenderProtectedContent: true,
+      localDevelopmentMode,
+      publicRoute: true,
+      reason: "public-customer-portal",
+      routePath: route.path || "/proposal-view",
+      shouldShowAuthLoading: false,
+      shouldShowLogin: false,
+    };
+  }
+
   // Local/offline mode is intentionally restricted to development builds. A production
   // deployment must have a signed-in Supabase user before protected content renders.
   if (localDevelopmentMode) {

@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 
 const filesToCheck = [
   "src/proposalData.js",
+  "src/App.customerPortal.test.js",
   "src/supabaseClient.js",
   "src/utils/cloud/cloudSync.js",
   "src/utils/cloud/companyCloud.js",
@@ -12,6 +13,8 @@ const filesToCheck = [
   "src/utils/cloud/teamAccess.js",
   "src/utils/authSession.js",
   "src/utils/authSession.test.js",
+  "src/utils/customerPortal.js",
+  "src/utils/customerPortal.test.js",
   "src/utils/formatting/display.js",
   "src/utils/aiProposal/aiProposalNormalizer.js",
   "src/utils/aiProposal/aiProposalNormalizer.test.js",
