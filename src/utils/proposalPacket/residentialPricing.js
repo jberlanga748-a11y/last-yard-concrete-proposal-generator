@@ -1,0 +1,246 @@
+export const CHOOSE_ONE_PRICING_MODE = "choose_one_option";
+
+export const RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE = "Estimated duration: 10 working days.";
+
+export const RESIDENTIAL_CHOOSE_ONE_COVER_DESCRIPTION =
+  "Residential concrete package including walkway, landings, steps, curbs, side walls, wall footings, rebar reinforcement, selected finish, and cleanup.";
+
+export function toResidentialPricingNumber(value) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  const numberValue = Number.parseFloat(String(value ?? "").replace(/[$,%\s,]/g, ""));
+  return Number.isFinite(numberValue) ? numberValue : 0;
+}
+
+export function formatResidentialCurrency(value, options = {}) {
+  const numericValue = toResidentialPricingNumber(value);
+  const sign = numericValue < 0 ? "-" : options.plus ? "+" : "";
+  const formatted = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(Math.round(Math.abs(numericValue)));
+
+  return `${sign}${formatted}`;
+}
+
+export function normalizeResidentialScheduleOfValues(rows = []) {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+
+  return rows
+    .map((row) => {
+      if (typeof row === "string") {
+        const item = cleanResidentialText(row);
+        return item ? { item, description: "", pricingBasis: "", amount: 0 } : null;
+      }
+
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+
+      const amount = toResidentialPricingNumber(row.amount ?? row.price ?? row.total);
+      const normalized = {
+        id: cleanResidentialText(row.id),
+        item: cleanResidentialText(row.item || row.name || row.label),
+        description: cleanResidentialText(row.description || row.notes),
+        pricingBasis: cleanResidentialText(row.pricingBasis || row.basis),
+        amount,
+      };
+
+      return [normalized.item, normalized.description, normalized.pricingBasis].some(Boolean) || amount > 0 ? normalized : null;
+    })
+    .filter(Boolean);
+}
+
+export function normalizeResidentialPricingOptions(pricingOptions = []) {
+  if (!Array.isArray(pricingOptions)) {
+    return [];
+  }
+
+  const hasExplicitSelection = pricingOptions.some((option) => option?.included === true || option?.selected === true);
+
+  return pricingOptions
+    .map((option, index) => {
+      if (!option || typeof option !== "object") {
+        return null;
+      }
+
+      const price = toResidentialPricingNumber(option.price ?? option.amount ?? option.total);
+      const name = cleanResidentialText(option.name ?? option.label ?? option.description ?? `Option ${index + 1}`);
+
+      if (!name || price <= 0) {
+        return null;
+      }
+
+      return {
+        id: cleanResidentialText(option.id),
+        name,
+        description: cleanResidentialText(option.description ?? option.notes),
+        price,
+        downPayment: toResidentialPricingNumber(option.downPayment) || price / 2,
+        finalPayment: toResidentialPricingNumber(option.finalPayment) || price / 2,
+        included: Boolean(option.included === true || option.selected === true || (!hasExplicitSelection && index === 0)),
+        selected: Boolean(option.selected === true || option.included === true || (!hasExplicitSelection && index === 0)),
+        scheduleOfValues: normalizeResidentialScheduleOfValues(
+          option.scheduleOfValues ?? option.sov ?? option.breakdown ?? option.optionBreakdown,
+        ),
+      };
+    })
+    .filter(Boolean);
+}
+
+export function normalizeResidentialOptionalAddOns(optionalAddOns = []) {
+  if (!Array.isArray(optionalAddOns)) {
+    return [];
+  }
+
+  return optionalAddOns
+    .map((addOn) => {
+      if (!addOn || typeof addOn !== "object") {
+        return null;
+      }
+
+      const amount = toResidentialPricingNumber(addOn.amount ?? addOn.price ?? addOn.total);
+      const name = cleanResidentialText(addOn.name ?? addOn.label ?? addOn.description ?? "Optional Add-On");
+
+      if (!name || amount <= 0) {
+        return null;
+      }
+
+      return {
+        id: cleanResidentialText(addOn.id),
+        name,
+        description: cleanResidentialText(addOn.description ?? addOn.notes),
+        amount,
+        appliesTo: Array.isArray(addOn.appliesTo) ? addOn.appliesTo.map(cleanResidentialText).filter(Boolean) : [],
+        included: Boolean(addOn.included === true || addOn.selected === true),
+        selected: Boolean(addOn.selected === true || addOn.included === true),
+      };
+    })
+    .filter(Boolean);
+}
+
+export function mergeResidentialOptionBreakdowns(pricingOptions = [], optionBreakdowns = []) {
+  const options = normalizeResidentialPricingOptions(pricingOptions);
+  const breakdownsByName = normalizeResidentialOptionBreakdownMap(optionBreakdowns);
+
+  return options.map((option) => {
+    if (option.scheduleOfValues.length > 0) {
+      return option;
+    }
+
+    const key = normalizeResidentialKey(option.name);
+    const exactRows = breakdownsByName.get(key);
+    const fuzzyRows = exactRows || [...breakdownsByName.entries()].find(([breakdownKey]) => key.includes(breakdownKey) || breakdownKey.includes(key))?.[1];
+
+    return fuzzyRows?.length > 0 ? { ...option, scheduleOfValues: fuzzyRows } : option;
+  });
+}
+
+export function normalizeResidentialOptionBreakdownMap(optionBreakdowns = []) {
+  const entries =
+    Array.isArray(optionBreakdowns)
+      ? optionBreakdowns
+      : Object.entries(optionBreakdowns || {}).map(([name, rows]) => ({ name, rows }));
+  const breakdownsByName = new Map();
+
+  entries.forEach((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+
+    const name = cleanResidentialText(entry.name || entry.optionName || entry.label);
+    const rows = normalizeResidentialScheduleOfValues(entry.scheduleOfValues ?? entry.rows ?? entry.breakdown);
+
+    if (name && rows.length > 0) {
+      breakdownsByName.set(normalizeResidentialKey(name), rows);
+    }
+  });
+
+  return breakdownsByName;
+}
+
+export function getResidentialPricingOptions(proposal = {}) {
+  return normalizeResidentialPricingOptions(proposal.pricingOptions || proposal.pricing?.pricingOptions || []);
+}
+
+export function getResidentialOptionalAddOns(proposal = {}) {
+  const pricingSectionAddOns = (Array.isArray(proposal.pricingSections) ? proposal.pricingSections : [])
+    .filter((section) => section?.optionalAddOn)
+    .map((section) => ({
+      id: section.id,
+      name: section.label || section.name || "Optional Add-On",
+      description: section.description || "",
+      amount: section.amount,
+      included: section.included,
+      selected: section.included,
+    }));
+  const addOns = normalizeResidentialOptionalAddOns([
+    ...(proposal.optionalAddOns || []),
+    ...(proposal.pricing?.optionalAddOns || []),
+    ...pricingSectionAddOns,
+  ]);
+  const seen = new Set();
+
+  return addOns.filter((addOn) => {
+    const key = `${normalizeResidentialKey(addOn.name)}-${addOn.amount}`;
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+export function hasResidentialChooseOnePricing(proposal = {}) {
+  const pricingMode = proposal.pricingMode || proposal.pricing?.pricingMode || "";
+  return pricingMode === CHOOSE_ONE_PRICING_MODE && getResidentialPricingOptions(proposal).length > 0;
+}
+
+export function buildResidentialOptionBreakdowns(proposal = {}) {
+  return getResidentialPricingOptions(proposal)
+    .map((option) => {
+      const rows = normalizeResidentialScheduleOfValues(option.scheduleOfValues);
+      const rowsTotal = rows.reduce((sum, row) => sum + toResidentialPricingNumber(row.amount), 0);
+
+      return {
+        ...option,
+        scheduleOfValues: rows,
+        rowsTotal,
+        totalMatchesOption: Math.abs(rowsTotal - toResidentialPricingNumber(option.price)) <= 1,
+      };
+    })
+    .filter((option) => option.scheduleOfValues.length > 0);
+}
+
+export function hasResidentialOptionBreakdowns(proposal = {}) {
+  return buildResidentialOptionBreakdowns(proposal).length > 0;
+}
+
+export function getResidentialCoverSchedule(proposal = {}, fallback = "") {
+  return hasResidentialChooseOnePricing(proposal) ? RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE : fallback;
+}
+
+export function getResidentialCoverDescription(proposal = {}, fallback = "") {
+  return hasResidentialChooseOnePricing(proposal) ? RESIDENTIAL_CHOOSE_ONE_COVER_DESCRIPTION : fallback;
+}
+
+function cleanResidentialText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeResidentialKey(value) {
+  return cleanResidentialText(value)
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}

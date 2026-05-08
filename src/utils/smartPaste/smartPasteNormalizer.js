@@ -1,3 +1,10 @@
+import {
+  mergeResidentialOptionBreakdowns,
+  normalizeResidentialOptionalAddOns,
+  normalizeResidentialPricingOptions,
+  normalizeResidentialScheduleOfValues,
+} from "../proposalPacket/residentialPricing.js";
+
 export const SMART_PASTE_JSON_MARKER = "LAST_YARD_SMART_PASTE_JSON_V1";
 
 const EMPTY_NORMALIZED_SMART_PASTE = {
@@ -19,9 +26,13 @@ const EMPTY_NORMALIZED_SMART_PASTE = {
     specialRequirements: "",
   },
   pricing: {
+    pricingMode: "",
     baseBid: 0,
     totalProposal: 0,
     lineItems: [],
+    pricingOptions: [],
+    optionGroups: [],
+    optionalAddOns: [],
     allowances: [],
     alternates: [],
     acceptedAlternatesNone: false,
@@ -284,11 +295,27 @@ function normalizeJsonCover(project = {}, coverSource = {}, normalized) {
 function normalizeJsonPricing(pricing = {}, root = {}, normalized) {
   const lineItems = getArray(pricing.lineItems ?? root.lineItems, "pricing.lineItems", normalized);
   normalized.pricing.lineItems = lineItems.map(normalizeJsonLineItem).filter(Boolean);
+  normalized.pricing.pricingMode = cleanJsonText(pricing.pricingMode || pricing.mode || root.pricingMode);
+  normalized.pricing.pricingOptions = normalizeResidentialPricingOptions(
+    getArray(pricing.pricingOptions ?? root.pricingOptions, "pricing.pricingOptions", normalized),
+  );
+  normalized.pricing.optionGroups = normalizeJsonPricingOptionGroups(pricing.optionGroups ?? root.optionGroups, normalized);
+  normalized.pricing.pricingOptions.push(...normalized.pricing.optionGroups.flatMap((group) => group.options || []));
+  normalized.pricing.pricingOptions = mergeResidentialOptionBreakdowns(
+    normalized.pricing.pricingOptions,
+    pricing.optionBreakdowns ?? pricing.pricingOptionBreakdowns ?? root.optionBreakdowns ?? root.pricingOptionBreakdowns,
+  );
+  normalized.pricing.optionalAddOns = normalizeResidentialOptionalAddOns(getArray(
+    pricing.optionalAddOns ?? pricing.addOns ?? root.optionalAddOns ?? root.addOns,
+    "pricing.optionalAddOns",
+    normalized,
+  ));
   normalized.pricing.allowances = getArray(pricing.allowances, "pricing.allowances", normalized).map(normalizeJsonPricingBucket).filter(Boolean);
   normalized.pricing.alternates = getArray(pricing.alternates, "pricing.alternates", normalized).map(normalizeJsonPricingBucket).filter(Boolean);
   normalized.pricing.baseBid = toNumber(pricing.baseBid);
   normalized.pricing.totalProposal = toNumber(pricing.totalProposal);
   normalized.pricing.pricingSummaryNotes = cleanJsonText(pricing.pricingSummaryNotes);
+  normalizeChooseOnePricing(normalized.pricing);
 
   const lineItemTotal = sumLineItemAmounts(normalized.pricing.lineItems);
 
@@ -296,7 +323,12 @@ function normalizeJsonPricing(pricing = {}, root = {}, normalized) {
     normalized.pricing.baseBid = lineItemTotal;
   }
 
-  if (normalized.pricing.totalProposal <= 0 && lineItemTotal > 0 && normalized.pricing.alternates.length === 0) {
+  if (
+    normalized.pricing.totalProposal <= 0 &&
+    lineItemTotal > 0 &&
+    normalized.pricing.alternates.length === 0 &&
+    normalized.pricing.pricingMode !== "choose_one_option"
+  ) {
     normalized.pricing.totalProposal = lineItemTotal;
   }
 
@@ -307,7 +339,13 @@ function normalizeJsonPricing(pricing = {}, root = {}, normalized) {
     });
   }
 
-  if (normalized.pricing.lineItems.length > 0 || normalized.pricing.baseBid > 0 || normalized.pricing.totalProposal > 0) {
+  if (
+    normalized.pricing.lineItems.length > 0 ||
+    normalized.pricing.baseBid > 0 ||
+    normalized.pricing.totalProposal > 0 ||
+    normalized.pricing.pricingOptions.length > 0 ||
+    normalized.pricing.optionalAddOns.length > 0
+  ) {
     capture(normalized, "pricing");
   }
 }
@@ -356,6 +394,123 @@ function normalizeJsonPricingBucket(row = {}) {
   }
 
   return { label, description, amount, included: row.included === true };
+}
+
+function normalizeJsonPricingOption(row = {}, index = 0) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const name = cleanJsonText(row.name || row.label || row.description || `Option ${index + 1}`);
+  const description = cleanJsonText(row.description || row.notes);
+  const price = toNumber(row.price ?? row.amount ?? row.total);
+
+  if (!name || isPlaceholderText(name) || price <= 0) {
+    return null;
+  }
+
+  const downPayment = toNumber(row.downPayment);
+  const finalPayment = toNumber(row.finalPayment);
+
+  return {
+    id: cleanJsonText(row.id),
+    name,
+    description,
+    price,
+    downPayment: downPayment > 0 ? downPayment : price / 2,
+    finalPayment: finalPayment > 0 ? finalPayment : price / 2,
+    included: row.included === true || row.selected === true,
+    selected: row.selected === true || row.included === true,
+    scheduleOfValues: normalizeResidentialScheduleOfValues(row.scheduleOfValues ?? row.sov ?? row.breakdown ?? row.optionBreakdown),
+  };
+}
+
+function normalizeJsonPricingOptionGroups(value, normalized) {
+  const groups = getArray(value, "pricing.optionGroups", normalized);
+
+  return groups
+    .map((group, groupIndex) => {
+      if (!group || typeof group !== "object") {
+        return null;
+      }
+
+      const options = normalizeResidentialPricingOptions(getArray(group.options, `pricing.optionGroups[${groupIndex}].options`, normalized));
+
+      if (options.length === 0) {
+        return null;
+      }
+
+      return {
+        id: cleanJsonText(group.id),
+        name: cleanJsonText(group.name || group.label || "Pricing Options"),
+        pricingMode: cleanJsonText(group.pricingMode || group.mode || "choose_one_option"),
+        options,
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeJsonOptionalAddOn(row = {}) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+
+  const name = cleanJsonText(row.name || row.label || row.description);
+  const description = cleanJsonText(row.description || row.notes);
+  const amount = toNumber(row.amount ?? row.price ?? row.total);
+
+  if (!name || isPlaceholderText(name) || amount <= 0) {
+    return null;
+  }
+
+  return {
+    id: cleanJsonText(row.id),
+    name,
+    description,
+    amount,
+    appliesTo: Array.isArray(row.appliesTo) ? row.appliesTo.map(cleanJsonText).filter(Boolean) : normalizeJsonTextList(row.appliesTo),
+    included: row.included === true || row.selected === true,
+    selected: row.selected === true || row.included === true,
+  };
+}
+
+function normalizeChooseOnePricing(pricing) {
+  if (!pricing || !Array.isArray(pricing.pricingOptions)) {
+    return;
+  }
+
+  pricing.pricingOptions = dedupeRows(pricing.pricingOptions, (row) => `${row.name} ${row.price}`);
+  pricing.optionalAddOns = dedupeRows(pricing.optionalAddOns || [], (row) => `${row.name} ${row.amount}`);
+
+  if (!pricing.pricingMode && pricing.pricingOptions.length >= 2) {
+    pricing.pricingMode = "choose_one_option";
+  }
+
+  if (pricing.pricingMode !== "choose_one_option") {
+    return;
+  }
+
+  if (!pricing.pricingOptions.some((option) => option.included || option.selected) && pricing.pricingOptions[0]) {
+    pricing.pricingOptions[0] = {
+      ...pricing.pricingOptions[0],
+      included: true,
+      selected: true,
+    };
+  }
+
+  const selectedOption = getSelectedPricingOption(pricing.pricingOptions);
+  const selectedAddOnTotal = (pricing.optionalAddOns || []).reduce((sum, addOn) => sum + (addOn.included || addOn.selected ? toNumber(addOn.amount) : 0), 0);
+
+  if (selectedOption) {
+    pricing.baseBid = selectedOption.price;
+    pricing.totalProposal = selectedOption.price + selectedAddOnTotal;
+  }
+
+  pricing.alternates = (pricing.alternates || []).filter((row) => !/^option\s*\d+/i.test(`${row.label} ${row.description}`));
+}
+
+function getSelectedPricingOption(options = []) {
+  return options.find((option) => option.selected || option.included) || options[0] || null;
 }
 
 function normalizeJsonScope(scope = {}, root = {}, normalized) {
@@ -721,6 +876,8 @@ function parsePricing(lines, normalized) {
   normalized.pricing.lineItems.push(...parsePricingLineItemBlocks(lines));
   parseLoosePricingLines(lines, normalized);
   parseAlternateAndAllowanceLines(lines, normalized);
+  parseResidentialPricingOptions(lines, normalized);
+  normalizeChooseOnePricing(normalized.pricing);
 
   const lineItemTotal = sumLineItemAmounts(normalized.pricing.lineItems);
 
@@ -729,7 +886,12 @@ function parsePricing(lines, normalized) {
     normalized.pricing.totalProposal = normalized.pricing.totalProposal || lineItemTotal;
   }
 
-  if (normalized.pricing.totalProposal > 0 && normalized.pricing.baseBid <= 0 && normalized.pricing.alternates.length === 0) {
+  if (
+    normalized.pricing.totalProposal > 0 &&
+    normalized.pricing.baseBid <= 0 &&
+    normalized.pricing.alternates.length === 0 &&
+    normalized.pricing.pricingMode !== "choose_one_option"
+  ) {
     normalized.pricing.baseBid = normalized.pricing.totalProposal;
     normalized.pricing.lineItems.push({
       itemNumber: "1",
@@ -742,7 +904,7 @@ function parsePricing(lines, normalized) {
     });
   }
 
-  if (normalized.pricing.baseBid > 0 && normalized.pricing.lineItems.length === 0) {
+  if (normalized.pricing.baseBid > 0 && normalized.pricing.lineItems.length === 0 && normalized.pricing.pricingMode !== "choose_one_option") {
     normalized.pricing.lineItems.push({
       itemNumber: "1",
       description: "Base Bid",
@@ -754,7 +916,13 @@ function parsePricing(lines, normalized) {
     });
   }
 
-  if (normalized.pricing.lineItems.length > 0 || normalized.pricing.baseBid > 0 || normalized.pricing.totalProposal > 0) {
+  if (
+    normalized.pricing.lineItems.length > 0 ||
+    normalized.pricing.baseBid > 0 ||
+    normalized.pricing.totalProposal > 0 ||
+    normalized.pricing.pricingOptions.length > 0 ||
+    normalized.pricing.optionalAddOns.length > 0
+  ) {
     capture(normalized, "pricing");
   }
 }
@@ -951,6 +1119,113 @@ function parseAlternateAndAllowanceLines(lines, normalized) {
       normalized.pricing.alternates.push(row);
     }
   });
+}
+
+function parseResidentialPricingOptions(lines, normalized) {
+  const fullText = lines.join("\n").toLowerCase();
+  const pricingOptions = [];
+  const optionalAddOns = [];
+  const hasChooseOneLanguage =
+    /customer\s+(?:to\s+)?choose(?:s)?\s+one|choose\s+one\s+option|main pricing options|mutually exclusive|finish choices?|customer selects one/i.test(
+      fullText,
+    );
+
+  lines.forEach((line) => {
+    const option = parseResidentialOptionLine(line);
+
+    if (option) {
+      pricingOptions.push(option);
+      return;
+    }
+
+    const addOn = parseResidentialOptionalAddOnLine(line);
+
+    if (addOn) {
+      optionalAddOns.push(addOn);
+    }
+  });
+
+  if (pricingOptions.length < 2 || (!hasChooseOneLanguage && pricingOptions.length < 3)) {
+    return;
+  }
+
+  const sortedOptions = pricingOptions.sort((a, b) => a.optionNumber - b.optionNumber);
+  sortedOptions.forEach((option, index) => {
+    option.included = option.included || index === 0;
+    option.selected = option.selected || option.included;
+    delete option.optionNumber;
+  });
+
+  normalized.pricing.pricingMode = "choose_one_option";
+  normalized.pricing.pricingOptions.push(...sortedOptions);
+  normalized.pricing.optionalAddOns.push(...optionalAddOns);
+  normalized.pricing.alternates = normalized.pricing.alternates.filter((row) => !/^option\s*\d+/i.test(`${row.label} ${row.description}`));
+  capture(normalized, "pricing");
+}
+
+function parseResidentialOptionLine(line = "") {
+  const text = cleanText(line);
+  const match = text.match(/^option\s*(\d+)\s*(?:[-:–—]\s*)?(.+)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  const amount = getTrailingAmount(match[2]);
+
+  if (amount <= 0) {
+    return null;
+  }
+
+  const optionNumber = Number.parseInt(match[1], 10) || 0;
+  const rawDescription = match[2]
+    .replace(/\$?\s*\d[\d,]*(?:\.\d{2})?\s*$/, "")
+    .replace(/\s*(?:=|:|-|–|—)\s*$/, "")
+    .trim();
+  const name = cleanText(`Option ${optionNumber} - ${rawDescription.replace(/^[-:–—]\s*/, "")}`);
+
+  return {
+    optionNumber,
+    name,
+    description: "",
+    price: amount,
+    downPayment: amount / 2,
+    finalPayment: amount / 2,
+    included: /selected|accepted|included/i.test(text),
+    selected: /selected|accepted|included/i.test(text),
+  };
+}
+
+function parseResidentialOptionalAddOnLine(line = "") {
+  const text = cleanText(line);
+  const amount = getTrailingAmount(text);
+
+  if (amount <= 0 || /^option\s*\d+/i.test(text)) {
+    return null;
+  }
+
+  if (!/cantilever|optional\s+(?:upgrade|add[- ]?on)|add[- ]?on|upgrade/i.test(text)) {
+    return null;
+  }
+
+  const name = cleanText(
+    text
+      .replace(/\$?\s*\d[\d,]*(?:\.\d{2})?\s*$/, "")
+      .replace(/\s*(?:=|:|-|–|—)\s*$/, ""),
+  );
+
+  if (!name) {
+    return null;
+  }
+
+  return {
+    name,
+    description: /cantilever/i.test(name) ? "Optional upgrade to selected option." : "",
+    amount,
+    appliesTo: ["Option 1", "Option 2", "Option 3"],
+    included: /selected|accepted|included/i.test(text),
+    selected: /selected|accepted|included/i.test(text),
+  };
 }
 
 function parseScope(lines, normalized) {
@@ -1414,7 +1689,10 @@ function parseFinalPacketPrintOrder(lines, normalized) {
 }
 
 function finalizeNormalizedSmartPaste(normalized) {
+  normalizeChooseOnePricing(normalized.pricing);
   normalized.pricing.lineItems = dedupeRows(normalized.pricing.lineItems, (row) => row.description);
+  normalized.pricing.pricingOptions = dedupeRows(normalized.pricing.pricingOptions, (row) => `${row.name} ${row.price}`);
+  normalized.pricing.optionalAddOns = dedupeRows(normalized.pricing.optionalAddOns, (row) => `${row.name} ${row.amount}`);
   normalized.pricing.allowances = dedupeRows(normalized.pricing.allowances, (row) => `${row.label} ${row.description} ${row.amount}`);
   normalized.pricing.alternates = dedupeRows(normalized.pricing.alternates, (row) => `${row.label} ${row.description} ${row.amount}`);
   normalized.scope.exclusions = dedupeList(normalized.scope.exclusions);
@@ -1423,7 +1701,12 @@ function finalizeNormalizedSmartPaste(normalized) {
   normalized.warnings = dedupeList(normalized.warnings);
   normalized.cleanupActions = dedupeList(normalized.cleanupActions);
 
-  if (normalized.pricing.totalProposal > 0 && normalized.pricing.baseBid > 0 && normalized.pricing.alternates.length === 0) {
+  if (
+    normalized.pricing.totalProposal > 0 &&
+    normalized.pricing.baseBid > 0 &&
+    normalized.pricing.alternates.length === 0 &&
+    normalized.pricing.pricingMode !== "choose_one_option"
+  ) {
     const totalDifference = Math.abs(normalized.pricing.totalProposal - normalized.pricing.baseBid);
 
     if (totalDifference > 1) {
@@ -1431,7 +1714,9 @@ function finalizeNormalizedSmartPaste(normalized) {
     }
   }
 
-  if (normalized.pricing.alternates.length > 0 || JSON.stringify(normalized).toLowerCase().includes("optional support")) {
+  if (normalized.pricing.pricingMode === "choose_one_option") {
+    normalized.warnings.push("Residential pricing options detected. Confirm which option the customer accepted before sending.");
+  } else if (normalized.pricing.alternates.length > 0 || JSON.stringify(normalized).toLowerCase().includes("optional support")) {
     normalized.warnings.push("Optional or alternate scope detected. Confirm whether it is included before sending.");
   }
 

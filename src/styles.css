@@ -4069,6 +4069,17 @@ h4 {
   color: var(--blue);
 }
 
+.residential-options-editor-summary {
+  margin-bottom: 12px;
+}
+
+.residential-options-editor-summary .pricing-helper-text {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .preview-pane {
   width: 100%;
   min-width: 0;
@@ -5603,6 +5614,47 @@ h4 {
 
 .structured-packet-table tbody tr:nth-child(even) {
   background: #f8fafc;
+}
+
+.residential-option-breakdowns {
+  display: grid;
+  gap: 14px;
+}
+
+.residential-option-breakdown {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.residential-option-breakdown-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  background: #f8fafc;
+  padding: 8px 10px;
+}
+
+.residential-option-breakdown-heading h3 {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.residential-option-breakdown-heading span {
+  color: var(--blue);
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.residential-option-sov-table tfoot td {
+  background: #f8fafc;
+  color: var(--ink);
+  font-weight: 950;
 }
 
 .structured-packet-table.pricing-summary th:nth-child(2),

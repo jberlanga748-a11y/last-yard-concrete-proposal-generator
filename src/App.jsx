@@ -93,6 +93,12 @@ import {
   hasPrintableText,
 } from "./utils/proposalPacket/printContentCleanup.js";
 import {
+  formatResidentialCurrency,
+  hasResidentialChooseOnePricing,
+  hasResidentialOptionBreakdowns,
+  normalizeResidentialScheduleOfValues,
+} from "./utils/proposalPacket/residentialPricing.js";
+import {
   cleanSmartPasteBaseProposal,
   cleanTrueBlankProposalState,
   getSmartPasteFieldChangeSummary,
@@ -4058,11 +4064,14 @@ export default function App() {
         projectLocation: nextProposal.project?.location || nextProposal.project?.address || nextProposal.client?.projectAddress || "",
       },
       detectedPricing: summarizeSmartPasteDetectedPricing(nextProposal),
-      detectedAlternates: (nextProposal.pricingSections || []).map((section) => ({
-        label: section.label || section.description || "Alternate / allowance",
-        amount: section.amount || 0,
-        included: section.included === true,
-      })),
+      detectedAlternates:
+        nextProposal.pricingMode === "choose_one_option"
+          ? []
+          : (nextProposal.pricingSections || []).map((section) => ({
+              label: section.label || section.description || "Alternate / allowance",
+              amount: section.amount || 0,
+              included: section.included === true,
+            })),
       pendingReview: true,
       validationErrors: nextValidation.errors,
     };
@@ -7646,6 +7655,7 @@ function ProposalEditor({
           <a href="#pricing-alternates-section" onClick={(event) => openEditorAccordionSection(event, "pricing-alternates-section")}>Alternates / Allowances</a>
           <a href="#pricing-summary" onClick={(event) => openEditorAccordionSection(event, "pricing-section")}>Pricing Summary</a>
         </nav>
+        <ResidentialPricingOptionsEditorSummary proposal={proposal} />
         <LineItemEditor
           lineItems={proposal.lineItems}
           priceLibrary={priceLibrary}
@@ -7947,7 +7957,27 @@ function SmartPasteSummary({ result, onApply, onClear }) {
       <ul>
         <li>{result.fields.length} fields detected</li>
         <li>{result.lineItemCount} line items detected</li>
-        <li>{result.pricingSectionCount || 0} alternates / allowances detected</li>
+        {result.pricingMode === "choose_one_option" ? (
+          <>
+            <li>Pricing mode: Customer chooses one option</li>
+            <li>Pricing options detected: {(result.pricingOptions || []).length}</li>
+            <li>Optional add-ons detected: {(result.optionalAddOns || []).length}</li>
+          </>
+        ) : (
+          <li>{result.pricingSectionCount || 0} alternates / allowances detected</li>
+        )}
+        {(result.pricingOptions || []).length > 0 ? (
+          <li>
+            Main pricing options:{" "}
+            {result.pricingOptions.map((option) => `${option.name}: ${formatResidentialCurrency(option.price || 0)}`).join(", ")}
+          </li>
+        ) : null}
+        {(result.optionalAddOns || []).length > 0 ? (
+          <li>
+            Optional add-ons:{" "}
+            {result.optionalAddOns.map((addOn) => `${addOn.name}: ${formatResidentialCurrency(addOn.amount || 0, { plus: true })}`).join(", ")}
+          </li>
+        ) : null}
         <li>{result.planSheetCount || 0} plan / takeoff pages detected</li>
         <li>{result.gcPacketTableCount || 0} structured GC tables detected</li>
         {result.scheduleOfValuesCount !== undefined ? <li>{result.scheduleOfValuesCount || 0} SOV rows detected</li> : null}
@@ -7970,10 +8000,16 @@ function SmartPasteSummary({ result, onApply, onClear }) {
         {result.detectedProjectInfo?.projectName ? <li>Detected project: {result.detectedProjectInfo.projectName}</li> : null}
         {result.detectedProjectInfo?.clientCompany ? <li>Detected client/GC: {result.detectedProjectInfo.clientCompany}</li> : null}
         {result.detectedProjectInfo?.projectLocation ? <li>Detected location: {result.detectedProjectInfo.projectLocation}</li> : null}
-        {result.detectedPricing ? (
+        {result.detectedPricing && result.pricingMode !== "choose_one_option" ? (
           <li>
             Detected pricing: base {formatCurrency(result.detectedPricing.baseTotal || 0)}, total if all accepted{" "}
             {formatCurrency(result.detectedPricing.totalIfAllAccepted || 0)}
+          </li>
+        ) : null}
+        {result.detectedPricing && result.pricingMode === "choose_one_option" ? (
+          <li>
+            Detected pricing: selected/base option{" "}
+            {formatResidentialCurrency(result.detectedPricing.currentTotal || result.detectedPricing.baseTotal || 0)}
           </li>
         ) : null}
         {(result.detectedAlternates || []).length > 0 ? (
@@ -12108,7 +12144,85 @@ function normalizePricingSections(pricingSections = []) {
     description: section?.description ?? "",
     amount: section?.amount ?? "",
     included: Boolean(section?.included),
+    optionalAddOn: Boolean(section?.optionalAddOn),
   }));
+}
+
+function ResidentialPricingOptionsEditorSummary({ proposal }) {
+  if (!hasResidentialChooseOnePricing(proposal)) {
+    return null;
+  }
+
+  const options = proposal.pricingOptions || [];
+  const addOns = proposal.optionalAddOns || [];
+
+  return (
+    <div className="editor-totals residential-options-editor-summary" id="pricing-options-summary">
+      <div className="editor-totals-heading">
+        <span>Customer to Select One Pricing Option</span>
+        <strong>{formatResidentialCurrency(options.find((option) => option.selected || option.included)?.price || options[0]?.price || 0)}</strong>
+      </div>
+      {options.map((option) => (
+        <div key={option.id || option.name}>
+          <span>{option.name}</span>
+          <strong>{formatResidentialCurrency(option.price)}</strong>
+        </div>
+      ))}
+      {addOns.length > 0 ? (
+        <div>
+          <span>Optional Add-On</span>
+          <strong>{addOns.map((addOn) => `${addOn.name}: ${formatResidentialCurrency(addOn.amount, { plus: true })}`).join(", ")}</strong>
+        </div>
+      ) : null}
+      <p className="pricing-helper-text">Main options are mutually exclusive. Optional add-ons are separate from the selected option.</p>
+    </div>
+  );
+}
+
+function normalizePricingOptions(pricingOptions = []) {
+  if (!Array.isArray(pricingOptions)) {
+    return [];
+  }
+
+  const hasExplicitSelection = pricingOptions.some((option) => option?.included === true || option?.selected === true);
+
+  return pricingOptions
+    .map((option, index) => {
+      const price = toEditableNumber(option?.price ?? option?.amount ?? option?.total);
+
+      return {
+        id: option?.id || createProposalId(),
+        name: option?.name ?? option?.label ?? `Option ${index + 1}`,
+        description: option?.description ?? "",
+        price,
+        downPayment: toEditableNumber(option?.downPayment) || price / 2,
+        finalPayment: toEditableNumber(option?.finalPayment) || price / 2,
+        included: Boolean(option?.included === true || option?.selected === true || (!hasExplicitSelection && index === 0)),
+        selected: Boolean(option?.selected === true || option?.included === true || (!hasExplicitSelection && index === 0)),
+        scheduleOfValues: normalizeResidentialScheduleOfValues(
+          option?.scheduleOfValues ?? option?.sov ?? option?.breakdown ?? option?.optionBreakdown,
+        ),
+      };
+    })
+    .filter((option) => option.name && option.price > 0);
+}
+
+function normalizeOptionalAddOns(optionalAddOns = []) {
+  if (!Array.isArray(optionalAddOns)) {
+    return [];
+  }
+
+  return optionalAddOns
+    .map((addOn) => ({
+      id: addOn?.id || createProposalId(),
+      name: addOn?.name ?? addOn?.label ?? "Optional Add-On",
+      description: addOn?.description ?? "",
+      amount: toEditableNumber(addOn?.amount ?? addOn?.price ?? addOn?.total),
+      appliesTo: Array.isArray(addOn?.appliesTo) ? addOn.appliesTo : [],
+      included: Boolean(addOn?.included ?? addOn?.selected),
+      selected: Boolean(addOn?.selected ?? addOn?.included),
+    }))
+    .filter((addOn) => addOn.name && addOn.amount > 0);
 }
 
 function createEmptyAddendumRecord() {
@@ -12265,6 +12379,9 @@ function createEditableProposal(seedProposal) {
       taxable: item.taxable ?? true,
     })),
     pricingSections: normalizePricingSections(proposal.pricingSections),
+    pricingMode: proposal.pricingMode || "",
+    pricingOptions: normalizePricingOptions(proposal.pricingOptions),
+    optionalAddOns: normalizeOptionalAddOns(proposal.optionalAddOns),
     submittedPacketRecords: normalizeSubmittedPacketRecords(proposal.submittedPacketRecords),
     sendRecords: normalizeSendRecords(proposal.sendRecords),
     client: {
@@ -12901,7 +13018,7 @@ function getPacketBuilderSectionStatus(proposal = {}, sectionId = "") {
     case "pricing_summary":
       return { hasData: Boolean(tables.pricingSummary.enabled) };
     case "schedule_of_values":
-      return { hasData: hasGcPacketRows(tables.scheduleOfValues) };
+      return { hasData: hasGcPacketRows(tables.scheduleOfValues) || hasResidentialOptionBreakdowns(proposal) };
     case "takeoff_quantities":
       return { hasData: hasGcPacketRows(tables.takeoffQuantities) };
     case "addenda_acknowledgement":
@@ -13306,6 +13423,34 @@ function paginateStructuredRows(pages, kind, table, title, columns, rowsPerPage)
 }
 
 function buildStructuredPricingSummaryRows(proposal, customRows = []) {
+  if (hasResidentialChooseOnePricing(proposal)) {
+    const optionRows = normalizePricingOptions(proposal.pricingOptions).map((option) => ({
+      id: option.id || createProposalId(),
+      label: option.name,
+      amount: formatResidentialCurrency(option.price),
+      note: [option.description, `50% Down: ${formatResidentialCurrency(option.downPayment)}`, `Final: ${formatResidentialCurrency(option.finalPayment)}`]
+        .filter(hasTextValue)
+        .join(" | "),
+    }));
+    const addOnRows = normalizeOptionalAddOns(proposal.optionalAddOns).map((addOn) => ({
+      id: addOn.id || createProposalId(),
+      label: `Optional Add-On - ${addOn.name}`,
+      amount: formatResidentialCurrency(addOn.amount, { plus: true }),
+      note: addOn.description || "Optional upgrade to selected option.",
+    }));
+
+    return cleanPrintablePricingSummaryRows([
+      ...optionRows,
+      ...addOnRows,
+      {
+        id: "choose-one-pricing-mode-note",
+        label: "Pricing Mode",
+        amount: "",
+        note: "Customer to select one main option. Main options are mutually exclusive and are not added together.",
+      },
+    ]);
+  }
+
   const visibleCustomRows = cleanPrintablePricingSummaryRows(normalizeGcPacketRows("pricingSummary", customRows));
 
   if (visibleCustomRows.length > 0) {
@@ -13361,8 +13506,20 @@ function chunkArray(items, chunkSize) {
   return chunks;
 }
 
-function formatStructuredCell(value) {
-  return hasPrintableText(value) ? value : "-";
+function formatStructuredCell(value, columnKey = "") {
+  if (!hasPrintableText(value)) {
+    return "-";
+  }
+
+  if (columnKey === "amount") {
+    const textValue = String(value).trim();
+
+    if (typeof value === "number" || (/^-?[\d,]+(?:\.\d+)?$/.test(textValue) && !textValue.includes("$"))) {
+      return formatResidentialCurrency(value);
+    }
+  }
+
+  return value;
 }
 
 function formatPricingSectionAmount(section) {

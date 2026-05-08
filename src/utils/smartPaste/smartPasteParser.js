@@ -7,6 +7,7 @@ import {
   mergeSmartPasteCoverValues,
 } from "./smartPasteCoverFields.js";
 import { isSmartPasteJsonImportNotes, normalizeSmartPasteNotes } from "./smartPasteNormalizer.js";
+import { normalizeResidentialScheduleOfValues } from "../proposalPacket/residentialPricing.js";
 
 const PLAN_SHEET_PAGE_TYPES = ["plan_takeoff_sheet", "detail_notes", "shade_footing_estimate", "general_backup"];
 
@@ -179,11 +180,16 @@ export function parseSmartPasteNotes(notes, currentProposal = {}) {
 function createSmartPasteSummary(parsedNotes = {}, explicitLineItemCount) {
   const values = parsedNotes.values || {};
   const lineItemCount = explicitLineItemCount ?? (parsedNotes.lineItems?.length || 0) + (values.baseBidLineItem ? 1 : 0);
+  const optionScheduleOfValuesCount = getSmartPastePricingOptionSovRowCount(values.pricingOptions);
 
   return {
     fields: parsedNotes.fields || [],
     lineItemCount,
     pricingSectionCount: parsedNotes.pricingSectionCount || 0,
+    pricingMode: values.pricingMode || "",
+    pricingOptions: values.pricingOptions || [],
+    optionalAddOns: values.optionalAddOns || [],
+    hideTotalIfAllAccepted: values.pricingMode === "choose_one_option",
     planSheetCount: parsedNotes.planSheetCount || 0,
     gcPacketTableCount: parsedNotes.gcPacketTableCount || 0,
     sectionsCaptured: parsedNotes.sectionsCaptured || [],
@@ -193,7 +199,7 @@ function createSmartPasteSummary(parsedNotes = {}, explicitLineItemCount) {
     defaultRowsRemoved: parsedNotes.defaultRowsRemoved || [],
     packetSectionsCreated: parsedNotes.packetSectionsCreated || values.packetSectionsPrepared || 0,
     pricingRowsReplaced: parsedNotes.pricingRowsReplaced || 0,
-    scheduleOfValuesCount: values.gcPacketTables?.scheduleOfValues?.rows?.length || 0,
+    scheduleOfValuesCount: (values.gcPacketTables?.scheduleOfValues?.rows?.length || 0) + optionScheduleOfValuesCount,
     takeoffQuantityCount: values.gcPacketTables?.takeoffQuantities?.rows?.length || 0,
     rfiCount: values.rfiRegister?.length || 0,
     scopeSectionCount: values.scopeSections?.length || 0,
@@ -213,15 +219,19 @@ function getSmartPasteApplyTargets(values = {}) {
     targets.push("Project Name", "Project Location", "Client / Contact");
   }
 
-  if (values.baseBidLineItem || values.pricingTotalRows?.length > 0 || values.pricingSections) {
+  if (values.baseBidLineItem || values.pricingTotalRows?.length > 0 || values.pricingSections || values.pricingOptions?.length > 0) {
     targets.push("Pricing");
+  }
+
+  if (values.pricingOptions?.length > 0) {
+    targets.push("Pricing Options");
   }
 
   if (values.normalizedSmartPaste?.pricing?.lineItems?.length > 0) {
     targets.push("Line Items");
   }
 
-  if (values.gcPacketTables?.scheduleOfValues?.rows?.length > 0) {
+  if (values.gcPacketTables?.scheduleOfValues?.rows?.length > 0 || getSmartPastePricingOptionSovRowCount(values.pricingOptions) > 0) {
     targets.push("Schedule of Values");
   }
 
@@ -280,6 +290,7 @@ function getSmartPasteReviewWarnings(proposal = {}, parsedNotes = {}) {
   const totalRows = values.pricingTotalRows || [];
   const lineItemTotal = getSmartPasteLineItemTotal(proposal.lineItems || []);
   const optionalScopeDetected = getSmartPasteOptionalScopeDetected(values);
+  const chooseOnePricing = values.pricingMode === "choose_one_option" || proposal.pricingMode === "choose_one_option";
 
   if (!hasTextValue(project.name)) {
     warnings.push("Smart Paste did not find a project name.");
@@ -293,7 +304,9 @@ function getSmartPasteReviewWarnings(proposal = {}, parsedNotes = {}) {
     warnings.push("Smart Paste did not find a project location or address.");
   }
 
-  if (optionalScopeDetected) {
+  if (chooseOnePricing) {
+    warnings.push("Residential pricing options detected. Confirm which option the customer accepted before sending.");
+  } else if (optionalScopeDetected) {
     warnings.push("Optional scope detected. Confirm whether it is excluded from the base bid before sending.");
   }
 
@@ -311,7 +324,7 @@ function getSmartPasteReviewWarnings(proposal = {}, parsedNotes = {}) {
       return;
     }
 
-    if (Math.abs(lineItemTotal - amount) > 1 && !hasParsedOptionalOrAlternatePricing(values)) {
+    if (Math.abs(lineItemTotal - amount) > 1 && !hasParsedOptionalOrAlternatePricing(values) && !chooseOnePricing) {
       warnings.push(`Pricing total "${label}" does not match parsed base line items. Review pricing before sending.`);
     }
   });
@@ -327,6 +340,10 @@ function getSmartPasteLineItemTotal(lineItems = []) {
 }
 
 function getSmartPasteOptionalScopeDetected(values = {}) {
+  if ((values.optionalAddOns || []).length > 0) {
+    return true;
+  }
+
   if ((values.pricingSections || []).some((section) => /optional|support scope/i.test(`${section.label} ${section.description}`))) {
     return true;
   }
@@ -335,6 +352,10 @@ function getSmartPasteOptionalScopeDetected(values = {}) {
 }
 
 function hasParsedOptionalOrAlternatePricing(values = {}) {
+  if (values.pricingMode === "choose_one_option" || (values.pricingOptions || []).length > 0 || (values.optionalAddOns || []).length > 0) {
+    return true;
+  }
+
   return (values.pricingSections || []).some((section) => section?.type !== "allowance");
 }
 
@@ -985,6 +1006,40 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
   setNormalizedTextValue(values, fields, "scheduleRestrictions", cover.scheduleRestrictions, "schedule restrictions");
   setNormalizedTextValue(values, fields, "specialRequirements", cover.specialRequirements, "special requirements");
 
+  if (pricing.pricingMode) {
+    values.pricingMode = pricing.pricingMode;
+    fields.push(pricing.pricingMode === "choose_one_option" ? "pricing options" : "pricing mode");
+  }
+
+  if (pricing.pricingOptions?.length > 0) {
+    const hasExplicitSelectedOption = pricing.pricingOptions.some((option) => option.included === true || option.selected === true);
+    values.pricingOptions = pricing.pricingOptions.map((option, index) => ({
+      id: option.id || createProposalId(),
+      name: option.name || `Option ${index + 1}`,
+      description: option.description || "",
+      price: toEditableNumber(option.price),
+      downPayment: toEditableNumber(option.downPayment) || toEditableNumber(option.price) / 2,
+      finalPayment: toEditableNumber(option.finalPayment) || toEditableNumber(option.price) / 2,
+      included: option.included === true || option.selected === true || (!hasExplicitSelectedOption && index === 0),
+      selected: option.selected === true || option.included === true || (!hasExplicitSelectedOption && index === 0),
+      scheduleOfValues: normalizeResidentialScheduleOfValues(option.scheduleOfValues),
+    }));
+    fields.push("pricing options");
+  }
+
+  if (pricing.optionalAddOns?.length > 0) {
+    values.optionalAddOns = pricing.optionalAddOns.map((addOn) => ({
+      id: addOn.id || createProposalId(),
+      name: addOn.name || "Optional Add-On",
+      description: addOn.description || "",
+      amount: toEditableNumber(addOn.amount),
+      appliesTo: Array.isArray(addOn.appliesTo) ? addOn.appliesTo : [],
+      included: addOn.included === true || addOn.selected === true,
+      selected: addOn.selected === true || addOn.included === true,
+    })).filter((addOn) => addOn.amount > 0);
+    fields.push("optional add-ons");
+  }
+
   if (pricing.lineItems?.length > 0) {
     lineItems = pricing.lineItems.map((item, index) => ({
       itemNumber: String(item.itemNumber || index + 1),
@@ -997,6 +1052,17 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
     delete values.baseBidLineItem;
     fields.push("line items");
     recordSmartPasteSection(sections, "lineItems");
+  } else if (pricing.pricingMode === "choose_one_option" && values.pricingOptions?.length > 0 && !values.baseBidLineItem) {
+    const selectedOption = getSelectedSmartPastePricingOption(values.pricingOptions);
+    values.baseBidLineItem = {
+      itemNumber: "1",
+      description: selectedOption?.name || "Selected Pricing Option",
+      quantity: 1,
+      unit: "LS",
+      unitPrice: toEditableNumber(selectedOption?.price || pricing.baseBid),
+      taxable: false,
+    };
+    fields.push("base option");
   } else if (pricing.baseBid > 0 && !values.baseBidLineItem) {
     values.baseBidLineItem = {
       itemNumber: "1",
@@ -1025,6 +1091,15 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
       description: row.description || "",
       amount: toEditableNumber(row.amount),
       included: false,
+    })),
+    ...(values.optionalAddOns || []).map((row) => ({
+      id: row.id || createProposalId(),
+      type: "add_alternate",
+      label: row.name || "Optional Add-On",
+      description: row.description || "",
+      amount: toEditableNumber(row.amount),
+      included: row.included === true || row.selected === true,
+      optionalAddOn: true,
     })),
   ].filter((row) => row.amount > 0);
 
@@ -1154,6 +1229,17 @@ function setNormalizedTextValue(values, fields, key, value, label) {
 
   values[key] = value;
   fields.push(label);
+}
+
+function getSelectedSmartPastePricingOption(options = []) {
+  return options.find((option) => option.selected || option.included) || options[0] || null;
+}
+
+function getSmartPastePricingOptionSovRowCount(pricingOptions = []) {
+  return (Array.isArray(pricingOptions) ? pricingOptions : []).reduce(
+    (sum, option) => sum + normalizeResidentialScheduleOfValues(option?.scheduleOfValues).length,
+    0,
+  );
 }
 
 function buildNormalizedSmartPasteGcPacketTables(normalized = {}) {
@@ -1661,6 +1747,18 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     nextProposal.lineItems = parsedNotes.lineItems;
   } else if (values.baseBidLineItem) {
     nextProposal.lineItems = [values.baseBidLineItem];
+  }
+
+  if (values.pricingMode) {
+    nextProposal.pricingMode = values.pricingMode;
+  }
+
+  if (values.pricingOptions) {
+    nextProposal.pricingOptions = values.pricingOptions;
+  }
+
+  if (values.optionalAddOns) {
+    nextProposal.optionalAddOns = values.optionalAddOns;
   }
 
   if (values.pricingSections) {
@@ -3512,6 +3610,10 @@ function getSmartPastePreparedPacketSectionCount(values = {}) {
   }
 
   if (tables.scheduleOfValues.enabled && tables.scheduleOfValues.rows?.length > 0) {
+    preparedSections.add("scheduleOfValues");
+  }
+
+  if (getSmartPastePricingOptionSovRowCount(values.pricingOptions) > 0) {
     preparedSections.add("scheduleOfValues");
   }
 

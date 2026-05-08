@@ -8,6 +8,15 @@ import {
   getPrintablePreparedForLines,
   hasPrintableText,
 } from "../../utils/proposalPacket/printContentCleanup.js";
+import {
+  buildResidentialOptionBreakdowns,
+  formatResidentialCurrency,
+  getResidentialCoverDescription,
+  getResidentialCoverSchedule,
+  getResidentialOptionalAddOns,
+  getResidentialPricingOptions,
+  hasResidentialChooseOnePricing,
+} from "../../utils/proposalPacket/residentialPricing.js";
 
 const logoSrc = "/assets/last-yard/last-yard-concrete-logo.png";
 const legacyLogoSrc = "/assets/last-yard-logo.jpg";
@@ -158,9 +167,12 @@ function ProposalPacketContent({ proposal }) {
   const totalProposalPrice = formatCurrency(proposalTotals.total);
   const termsCopy = buildTermsCopy(packetProposal.terms);
   const visiblePricingSections = appendixPlan.mainPricingSections;
+  const hasChooseOnePricing = hasResidentialChooseOnePricing(packetProposal);
   const structuredPacketPages = buildStructuredPacketPages(packetProposal);
+  const residentialOptionBreakdownPages = buildResidentialOptionBreakdownPages(packetProposal);
   const planSheetPages = getEnabledPlanSheets(packetProposal.planSheets);
-  const hasExtendedPacketPages = structuredPacketPages.length > 0 || appendixPlan.pages.length > 0 || planSheetPages.length > 0;
+  const hasExtendedPacketPages =
+    structuredPacketPages.length > 0 || residentialOptionBreakdownPages.length > 0 || appendixPlan.pages.length > 0 || planSheetPages.length > 0;
   const showCoverGcPrimeNotes = gcPrimeRows.length > 0 && !hasExtendedPacketPages;
   const packetItems = orderPacketRenderItems(
     packetProposal,
@@ -201,10 +213,19 @@ function ProposalPacketContent({ proposal }) {
             </div>
 
             <SectionTitle icon="dollar" title="Pricing" className="section-title-spaced" />
-            <PricingTable items={lineItems} total={totalProposalPrice} />
-            {visiblePricingSections.length > 0 ? (
-              <AlternatesAllowancesTable sections={visiblePricingSections} totals={proposalTotals} />
-            ) : null}
+            {hasChooseOnePricing ? (
+              <>
+                <ResidentialPricingOptionsTable proposal={packetProposal} />
+                {residentialOptionBreakdownPages.length > 0 ? (
+                  <AppendixReferenceNote message="See Schedule of Values for customer-choice option breakdowns." />
+                ) : null}
+              </>
+            ) : (
+              <>
+                <PricingTable items={lineItems} total={totalProposalPrice} />
+                {visiblePricingSections.length > 0 ? <AlternatesAllowancesTable sections={visiblePricingSections} totals={proposalTotals} /> : null}
+              </>
+            )}
 
             <div className="two-column lower-grid">
               <div>
@@ -243,6 +264,13 @@ function ProposalPacketContent({ proposal }) {
             pageNumber={pageNumber}
             projectName={packetProposal.project?.name}
           />
+        ),
+      })),
+      ...residentialOptionBreakdownPages.map((page) => ({
+        key: page.key,
+        sectionId: "schedule_of_values",
+        render: (pageNumber) => (
+          <ResidentialOptionBreakdownsPage company={company} page={page} pageNumber={pageNumber} projectName={packetProposal.project?.name} />
         ),
       })),
       ...appendixPlan.pages.map((page, index) => ({
@@ -349,7 +377,7 @@ function StructuredTablePage({ page }) {
           {page.rows.map((row, index) => (
             <tr key={row.id || `${page.key}-row-${index}`}>
               {page.columns.map((column) => (
-                <td key={column.key}>{formatStructuredCell(row[column.key])}</td>
+                <td key={column.key}>{formatStructuredCell(row[column.key], column.key)}</td>
               ))}
             </tr>
           ))}
@@ -370,6 +398,94 @@ function StructuredNotesPage({ page }) {
       ))}
     </div>
   );
+}
+
+function buildResidentialOptionBreakdownPages(proposal = {}) {
+  const breakdowns = buildResidentialOptionBreakdowns(proposal);
+
+  if (breakdowns.length === 0) {
+    return [];
+  }
+
+  return chunkResidentialOptionBreakdowns(breakdowns, 3).map((options, index, chunks) => ({
+    key: `residential-option-breakdowns-${index}`,
+    title: chunks.length > 1 ? `Schedule of Values - Pricing Options (${index + 1})` : "Schedule of Values - Pricing Options",
+    options,
+  }));
+}
+
+function ResidentialOptionBreakdownsPage({ company, page, pageNumber, projectName }) {
+  return (
+    <ProposalPage className="structured-packet-page residential-option-breakdowns-page">
+      <header className="structured-packet-header">
+        <div>
+          <p>{company.name}</p>
+          <h2>{page.title}</h2>
+        </div>
+        <div>
+          <span>Project</span>
+          <strong>{projectName || "Residential Pricing Options"}</strong>
+        </div>
+      </header>
+
+      <div className="structured-packet-body">
+        <div className="structured-accent" />
+        <p className="structured-packet-note">
+          Customer to select one main option. Option breakdowns are shown separately and are not added together.
+        </p>
+        <div className="residential-option-breakdowns">
+          {page.options.map((option) => (
+            <section className="residential-option-breakdown" key={option.id || option.name}>
+              <div className="residential-option-breakdown-heading">
+                <h3>{option.name}</h3>
+                <span>{formatResidentialCurrency(option.price)}</span>
+              </div>
+              <table className="structured-packet-table scheduleOfValues residential-option-sov-table">
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Description</th>
+                    <th>Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {option.scheduleOfValues.map((row, index) => (
+                    <tr key={row.id || `${option.name}-sov-${index}`}>
+                      <td>{row.item || "-"}</td>
+                      <td>{row.description || row.pricingBasis || "-"}</td>
+                      <td>{formatResidentialCurrency(row.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan="2">{option.totalMatchesOption ? "Option Total" : "Breakdown Total - Review"}</td>
+                    <td>{formatResidentialCurrency(option.rowsTotal)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </section>
+          ))}
+        </div>
+      </div>
+
+      <footer className="structured-packet-footer">
+        <span>{projectName || "Residential pricing options"}</span>
+        <span>{company.name}</span>
+        <span>Packet Page {pageNumber}</span>
+      </footer>
+    </ProposalPage>
+  );
+}
+
+function chunkResidentialOptionBreakdowns(items, chunkSize) {
+  const chunks = [];
+
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+
+  return chunks;
 }
 
 function StructuredText({ text }) {
@@ -753,8 +869,10 @@ function ProjectCards({ proposal }) {
   const { client, project } = proposal;
   const revisionLabel = proposal.revisionLabel || formatRevisionLabel(proposal.revisionNumber);
   const preparedForLines = getPrintablePreparedForLines(client);
-  const coverSchedule = getCoverPageTextPreview(project.estimatedDuration || project.proposedSchedule.display, 180);
-  const coverDescription = getCoverPageTextPreview(project.description, 260);
+  const scheduleSource = getResidentialCoverSchedule(proposal, project.estimatedDuration || project.proposedSchedule.display);
+  const descriptionSource = getResidentialCoverDescription(proposal, project.description);
+  const coverSchedule = getCoverPageTextPreview(scheduleSource, 180);
+  const coverDescription = getCoverPageTextPreview(descriptionSource, 260);
 
   return (
     <section className="project-cards">
@@ -939,6 +1057,80 @@ function PricingTable({ items, total }) {
             <td colSpan="5">Total Proposal Price</td>
             <td>{total}</td>
           </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ResidentialPricingOptionsTable({ proposal }) {
+  const options = getResidentialPricingOptions(proposal);
+  const addOns = getResidentialOptionalAddOns(proposal);
+  const addOnTotal = addOns.reduce((sum, addOn) => sum + addOn.amount, 0);
+
+  if (options.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="alternates-wrap">
+      <div className="alternates-heading">
+        <h4>Customer to select one</h4>
+        <span>Main finish options are mutually exclusive and are not added together.</span>
+      </div>
+      <table className="alternates-table residential-options-table">
+        <thead>
+          <tr>
+            <th>Option</th>
+            <th>Description</th>
+            <th>Total</th>
+            <th>50% Down Payment</th>
+            <th>Final Payment</th>
+          </tr>
+        </thead>
+        <tbody>
+          {options.map((option) => {
+            const optionPrice = option.price;
+
+            return (
+              <tr key={option.id || option.name}>
+                <td>{option.name}</td>
+                <td>{option.description || "-"}</td>
+                <td>{formatResidentialCurrency(optionPrice)}</td>
+                <td>{formatResidentialCurrency(option.downPayment || optionPrice / 2)}</td>
+                <td>{formatResidentialCurrency(option.finalPayment || optionPrice / 2)}</td>
+              </tr>
+            );
+          })}
+          {addOns.length > 0 ? (
+            <tr className="base-bid-row">
+              <td colSpan="5">Optional Add-On</td>
+            </tr>
+          ) : null}
+          {addOns.map((addOn) => (
+            <tr key={addOn.id || addOn.name}>
+              <td>{addOn.name}</td>
+              <td>{addOn.description || "Optional upgrade to selected option."}</td>
+              <td>{formatResidentialCurrency(addOn.amount, { plus: true })}</td>
+              <td>{addOn.included || addOn.selected ? "Selected" : "Optional"}</td>
+              <td>{addOn.appliesTo?.length > 0 ? addOn.appliesTo.join(", ") : "Applies to selected option"}</td>
+            </tr>
+          ))}
+          {addOnTotal > 0
+            ? options.map((option) => {
+                const totalWithAddOn = option.price + addOnTotal;
+
+                return (
+                  <tr key={`${option.id || option.name}-with-add-ons`}>
+                    <td>{`${option.name} with optional add-on`}</td>
+                    <td>Shown for customer comparison if the optional add-on is selected.</td>
+                    <td>{formatResidentialCurrency(totalWithAddOn)}</td>
+                    <td>{formatResidentialCurrency(totalWithAddOn / 2)}</td>
+                    <td>{formatResidentialCurrency(totalWithAddOn / 2)}</td>
+                  </tr>
+                );
+              })
+            : null}
         </tbody>
       </table>
     </div>

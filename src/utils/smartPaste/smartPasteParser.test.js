@@ -979,6 +979,149 @@ Base Bid: $350,000`,
   assert.equal(result.summary.sectionsCaptured.length, 0);
 });
 
+test("imports residential choose-one pricing options from Smart Paste JSON", () => {
+  const jsonNotes = `${SMART_PASTE_JSON_MARKER}
+${JSON.stringify(
+  {
+    project: {
+      name: "Residential Patio Finish Options",
+      location: "Salem, Oregon",
+      clientGc: "Homeowner",
+      contactName: "Jane Customer",
+    },
+    pricing: {
+      pricingMode: "choose_one_option",
+      baseBid: 82500,
+      totalProposal: 82500,
+      lineItems: [],
+      pricingOptions: [
+        {
+          name: "Option 1 - Full Scope With Broom Finish",
+          price: 82500,
+          downPayment: 41250,
+          finalPayment: 41250,
+          included: true,
+          scheduleOfValues: [
+            { item: "10 Day Crew Labor", amount: 56000 },
+            { item: "Concrete Demo / Removal / Haul-Off", amount: 5500 },
+            { item: "Dirt and Gravel Area Prep", amount: 7500 },
+            { item: "Concrete / Rebar / Forms / Wall Footing Materials", amount: 9500 },
+            { item: "Broom Finish / Detailing / Cleanup", amount: 4000 },
+          ],
+        },
+        {
+          name: "Option 2 - Full Scope With Stamped Finish",
+          price: 97500,
+          downPayment: 48750,
+          finalPayment: 48750,
+          included: false,
+          scheduleOfValues: [
+            { item: "10 Day Crew Labor", amount: 56000 },
+            { item: "Concrete Demo / Removal / Haul-Off", amount: 5500 },
+            { item: "Dirt and Gravel Area Prep", amount: 7500 },
+            { item: "Concrete / Rebar / Forms / Wall Footing Materials", amount: 9500 },
+            { item: "Stamped Finish Labor / Pattern Work / Cleanup", amount: 19000 },
+          ],
+        },
+        {
+          name: "Option 3 - Full Scope With Sand Finish",
+          price: 90000,
+          downPayment: 45000,
+          finalPayment: 45000,
+          included: false,
+          scheduleOfValues: [
+            { item: "10 Day Crew Labor", amount: 56000 },
+            { item: "Concrete Demo / Removal / Haul-Off", amount: 5500 },
+            { item: "Dirt and Gravel Area Prep", amount: 7500 },
+            { item: "Concrete / Rebar / Forms / Wall Footing Materials", amount: 9500 },
+            { item: "Sand Finish Labor / Detailing / Cleanup", amount: 11500 },
+          ],
+        },
+      ],
+      optionalAddOns: [
+        {
+          name: "Cantilever-Style Stair Upgrade",
+          amount: 8500,
+          description: "Optional upgrade to selected option.",
+          appliesTo: ["Option 1", "Option 2", "Option 3"],
+        },
+      ],
+      alternates: [],
+      allowances: [],
+    },
+  },
+  null,
+  2,
+)}`;
+  const result = parseSmartPasteNotes(jsonNotes, blankProposalFixture());
+  const totals = calculateProposalTotals(result.proposal);
+
+  assert.equal(result.proposal.pricingMode, "choose_one_option");
+  assert.equal(result.proposal.pricingOptions.length, 3);
+  assert.equal(result.proposal.pricingOptions[0].name, "Option 1 - Full Scope With Broom Finish");
+  assert.equal(result.proposal.pricingOptions[0].price, 82500);
+  assert.equal(result.proposal.pricingOptions[0].downPayment, 41250);
+  assert.equal(result.proposal.pricingOptions[0].finalPayment, 41250);
+  assert.equal(result.proposal.pricingOptions[0].scheduleOfValues.length, 5);
+  assert.equal(result.proposal.pricingOptions[1].scheduleOfValues.length, 5);
+  assert.equal(result.proposal.pricingOptions[2].scheduleOfValues.length, 5);
+  assert.equal(result.proposal.pricingOptions[1].scheduleOfValues.at(-1).amount, 19000);
+  assert.equal(typeof result.proposal.pricingOptions[2].scheduleOfValues.at(-1).amount, "number");
+  assert.equal(result.proposal.pricingOptions[1].included, false);
+  assert.equal(result.proposal.pricingOptions[2].included, false);
+  assert.equal(result.proposal.optionalAddOns.length, 1);
+  assert.equal(result.proposal.optionalAddOns[0].name, "Cantilever-Style Stair Upgrade");
+  assert.equal(result.proposal.optionalAddOns[0].amount, 8500);
+  assert.equal(result.proposal.lineItems.length, 1);
+  assert.equal(result.proposal.lineItems[0].description, "Option 1 - Full Scope With Broom Finish");
+  assert.equal(result.proposal.lineItems[0].unitPrice, 82500);
+  assert.equal(result.proposal.pricingSections.length, 1);
+  assert.equal(result.proposal.pricingSections[0].label, "Cantilever-Style Stair Upgrade");
+  assert.doesNotMatch(JSON.stringify(result.proposal.pricingSections), /Option 2|Option 3/);
+  assert.equal(totals.total, 82500);
+  assert.equal(result.summary.pricingMode, "choose_one_option");
+  assert.equal(result.summary.hideTotalIfAllAccepted, true);
+  assert.equal(result.summary.pricingOptions.length, 3);
+  assert.equal(result.summary.optionalAddOns.length, 1);
+  assert.equal(result.summary.scheduleOfValuesCount, 15);
+  assert.ok(result.summary.applyTargets.includes("Schedule of Values"));
+  assert.match(warningText(result), /Residential pricing options detected/);
+});
+
+test("infers residential choose-one pricing from rough option notes", () => {
+  const result = parseSmartPasteNotes(
+    `Project: Patio Finish Options
+Location: Salem, Oregon
+Client: Homeowner
+
+Main pricing options - customer chooses one:
+Option 1 broom finish = $82,500
+Option 2 stamped finish = $97,500
+Option 3 sand finish = $90,000
+
+Only optional upgrade is cantilever.
+Cantilever-style stair upgrade = $8,500`,
+    blankProposalFixture(),
+  );
+
+  const totals = calculateProposalTotals(result.proposal);
+
+  assert.equal(result.proposal.pricingMode, "choose_one_option");
+  assert.equal(result.proposal.pricingOptions.length, 3);
+  assert.equal(result.proposal.pricingOptions[0].name, "Option 1 - broom finish");
+  assert.equal(result.proposal.pricingOptions[0].price, 82500);
+  assert.equal(result.proposal.pricingOptions[1].price, 97500);
+  assert.equal(result.proposal.pricingOptions[2].price, 90000);
+  assert.equal(result.proposal.optionalAddOns.length, 1);
+  assert.equal(result.proposal.optionalAddOns[0].amount, 8500);
+  assert.equal(result.proposal.lineItems[0].unitPrice, 82500);
+  assert.equal(result.proposal.pricingSections.length, 1);
+  assert.doesNotMatch(JSON.stringify(result.proposal.pricingSections), /Option 2|Option 3/);
+  assert.equal(totals.total, 82500);
+  assert.equal(result.summary.hideTotalIfAllAccepted, true);
+  assert.match(warningText(result), /Residential pricing options detected/);
+});
+
 test("treats Total Proposal and Grand Total lines as summary totals, not alternates", () => {
   const result = parseSmartPasteNotes(
     `Project: Total Proposal Trap
