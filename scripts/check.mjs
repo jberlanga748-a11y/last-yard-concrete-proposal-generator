@@ -26,6 +26,8 @@ const filesToCheck = [
   "src/utils/proposalPacket/residentialPricing.test.js",
   "src/utils/proposals/proposalDraftCleanup.js",
   "src/utils/proposals/proposalDraftCleanup.test.js",
+  "src/utils/proposals/proposalModes.js",
+  "src/utils/proposals/proposalModes.test.js",
   "src/proposalData.test.js",
   "api/ai/extract-proposal.js",
 ];

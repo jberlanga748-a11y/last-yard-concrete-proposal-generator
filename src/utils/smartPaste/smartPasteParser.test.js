@@ -91,6 +91,8 @@ Total Proposal: $325,000`,
   const totals = calculateProposalTotals(result.proposal);
 
   assert.equal(result.proposal.project.name, "Costco #682 Albany POS Boxes Remodel");
+  assert.equal(result.proposal.proposalMode, "commercial_subcontractor");
+  assert.equal(result.summary.proposalMode, "commercial_subcontractor");
   assert.equal(result.proposal.project.location, "3130 Killdeer Ave SE, Albany, OR");
   assert.equal(result.proposal.project.address, "3130 Killdeer Ave SE, Albany, OR");
   assert.equal(result.proposal.client.projectAddress, "3130 Killdeer Ave SE, Albany, OR");
@@ -333,6 +335,9 @@ Internal review draft only. Do not release until Faison confirms accepted scope 
   );
 
   assert.equal(result.proposal.project.name, "NW Dunbar Avenue Improvements");
+  assert.equal(result.proposal.proposalMode, "gc_prime_packet");
+  assert.equal(result.proposal.proposalType, "gc_prime");
+  assert.equal(result.proposal.packetMode, "full_gc_packet");
   assert.equal(result.proposal.project.location, "Troutdale, Oregon");
   assert.equal(result.proposal.client.companyName, "Faison Construction");
   assert.equal(result.proposal.project.owner, "City of Troutdale, Oregon");
@@ -396,6 +401,7 @@ Concrete site package proposal only.`,
   const validation = validateProposalCompleteness(result.proposal);
 
   assert.equal(result.proposal.project.name, "NW Dunbar Avenue Improvements");
+  assert.equal(result.proposal.proposalMode, "commercial_subcontractor");
   assert.equal(result.proposal.project.location, "Troutdale, Oregon");
   assert.equal(result.proposal.project.address, "Troutdale, Oregon");
   assert.equal(result.proposal.client.companyName, "Faison Construction");
@@ -445,6 +451,8 @@ Draft proposal for review. Verify customer, GC, contact, final phasing, and nigh
   const validation = validateProposalCompleteness(result.proposal);
 
   assert.equal(result.proposal.project.name, "Costco #682 Albany POS Boxes Remodel");
+  assert.equal(result.proposal.proposalMode, "gc_prime_packet");
+  assert.equal(result.proposal.packetMode, "full_gc_packet");
   assert.equal(result.proposal.lineItems.length, 1);
   assert.equal(result.proposal.lineItems[0].unitPrice, 325000);
   assert.equal(result.proposal.pricingSections.length, 0);
@@ -551,6 +559,8 @@ Legal / Terms`,
   const rfiRows = result.proposal.gcPrime.rfiRegister;
 
   assert.equal(result.proposal.project.name, "Costco #682 Albany POS Boxes Remodel");
+  assert.equal(result.proposal.proposalMode, "gc_prime_packet");
+  assert.equal(result.proposal.packetMode, "full_gc_packet");
   assert.equal(result.proposal.project.location, "3130 Killdeer Ave SE, Albany, OR");
   assert.equal(result.proposal.project.address, "3130 Killdeer Ave SE, Albany, OR");
   assert.equal(result.proposal.client.companyName, "Faison Construction");
@@ -1056,6 +1066,8 @@ ${JSON.stringify(
   const result = parseSmartPasteNotes(jsonNotes, blankProposalFixture());
   const totals = calculateProposalTotals(result.proposal);
 
+  assert.equal(result.proposal.proposalMode, "residential");
+  assert.equal(result.proposal.packetMode, "summary");
   assert.equal(result.proposal.pricingMode, "choose_one_option");
   assert.equal(result.proposal.pricingOptions.length, 3);
   assert.equal(result.proposal.pricingOptions[0].name, "Option 1 - Full Scope With Broom Finish");
@@ -1080,6 +1092,8 @@ ${JSON.stringify(
   assert.doesNotMatch(JSON.stringify(result.proposal.pricingSections), /Option 2|Option 3/);
   assert.equal(totals.total, 82500);
   assert.equal(result.summary.pricingMode, "choose_one_option");
+  assert.equal(result.summary.proposalMode, "residential");
+  assert.equal(result.summary.proposalModeLabel, "Residential");
   assert.equal(result.summary.hideTotalIfAllAccepted, true);
   assert.equal(result.summary.pricingOptions.length, 3);
   assert.equal(result.summary.optionalAddOns.length, 1);
@@ -1106,6 +1120,7 @@ Cantilever-style stair upgrade = $8,500`,
 
   const totals = calculateProposalTotals(result.proposal);
 
+  assert.equal(result.proposal.proposalMode, "residential");
   assert.equal(result.proposal.pricingMode, "choose_one_option");
   assert.equal(result.proposal.pricingOptions.length, 3);
   assert.equal(result.proposal.pricingOptions[0].name, "Option 1 - broom finish");
@@ -1119,6 +1134,7 @@ Cantilever-style stair upgrade = $8,500`,
   assert.doesNotMatch(JSON.stringify(result.proposal.pricingSections), /Option 2|Option 3/);
   assert.equal(totals.total, 82500);
   assert.equal(result.summary.hideTotalIfAllAccepted, true);
+  assert.equal(result.summary.proposalMode, "residential");
   assert.match(warningText(result), /Residential pricing options detected/);
 });
 

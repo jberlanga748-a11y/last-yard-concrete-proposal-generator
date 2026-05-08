@@ -99,6 +99,19 @@ import {
   normalizeResidentialScheduleOfValues,
 } from "./utils/proposalPacket/residentialPricing.js";
 import {
+  DEFAULT_PROPOSAL_MODE,
+  getBlankProposalModeOptions,
+  getBlankProposalModePath,
+  getPacketModeForProposalMode,
+  getProposalModeFromBlankSlug,
+  getProposalModeLabel,
+  getProposalTypeForMode,
+  inferProposalModeFromProposal,
+  isGcPrimePacketMode,
+  isResidentialProposalMode,
+  normalizeProposalMode,
+} from "./utils/proposals/proposalModes.js";
+import {
   cleanSmartPasteBaseProposal,
   cleanTrueBlankProposalState,
   getSmartPasteFieldChangeSummary,
@@ -719,6 +732,15 @@ export default function App() {
         nextProposal.type = value;
       }
 
+      if (path === "proposalMode") {
+        const proposalMode = normalizeProposalMode(value) || DEFAULT_PROPOSAL_MODE;
+        nextProposal.proposalMode = proposalMode;
+        nextProposal.proposalType = getProposalTypeForMode(proposalMode);
+        nextProposal.type = nextProposal.proposalType;
+        nextProposal.packetMode = getPacketModeForProposalMode(proposalMode);
+        nextProposal.packetBuilder = isGcPrimePacketMode(proposalMode) ? normalizePacketBuilder(nextProposal.packetBuilder) : [];
+      }
+
       if (path === "status") {
         return applyStatusTracking(nextProposal, value);
       }
@@ -802,18 +824,19 @@ export default function App() {
     });
   }
 
-  function createBlankProposal() {
+  function createBlankProposal(mode = DEFAULT_PROPOSAL_MODE) {
     if (!canPerform("createProposal")) {
       return;
     }
 
-    const proposal = createBlankProposalDraft(savedProposals, companySettings);
+    const proposal = createBlankProposalDraft(savedProposals, companySettings, mode);
+    const path = getBlankProposalModePath(proposal.proposalMode);
 
-    if (!navigate("/proposals/new/blank", { proposal })) {
+    if (!navigate(path, { proposal })) {
       return;
     }
 
-    setSaveMessage("Blank Draft started. Add required fields before saving or printing.");
+    setSaveMessage(`${getProposalModeLabel(proposal.proposalMode)} Blank Draft started. Add required fields before saving or printing.`);
   }
 
   function createNewProposalFromTemplate(templateId) {
@@ -959,18 +982,19 @@ export default function App() {
     setSaveMessage(`Applied ${template.name} template.`);
   }
 
-  function startBlankProposalFromTemplatePicker() {
+  function startBlankProposalFromTemplatePicker(mode = DEFAULT_PROPOSAL_MODE) {
     if (!canPerform("editProposal")) {
       return;
     }
 
-    const proposal = createBlankProposalDraft(savedProposals, companySettings);
+    const proposal = createBlankProposalDraft(savedProposals, companySettings, mode);
+    const path = getBlankProposalModePath(proposal.proposalMode);
 
-    if (!navigate("/proposals/new/blank", { proposal, skipUnsavedCheck: true })) {
+    if (!navigate(path, { proposal, skipUnsavedCheck: true })) {
       return;
     }
 
-    setSaveMessage("Blank Draft started. Add required fields before saving or printing.");
+    setSaveMessage(`${getProposalModeLabel(proposal.proposalMode)} Blank Draft started. Add required fields before saving or printing.`);
   }
 
   function refreshProposalTermsFromCompanyDefaults() {
@@ -4053,6 +4077,8 @@ export default function App() {
     const existingFieldChanges = getSmartPasteFieldChangeSummary(proposalDraft, nextProposal);
     const nextSummary = {
       ...summary,
+      proposalMode: inferProposalModeFromProposal(nextProposal),
+      proposalModeLabel: getProposalModeLabel(inferProposalModeFromProposal(nextProposal)),
       applyMode: replaceStarterContent ? "Replace starter content" : "Merge into existing proposal",
       existingFieldChanges,
       parsedCoverValues: summarizeSmartPasteCoverValues(coverValues),
@@ -6850,6 +6876,8 @@ function ProposalActionBar({
 }) {
   const revisedTotal = calculateProposalTotals(proposal).total;
   const previousTotal = toEditableNumber(proposal.previousTotal);
+  const proposalMode = inferProposalModeFromProposal(proposal);
+  const blankModeOptions = getBlankProposalModeOptions();
 
   return (
     <section className="proposal-action-bar no-print">
@@ -6863,6 +6891,7 @@ function ProposalActionBar({
         <div className="revision-summary-line">
           <span>Current total: {formatCurrency(revisedTotal)}</span>
           {previousTotal > 0 ? <span>Previous total: {formatCurrency(previousTotal)}</span> : null}
+          <span>Mode: {getProposalModeLabel(proposalMode)}</span>
           <span>Save status: {saveState.status}</span>
           <span>Last saved: {formatCloudSyncTime(saveState.lastLocalSavedAt)}</span>
         </div>
@@ -6888,9 +6917,19 @@ function ProposalActionBar({
           </button>
         ) : null}
         {showStartBlank && permissions.createProposal ? (
-          <button className="proposal-action-link" type="button" onClick={onStartBlankProposal} title="Clear starter template data for a fresh proposal draft.">
-            Start Blank Proposal
-          </button>
+          <div className="proposal-mode-actions" aria-label="Start blank proposal mode">
+            {blankModeOptions.map((option) => (
+              <button
+                className="proposal-action-link"
+                type="button"
+                key={option.mode}
+                onClick={() => onStartBlankProposal(option.mode)}
+                title={option.description}
+              >
+                {option.shortLabel}
+              </button>
+            ))}
+          </div>
         ) : null}
         <button type="button" title="Create a separate copy with a new proposal ID and draft status." onClick={onDuplicate} disabled={!permissions.createProposal}>
           Duplicate
@@ -7356,7 +7395,8 @@ function ProposalEditor({
   smartPasteResult,
 }) {
   const proposalTotals = calculateProposalTotals(proposal);
-  const isGcPrime = proposal.proposalType === "gc_prime";
+  const proposalMode = inferProposalModeFromProposal(proposal);
+  const isGcPrime = isGcPrimePacketMode(proposalMode);
   const packetRecords = normalizeSubmittedPacketRecords(proposal.submittedPacketRecords);
   const [selectedSendPacketId, setSelectedSendPacketId] = useState(packetRecords[0]?.id || "");
 
@@ -7403,6 +7443,13 @@ function ProposalEditor({
       <ContactSelector contacts={contacts} proposal={proposal} onSelectContact={onSelectContact} />
 
       <EditorSection defaultOpen id="proposal-info-section" title="Proposal Info">
+        <EditorField
+          label="Proposal Mode"
+          path="proposalMode"
+          value={proposalMode}
+          onChange={onChange}
+          options={getBlankProposalModeOptions().map((option) => option.mode)}
+        />
         <EditorField
           label="Proposal Type"
           path="proposalType"
@@ -7581,26 +7628,30 @@ function ProposalEditor({
         />
       </EditorSection>
 
-      <EditorSection id="plan-sheets-section" title="Plan Sheets / Takeoff Pages">
-        <PlanSheetEditor
-          message={assetUploadMessage}
-          planSheets={proposal.planSheets}
-          onAddPlanSheet={onAddPlanSheet}
-          onPlanSheetImageUpload={onPlanSheetImageUpload}
-          onPlanSheetChange={onPlanSheetChange}
-          onRemovePlanSheet={onRemovePlanSheet}
-        />
-      </EditorSection>
+      {isGcPrime || getEnabledPlanSheets(proposal.planSheets).length > 0 ? (
+        <EditorSection id="plan-sheets-section" title="Plan Sheets / Takeoff Pages">
+          <PlanSheetEditor
+            message={assetUploadMessage}
+            planSheets={proposal.planSheets}
+            onAddPlanSheet={onAddPlanSheet}
+            onPlanSheetImageUpload={onPlanSheetImageUpload}
+            onPlanSheetChange={onPlanSheetChange}
+            onRemovePlanSheet={onRemovePlanSheet}
+          />
+        </EditorSection>
+      ) : null}
 
-      <EditorSection id="gc-packet-tables-section" title="GC Packet Tables">
-        <GcPacketTablesEditor
-          gcPacketTables={proposal.gcPacketTables}
-          onAddRow={onAddGcPacketTableRow}
-          onChange={onGcPacketTableChange}
-          onRemoveRow={onRemoveGcPacketTableRow}
-          onRowChange={onGcPacketTableRowChange}
-        />
-      </EditorSection>
+      {isGcPrime || (!isResidentialProposalMode(proposalMode) && hasAnyGcPacketTableData(proposal.gcPacketTables)) ? (
+        <EditorSection id="gc-packet-tables-section" title="GC Packet Tables">
+          <GcPacketTablesEditor
+            gcPacketTables={proposal.gcPacketTables}
+            onAddRow={onAddGcPacketTableRow}
+            onChange={onGcPacketTableChange}
+            onRemoveRow={onRemoveGcPacketTableRow}
+            onRowChange={onGcPacketTableRowChange}
+          />
+        </EditorSection>
+      ) : null}
 
       <EditorSection id="scope-section" title="Scope of Work">
         <ScopeBuilder
@@ -7624,7 +7675,7 @@ function ProposalEditor({
         </EditorSection>
       ) : null}
 
-      {proposal.packetMode === "full_gc_packet" ? (
+      {isGcPrime ? (
         <EditorSection id="packet-builder-section" title="Packet Builder">
           <PacketBuilderEditor
             proposal={proposal}
@@ -7746,6 +7797,8 @@ function ProposalEditor({
 }
 
 function TemplatePicker({ currentTemplateId, draftLabel = "New Draft", onApplyTemplate, onStartBlankProposal, templates }) {
+  const blankModeOptions = getBlankProposalModeOptions();
+
   function useTemplate(event, templateId) {
     event.preventDefault();
     onApplyTemplate(templateId);
@@ -7760,18 +7813,21 @@ function TemplatePicker({ currentTemplateId, draftLabel = "New Draft", onApplyTe
         Choose a template to start faster, or continue editing the current draft.
       </p>
       <p className="starter-data-notice">
-        {draftLabel === "Blank Draft"
+        {draftLabel.includes("Blank Draft")
           ? "Blank Draft: this proposal starts without project, client, scope, pricing, photos, packet records, PDF attachments, send history, or follow-up data."
           : "New Draft: this draft starts with starter template data. Choose a template or edit fields before sending."}
       </p>
       <div className="template-picker-actions">
-        <button
-          type="button"
-          title="Clear starter project, client, scope, and pricing fields for a fresh draft."
-          onClick={onStartBlankProposal}
-        >
-          Start Blank Proposal
-        </button>
+        {blankModeOptions.map((option) => (
+          <button
+            type="button"
+            title={option.description}
+            key={option.mode}
+            onClick={() => onStartBlankProposal(option.mode)}
+          >
+            {option.label}
+          </button>
+        ))}
       </div>
       <div className="template-card-grid">
         {templates.map((template) => (
@@ -7807,6 +7863,10 @@ function TemplatePicker({ currentTemplateId, draftLabel = "New Draft", onApplyTe
 }
 
 function EditorNavigation({ proposal, showTemplatePicker = false }) {
+  const proposalMode = inferProposalModeFromProposal(proposal);
+  const isGcPrime = isGcPrimePacketMode(proposalMode);
+  const isResidential = isResidentialProposalMode(proposalMode);
+
   const links = [
     showTemplatePicker ? ["Proposal Template", "proposal-template-section"] : null,
     ["Smart Paste", "smart-paste-section"],
@@ -7818,11 +7878,11 @@ function EditorNavigation({ proposal, showTemplatePicker = false }) {
     ["Concrete Specs", "concrete-specs-section"],
     ["Pricing", "pricing-section"],
     ["Alternates / Allowances", "pricing-alternates-section"],
-    proposal?.proposalType === "gc_prime" ? ["GC / Prime Notes", "gc-prime-section"] : null,
-    proposal?.packetMode === "full_gc_packet" ? ["GC Packet Tables", "gc-packet-tables-section"] : null,
-    proposal?.packetMode === "full_gc_packet" ? ["Packet Builder", "packet-builder-section"] : null,
-    proposal?.packetMode === "full_gc_packet" ? ["Plan Sheets", "plan-sheets-section"] : null,
-    ["Addenda / RFIs / Legal Terms", "legal-terms-section"],
+    isGcPrime || (!isResidential && proposal?.gcPrime) ? ["GC / Prime Notes", "gc-prime-section"] : null,
+    isGcPrime ? ["GC Packet Tables", "gc-packet-tables-section"] : null,
+    isGcPrime ? ["Packet Builder", "packet-builder-section"] : null,
+    isGcPrime ? ["Plan Sheets", "plan-sheets-section"] : null,
+    isResidential ? ["Residential Terms", "legal-terms-section"] : ["Addenda / RFIs / Legal Terms", "legal-terms-section"],
     ["Submitted Packet History", "submitted-packet-section"],
     ["PDF Archive", "pdf-archive-section"],
     ["Send / Submission", "send-submission-section"],
@@ -7956,6 +8016,7 @@ function SmartPasteSummary({ result, onApply, onClear }) {
       {result.pendingReview ? <p>Review the detected fields below, then apply when ready. Your proposal will not change until you apply.</p> : null}
       <ul>
         <li>{result.fields.length} fields detected</li>
+        {result.proposalModeLabel ? <li>Proposal mode: {result.proposalModeLabel}</li> : null}
         <li>{result.lineItemCount} line items detected</li>
         {result.pricingMode === "choose_one_option" ? (
           <>
@@ -9402,7 +9463,14 @@ function parseRoute(pathname) {
   }
 
   if (segments[1] === "new" && segments[2] === "blank") {
-    return { view: "new", path: "/proposals/new/blank", blank: true };
+    const blankMode = getProposalModeFromBlankSlug(segments[3]);
+
+    return {
+      view: "new",
+      path: segments[3] ? getBlankProposalModePath(blankMode) : "/proposals/new/blank",
+      blank: true,
+      blankMode,
+    };
   }
 
   if (segments[1] === "new") {
@@ -9425,7 +9493,7 @@ function getDraftRouteLabel(route = {}) {
     return "";
   }
 
-  return route.blank ? "Blank Draft" : "New Draft";
+  return route.blank ? `${getProposalModeLabel(route.blankMode)} Blank Draft` : "New Draft";
 }
 
 function isBlankProposalSmartPasteMode(route = {}, proposal = {}) {
@@ -9568,7 +9636,7 @@ function getAuthStatusLabel(authUser, authLoading = false) {
 function getInitialProposalForRoute(route, proposals, companySettings = getDefaultCompanySettings()) {
   if (route.view === "new") {
     if (route.blank) {
-      return createBlankProposalDraft(proposals, companySettings);
+      return createBlankProposalDraft(proposals, companySettings, route.blankMode);
     }
 
     return createNewProposalDraft(proposals, companySettings);
@@ -9588,7 +9656,7 @@ function getInitialProposalForRoute(route, proposals, companySettings = getDefau
 function getProposalDraftForRoute(route, proposals, companySettings = getDefaultCompanySettings(), proposalOverride = null) {
   const draft = proposalOverride ? createEditableProposal(proposalOverride) : getInitialProposalForRoute(route, proposals, companySettings);
 
-  return route.blank ? cleanTrueBlankProposalState(draft) : draft;
+  return route.blank ? applyProposalModeToBlankProposal(cleanTrueBlankProposalState(draft), route.blankMode || draft.proposalMode) : draft;
 }
 
 function loadSavedProposals(companySettings = getDefaultCompanySettings()) {
@@ -10238,6 +10306,10 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
   return createEditableProposal({
     ...applyCompanySettingsToProposal(seedProposal, companySettings, today),
     id: createProposalId(),
+    proposalMode: DEFAULT_PROPOSAL_MODE,
+    proposalType: getProposalTypeForMode(DEFAULT_PROPOSAL_MODE),
+    type: getProposalTypeForMode(DEFAULT_PROPOSAL_MODE),
+    packetMode: getPacketModeForProposalMode(DEFAULT_PROPOSAL_MODE),
     contactId: "",
     proposalNumber: getNextProposalNumber(existingProposals, today),
     status: "draft",
@@ -10251,7 +10323,7 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
     ...getDefaultTrackingFields(),
     proposalDate: formatInputDate(today),
     validUntil: formatInputDate(validUntil),
-    packetBuilder: normalizePacketBuilder([]),
+    packetBuilder: [],
     projectPhotos: normalizeProjectPhotos([]),
     planSheets: normalizePlanSheets([]),
     gcPrime: getDefaultGcPrime(),
@@ -10264,12 +10336,17 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
   });
 }
 
-function createBlankProposalDraft(existingProposals, companySettings = getDefaultCompanySettings()) {
+function createBlankProposalDraft(existingProposals, companySettings = getDefaultCompanySettings(), proposalMode = DEFAULT_PROPOSAL_MODE) {
+  const normalizedMode = normalizeProposalMode(proposalMode) || DEFAULT_PROPOSAL_MODE;
   const baseProposal = cleanTrueBlankProposalState(createNewProposalDraft(existingProposals, companySettings));
   const blankProposal = createEditableProposal({
     ...baseProposal,
+    proposalMode: normalizedMode,
+    proposalType: getProposalTypeForMode(normalizedMode),
+    type: getProposalTypeForMode(normalizedMode),
+    packetMode: getPacketModeForProposalMode(normalizedMode),
     templateId: "blank",
-    templateName: "Blank Proposal",
+    templateName: `${getProposalModeLabel(normalizedMode)} Blank Proposal`,
     contactId: "",
     client: {
       companyName: "",
@@ -10303,7 +10380,7 @@ function createBlankProposalDraft(existingProposals, companySettings = getDefaul
     assumptions: [],
     projectPhotos: normalizeProjectPhotos([]),
     planSheets: normalizePlanSheets([]),
-    packetBuilder: normalizePacketBuilder([]),
+    packetBuilder: isGcPrimePacketMode(normalizedMode) ? normalizePacketBuilder([]) : [],
     gcPrime: getDefaultGcPrime(),
     gcPacketTables: normalizeGcPacketTables({}),
     submittedPacketRecords: [],
@@ -10311,7 +10388,44 @@ function createBlankProposalDraft(existingProposals, companySettings = getDefaul
     proposalNotes: "",
   });
 
-  return cleanTrueBlankProposalState(blankProposal);
+  return applyProposalModeToBlankProposal(cleanTrueBlankProposalState(blankProposal), normalizedMode);
+}
+
+function applyProposalModeToBlankProposal(proposal = {}, mode = DEFAULT_PROPOSAL_MODE) {
+  const normalizedMode = normalizeProposalMode(mode) || DEFAULT_PROPOSAL_MODE;
+  const proposalType = getProposalTypeForMode(normalizedMode);
+  const packetMode = getPacketModeForProposalMode(normalizedMode);
+  const nextProposal = {
+    ...proposal,
+    proposalMode: normalizedMode,
+    proposalType,
+    type: proposalType,
+    packetMode,
+    templateId: "blank",
+    templateName: `${getProposalModeLabel(normalizedMode)} Blank Proposal`,
+    pricingMode: isResidentialProposalMode(normalizedMode) ? proposal.pricingMode || "" : proposal.pricingMode || "",
+    pricingOptions: isResidentialProposalMode(normalizedMode) ? proposal.pricingOptions || [] : [],
+    optionalAddOns: isResidentialProposalMode(normalizedMode) ? proposal.optionalAddOns || [] : [],
+    packetBuilder: isGcPrimePacketMode(normalizedMode) ? normalizePacketBuilder(proposal.packetBuilder) : [],
+  };
+
+  if (!isGcPrimePacketMode(normalizedMode)) {
+    return createEditableProposal({
+      ...nextProposal,
+      gcPacketTables: normalizeGcPacketTables({}),
+      planSheets: [],
+      gcPrime: getDefaultGcPrime(),
+    });
+  }
+
+  return createEditableProposal({
+    ...nextProposal,
+    gcPacketTables: normalizeGcPacketTables(nextProposal.gcPacketTables),
+    gcPrime: {
+      ...getDefaultGcPrime(),
+      ...(nextProposal.gcPrime || {}),
+    },
+  });
 }
 
 function createNewGcPacketDraft(existingProposals, companySettings = getDefaultCompanySettings()) {
@@ -10320,6 +10434,7 @@ function createNewGcPacketDraft(existingProposals, companySettings = getDefaultC
 
   return createEditableProposal(applyCompanyLegalDefaultsToProposal({
     ...baseProposal,
+    proposalMode: "gc_prime_packet",
     proposalType: "gc_prime",
     type: "gc_prime",
     project: {
@@ -10915,6 +11030,7 @@ function createDemoGcPacketProposal(companySettings = getDefaultCompanySettings(
     metadata: { ...demoMetadata, label: "Sample GC packet proposal" },
     proposalNumber: "LYC-DEMO-0001",
     status: "draft",
+    proposalMode: "gc_prime_packet",
     proposalType: "gc_prime",
     type: "gc_prime",
     packetMode: "full_gc_packet",
@@ -11050,6 +11166,7 @@ function createDemoSimpleProposal(companySettings = getDefaultCompanySettings(),
     metadata: { ...demoMetadata, label: "Sample residential proposal" },
     proposalNumber: "LYC-DEMO-0002",
     status: "draft",
+    proposalMode: "residential",
     proposalType: "residential",
     type: "residential",
     packetMode: "summary",
@@ -11230,6 +11347,10 @@ function forceApplySmartPasteCoverFields(proposal = {}, parsedProposal = {}, par
 
 function getSmartPasteActiveDraftFields(proposal = {}, values = {}) {
   const fields = [];
+
+  if (proposal.proposalMode) {
+    fields.push("Proposal Mode");
+  }
 
   if (hasTextValue(values.projectName) && proposal.project?.name === values.projectName) {
     fields.push("Project Name");
@@ -11621,7 +11742,7 @@ function getProposalTimestamp(proposal = {}) {
 }
 
 function getPacketModeLabel(proposal = {}) {
-  if (proposal.packetMode === "full_gc_packet") {
+  if (isGcPrimePacketMode(inferProposalModeFromProposal(proposal)) || proposal.packetMode === "full_gc_packet") {
     return "Full GC Packet";
   }
 
@@ -11629,6 +11750,10 @@ function getPacketModeLabel(proposal = {}) {
 }
 
 function hasFullPacketContent(proposal = {}) {
+  if (isResidentialProposalMode(inferProposalModeFromProposal(proposal))) {
+    return false;
+  }
+
   const gcPacketTables = normalizeGcPacketTables(proposal.gcPacketTables);
   const hasStructuredTables = Object.values(gcPacketTables).some((table) => table.enabled);
   const hasPlanSheets = getEnabledPlanSheets(proposal.planSheets).length > 0;
@@ -11740,7 +11865,7 @@ function normalizeCompanySettings(settings = {}) {
 
 function buildDefaultTermsFromCompanySettings(settings = {}, proposal = {}) {
   const normalizedSettings = normalizeCompanySettings(settings);
-  const isGcPrime = proposal.proposalType === "gc_prime" || proposal.type === "gc_prime" || proposal.packetMode === "full_gc_packet";
+  const isGcPrime = isGcPrimePacketMode(inferProposalModeFromProposal(proposal)) || proposal.packetMode === "full_gc_packet";
   const siteReadiness = normalizedSettings.defaultSiteReadinessLanguage;
   const weatherDelay = normalizedSettings.defaultWeatherDelayLanguage;
   const terms = {
@@ -11779,8 +11904,7 @@ function applyCompanyLegalDefaultsToProposal(sourceProposal, settings = getDefau
   const normalizedSettings = normalizeCompanySettings(settings);
   const nextProposal = cloneObject(sourceProposal);
   const defaultTerms = buildDefaultTermsFromCompanySettings(normalizedSettings, nextProposal);
-  const isGcPrime =
-    nextProposal.proposalType === "gc_prime" || nextProposal.type === "gc_prime" || nextProposal.packetMode === "full_gc_packet";
+  const isGcPrime = isGcPrimePacketMode(inferProposalModeFromProposal(nextProposal)) || nextProposal.packetMode === "full_gc_packet";
   const updatedProposal = {
     ...nextProposal,
     exclusions: parseMultilineList(normalizedSettings.defaultExclusions),
@@ -12304,7 +12428,10 @@ function createEditableProposal(seedProposal) {
   const project = proposal.project || {};
   const gcPrime = proposal.gcPrime || {};
   const proposedSchedule = project.proposedSchedule || {};
-  const proposalType = proposal.proposalType ?? proposal.type ?? "commercial";
+  const explicitProposalMode = normalizeProposalMode(proposal.proposalMode || project.proposalMode);
+  const proposalMode = inferProposalModeFromProposal(proposal);
+  const proposalType = explicitProposalMode ? getProposalTypeForMode(proposalMode) : proposal.proposalType ?? proposal.type ?? getProposalTypeForMode(proposalMode);
+  const packetMode = explicitProposalMode ? getPacketModeForProposalMode(proposalMode) : proposal.packetMode || getPacketModeForProposalMode(proposalMode);
   const revisionNumber = normalizeRevisionNumber(proposal.revisionNumber);
   const revisionLabel = proposal.revisionLabel || formatRevisionLabel(revisionNumber);
   const hasProposalTerms = Object.prototype.hasOwnProperty.call(proposal, "terms");
@@ -12314,10 +12441,11 @@ function createEditableProposal(seedProposal) {
     id: proposal.id || createProposalId(),
     contactId: proposal.contactId || "",
     status: proposal.status || "draft",
+    proposalMode,
     proposalType,
     type: proposalType,
-    packetMode: proposal.packetMode || (proposalType === "gc_prime" ? "full_gc_packet" : "summary"),
-    packetBuilder: normalizePacketBuilder(proposal.packetBuilder),
+    packetMode,
+    packetBuilder: isGcPrimePacketMode(proposalMode) || packetMode === "full_gc_packet" ? normalizePacketBuilder(proposal.packetBuilder) : [],
     revisionNumber,
     revisionLabel,
     revisionDate: proposal.revisionDate || proposal.proposalDate || "",
@@ -12391,6 +12519,7 @@ function createEditableProposal(seedProposal) {
     },
     project: {
       ...project,
+      proposalMode: project.proposalMode || proposalMode,
       address: project.address ?? project.location ?? "",
       category: project.category ?? "Commercial flatwork",
       estimatedDuration: project.estimatedDuration ?? proposedSchedule.display ?? "",
@@ -12857,7 +12986,7 @@ function createPacketRecordId() {
 }
 
 function getSubmittedPacketIncludedSections(proposal = {}, counts = {}) {
-  if (proposal.packetMode === "full_gc_packet") {
+  if (isGcPrimePacketMode(inferProposalModeFromProposal(proposal)) || proposal.packetMode === "full_gc_packet") {
     return getSubmittedPacketRenderSummary(proposal).includedSections;
   }
 
@@ -12883,7 +13012,7 @@ function getSubmittedPacketIncludedSections(proposal = {}, counts = {}) {
 }
 
 function getSubmittedPacketRenderSummary(proposal = {}) {
-  if (proposal.packetMode === "full_gc_packet") {
+  if (isGcPrimePacketMode(inferProposalModeFromProposal(proposal)) || proposal.packetMode === "full_gc_packet") {
     const orderedSections = getOrderedFullGcPacketSections(proposal);
 
     return {
@@ -12900,9 +13029,12 @@ function getSubmittedPacketRenderSummary(proposal = {}) {
     };
   }
 
+  const proposalMode = inferProposalModeFromProposal(proposal);
   const appendixPlan = buildAppendixPlan(proposal);
-  const structuredPacketPages = buildStructuredPacketPages(proposal);
-  const enabledPlanSheets = getEnabledPlanSheets(proposal.planSheets);
+  const structuredPacketPages = isResidentialProposalMode(proposalMode) ? [] : buildStructuredPacketPages(proposal);
+  const enabledPlanSheets = isResidentialProposalMode(proposalMode)
+    ? getEnabledPlanSheets(proposal.planSheets).filter(hasResidentialPlanSheetSummaryData)
+    : getEnabledPlanSheets(proposal.planSheets);
   const appendixPageCount = appendixPlan.pages.length;
   const planSheetCount = enabledPlanSheets.length;
   const structuredPageCount = structuredPacketPages.length;
@@ -12928,6 +13060,18 @@ function getSubmittedPacketRenderSummary(proposal = {}) {
 
 function countPacketTextLines(value = "") {
   return splitAppendixText(value).length;
+}
+
+function hasResidentialPlanSheetSummaryData(sheet = {}) {
+  return Boolean(
+    sheet.imageSrc ||
+      sheet.imageUrl ||
+      sheet.storagePath ||
+      sheet.publicUrl ||
+      hasPrintableText(sheet.calculationTitle) ||
+      hasPrintableText(sheet.calculationNotes) ||
+      hasPrintableText(sheet.clarificationNotes),
+  );
 }
 
 function getPacketRecordTimestamp(record = {}) {
@@ -13048,6 +13192,20 @@ function hasGcPacketRows(table = {}) {
       Object.entries(row).some(([key, value]) => key !== "id" && hasPrintableText(value)),
     )
   );
+}
+
+function hasAnyGcPacketTableData(gcPacketTables = {}) {
+  const tables = normalizeGcPacketTables(gcPacketTables);
+
+  return Object.values(tables).some((table) => {
+    if (hasGcPacketRows(table)) {
+      return true;
+    }
+
+    return ["presentationNotes", "proposalBasis", "contractScopeControl", "acceptanceSummary", "gcPrimeReviewer"].some((field) =>
+      hasPrintableText(table[field]),
+    );
+  });
 }
 
 function hasProposalNotesData(table = {}) {

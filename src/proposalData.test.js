@@ -264,6 +264,7 @@ test("validation warns on draft client/contact placeholders without blocking dra
 test("GC / Prime Full Packet template sets GC proposal type and full packet mode", () => {
   const proposal = applyTemplateToProposal("gc_prime_full_packet", proposalFixture());
 
+  assert.equal(proposal.proposalMode, "gc_prime_packet");
   assert.equal(proposal.proposalType, "gc_prime");
   assert.equal(proposal.type, "gc_prime");
   assert.equal(proposal.packetMode, "full_gc_packet");
@@ -278,6 +279,7 @@ test("GC / Prime Full Packet template sets GC proposal type and full packet mode
 test("Driveway template sets residential summary proposal defaults", () => {
   const proposal = applyTemplateToProposal("driveway", proposalFixture());
 
+  assert.equal(proposal.proposalMode, "residential");
   assert.equal(proposal.proposalType, "residential");
   assert.equal(proposal.type, "residential");
   assert.equal(proposal.packetMode, "summary");

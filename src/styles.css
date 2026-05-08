@@ -494,6 +494,18 @@ h4 {
   flex-wrap: wrap;
 }
 
+.proposal-mode-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.proposal-mode-actions .proposal-action-link {
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
 .proposal-list-panel,
 .company-settings-panel,
 .proposal-action-bar,

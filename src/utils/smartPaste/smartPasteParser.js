@@ -8,6 +8,15 @@ import {
 } from "./smartPasteCoverFields.js";
 import { isSmartPasteJsonImportNotes, normalizeSmartPasteNotes } from "./smartPasteNormalizer.js";
 import { normalizeResidentialScheduleOfValues } from "../proposalPacket/residentialPricing.js";
+import {
+  DEFAULT_PROPOSAL_MODE,
+  getPacketModeForProposalMode,
+  getProposalModeLabel,
+  getProposalTypeForMode,
+  isGcPrimePacketMode,
+  isResidentialProposalMode,
+  normalizeProposalMode,
+} from "../proposals/proposalModes.js";
 
 const PLAN_SHEET_PAGE_TYPES = ["plan_takeoff_sheet", "detail_notes", "shade_footing_estimate", "general_backup"];
 
@@ -186,6 +195,8 @@ function createSmartPasteSummary(parsedNotes = {}, explicitLineItemCount) {
     fields: parsedNotes.fields || [],
     lineItemCount,
     pricingSectionCount: parsedNotes.pricingSectionCount || 0,
+    proposalMode: values.proposalMode || "",
+    proposalModeLabel: values.proposalMode ? getProposalModeLabel(values.proposalMode) : "",
     pricingMode: values.pricingMode || "",
     pricingOptions: values.pricingOptions || [],
     optionalAddOns: values.optionalAddOns || [],
@@ -214,6 +225,10 @@ function createSmartPasteSummary(parsedNotes = {}, explicitLineItemCount) {
 
 function getSmartPasteApplyTargets(values = {}) {
   const targets = [];
+
+  if (values.proposalMode) {
+    targets.push("Proposal Mode");
+  }
 
   if ([values.projectName, values.projectLocation, values.clientCompany, values.contactName, values.clientEmail, values.clientPhone].some(hasTextValue)) {
     targets.push("Project Name", "Project Location", "Client / Contact");
@@ -989,6 +1004,15 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
   const pricing = normalized.pricing || {};
   const scope = normalized.scope || {};
   const packet = normalized.packet || {};
+  const proposalMode =
+    getProposalModeFromParsedProposalType(values.proposalType) ||
+    normalizeProposalMode(normalized.proposalMode || cover.proposalMode) ||
+    DEFAULT_PROPOSAL_MODE;
+
+  values.proposalMode = proposalMode;
+  values.proposalType = getProposalTypeForMode(proposalMode);
+  values.packetMode = getPacketModeForProposalMode(proposalMode);
+  fields.push("proposal mode");
 
   setNormalizedTextValue(values, fields, "projectName", cover.projectName, "project name");
   setNormalizedTextValue(values, fields, "projectLocation", cover.projectLocation, "project location");
@@ -1478,6 +1502,12 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     values.packetSectionsPrepared || (values.subcontractorPacketDetected ? getSubcontractorPacketBuilder().filter((section) => section.included).length : 0);
   parsedNotes.pricingRowsReplaced = values.gcPacketTables?.pricingSummary?.rows?.length || 0;
 
+  const proposalMode = normalizeProposalMode(values.proposalMode || nextProposal.proposalMode) || DEFAULT_PROPOSAL_MODE;
+  nextProposal.proposalMode = proposalMode;
+  nextProposal.proposalType = getProposalTypeForMode(proposalMode);
+  nextProposal.type = nextProposal.proposalType;
+  nextProposal.packetMode = getPacketModeForProposalMode(proposalMode);
+
   if (values.projectName) {
     nextProposal.project.name = values.projectName;
   }
@@ -1559,14 +1589,15 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     );
   }
 
-  if (values.proposalType) {
+  if (values.proposalType && !values.proposalMode) {
     nextProposal.proposalType = values.proposalType;
     nextProposal.type = values.proposalType;
   }
 
-  if (values.packetPrintOrder && values.packetSectionsPrepared > 0) {
-    nextProposal.proposalType = nextProposal.proposalType || "gc_prime";
-    nextProposal.type = nextProposal.type || nextProposal.proposalType;
+  if (!isResidentialProposalMode(proposalMode) && values.packetPrintOrder && values.packetSectionsPrepared > 0) {
+    nextProposal.proposalMode = isGcPrimePacketMode(proposalMode) ? proposalMode : "gc_prime_packet";
+    nextProposal.proposalType = "gc_prime";
+    nextProposal.type = "gc_prime";
     nextProposal.packetMode = "full_gc_packet";
   }
 
@@ -1721,11 +1752,12 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     };
   }
 
-  if (values.subcontractorPacketDetected) {
-    nextProposal.proposalType = "gc_prime";
-    nextProposal.type = "gc_prime";
-    nextProposal.packetMode = "full_gc_packet";
-    nextProposal.packetBuilder = getSubcontractorPacketBuilder();
+  if (values.subcontractorPacketDetected && !isResidentialProposalMode(proposalMode)) {
+    nextProposal.proposalMode = isGcPrimePacketMode(proposalMode) ? "gc_prime_packet" : "commercial_subcontractor";
+    nextProposal.proposalType = getProposalTypeForMode(nextProposal.proposalMode);
+    nextProposal.type = nextProposal.proposalType;
+    nextProposal.packetMode = getPacketModeForProposalMode(nextProposal.proposalMode);
+    nextProposal.packetBuilder = isGcPrimePacketMode(nextProposal.proposalMode) ? getSubcontractorPacketBuilder() : [];
     nextProposal.terms = {
       ...nextProposal.terms,
       gcScopeControl:
@@ -1773,14 +1805,15 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
     nextProposal.gcPacketTables = mergeGcPacketTables(nextProposal.gcPacketTables, values.gcPacketTables);
   }
 
-  if (values.packetBuilder) {
+  if (values.packetBuilder && !isResidentialProposalMode(proposalMode)) {
+    nextProposal.proposalMode = "gc_prime_packet";
     nextProposal.packetBuilder = values.packetBuilder;
     nextProposal.proposalType = "gc_prime";
     nextProposal.type = "gc_prime";
     nextProposal.packetMode = "full_gc_packet";
   }
 
-  if (values.subcontractorPacketDetected) {
+  if (values.subcontractorPacketDetected && !isResidentialProposalMode(proposalMode)) {
     const gcPacketTables = normalizeGcPacketTables(nextProposal.gcPacketTables);
     nextProposal.gcPacketTables = {
       ...gcPacketTables,
@@ -4215,6 +4248,22 @@ function normalizeSmartProposalType(value) {
 
   if (textValue.includes("commercial")) {
     return "commercial";
+  }
+
+  return "";
+}
+
+function getProposalModeFromParsedProposalType(proposalType = "") {
+  if (proposalType === "gc_prime") {
+    return "gc_prime_packet";
+  }
+
+  if (proposalType === "residential") {
+    return "residential";
+  }
+
+  if (proposalType === "commercial" || proposalType === "public_municipal") {
+    return "commercial_subcontractor";
   }
 
   return "";

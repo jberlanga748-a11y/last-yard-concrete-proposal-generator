@@ -17,6 +17,11 @@ import {
   getResidentialPricingOptions,
   hasResidentialChooseOnePricing,
 } from "../../utils/proposalPacket/residentialPricing.js";
+import {
+  inferProposalModeFromProposal,
+  isGcPrimePacketMode,
+  isResidentialProposalMode,
+} from "../../utils/proposals/proposalModes.js";
 
 const logoSrc = "/assets/last-yard/last-yard-concrete-logo.png";
 const legacyLogoSrc = "/assets/last-yard-logo.jpg";
@@ -141,7 +146,9 @@ function ProposalPacketContent({ proposal }) {
   const packetProposal = cleanProposalForPrint(proposal);
   const company = packetProposal.company;
   const companyCredentials = company.credentials.join(" | ");
-  const isGcPrime = packetProposal.proposalType === "gc_prime";
+  const proposalMode = inferProposalModeFromProposal(packetProposal);
+  const isResidentialMode = isResidentialProposalMode(proposalMode);
+  const isGcPrime = isGcPrimePacketMode(proposalMode);
   const appendixPlan = buildAppendixPlan(packetProposal);
   const gcPrimeRows = isGcPrime ? buildGcPrimeRows(appendixPlan.mainGcPrime) : [];
   const scopeSplitIndex = Math.ceil(appendixPlan.mainScopeSections.length / 2);
@@ -168,9 +175,9 @@ function ProposalPacketContent({ proposal }) {
   const termsCopy = buildTermsCopy(packetProposal.terms);
   const visiblePricingSections = appendixPlan.mainPricingSections;
   const hasChooseOnePricing = hasResidentialChooseOnePricing(packetProposal);
-  const structuredPacketPages = buildStructuredPacketPages(packetProposal);
+  const structuredPacketPages = isResidentialMode ? [] : buildStructuredPacketPages(packetProposal);
   const residentialOptionBreakdownPages = buildResidentialOptionBreakdownPages(packetProposal);
-  const planSheetPages = getEnabledPlanSheets(packetProposal.planSheets);
+  const planSheetPages = isResidentialMode ? getEnabledPlanSheets(packetProposal.planSheets).filter(hasResidentialPlanSheetPrintData) : getEnabledPlanSheets(packetProposal.planSheets);
   const hasExtendedPacketPages =
     structuredPacketPages.length > 0 || residentialOptionBreakdownPages.length > 0 || appendixPlan.pages.length > 0 || planSheetPages.length > 0;
   const showCoverGcPrimeNotes = gcPrimeRows.length > 0 && !hasExtendedPacketPages;
@@ -486,6 +493,18 @@ function chunkResidentialOptionBreakdowns(items, chunkSize) {
   }
 
   return chunks;
+}
+
+function hasResidentialPlanSheetPrintData(sheet = {}) {
+  return Boolean(
+    sheet.imageSrc ||
+      sheet.imageUrl ||
+      sheet.storagePath ||
+      sheet.publicUrl ||
+      hasPrintableText(sheet.calculationTitle) ||
+      hasPrintableText(sheet.calculationNotes) ||
+      hasPrintableText(sheet.clarificationNotes),
+  );
 }
 
 function StructuredText({ text }) {

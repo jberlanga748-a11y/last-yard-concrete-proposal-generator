@@ -110,7 +110,8 @@ test("applies mocked NW Dunbar AI extraction with optional support separate from
   assert.equal(result.proposal.pricingSections.length, 2);
   assert.equal(totals.total, 695000);
   assert.equal(totals.totalIfAllAlternatesAccepted, 1130000);
-  assert.equal(result.proposal.packetMode, "full_gc_packet");
+  assert.equal(result.proposal.proposalMode, "commercial_subcontractor");
+  assert.equal(result.proposal.packetMode, "summary");
 });
 
 test("summarizes AI review results without applying changes", () => {

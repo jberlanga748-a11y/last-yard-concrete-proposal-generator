@@ -4,10 +4,19 @@ import {
   normalizeResidentialPricingOptions,
   normalizeResidentialScheduleOfValues,
 } from "../proposalPacket/residentialPricing.js";
+import {
+  getPacketModeForProposalMode,
+  getProposalTypeForMode,
+  inferProposalModeFromSmartPaste,
+  normalizeProposalMode,
+} from "../proposals/proposalModes.js";
 
 export const SMART_PASTE_JSON_MARKER = "LAST_YARD_SMART_PASTE_JSON_V1";
 
 const EMPTY_NORMALIZED_SMART_PASTE = {
+  proposalMode: "",
+  proposalType: "",
+  packetMode: "",
   cover: {
     projectName: "",
     projectLocation: "",
@@ -24,6 +33,7 @@ const EMPTY_NORMALIZED_SMART_PASTE = {
     duration: "",
     scheduleRestrictions: "",
     specialRequirements: "",
+    proposalMode: "",
   },
   pricing: {
     pricingMode: "",
@@ -93,6 +103,7 @@ const SIMPLE_COVER_LABELS = {
   "project location": "projectLocation",
   "project name": "projectName",
   "proposal project": "projectName",
+  "proposal mode": "proposalMode",
   "proposal status": "proposalStatus",
   "schedule restrictions": "scheduleRestrictions",
   "site": "projectLocation",
@@ -197,6 +208,7 @@ export function normalizeSmartPasteNotes(notes = "") {
 
   const normalized = createEmptyNormalizedSmartPaste();
   normalized.mode = "rough_notes";
+  normalized.rawText = String(notes || "");
   const lines = splitSmartPasteLines(notes);
 
   parseCover(lines, normalized);
@@ -220,6 +232,7 @@ export function normalizeSmartPasteNotes(notes = "") {
 function normalizeSmartPasteJsonImport(notes = "") {
   const normalized = createEmptyNormalizedSmartPaste();
   normalized.mode = "json_import";
+  normalized.rawText = String(notes || "");
   normalized.jsonImport = true;
   normalized.confidence = 1;
 
@@ -245,6 +258,15 @@ function normalizeSmartPasteJsonImport(notes = "") {
   const pricing = getObject(source.pricing, "pricing", normalized);
   const packet = getObject(source.packet, "packet", normalized);
   const scope = getObject(source.scope, "scope", normalized);
+  const explicitProposalMode = normalizeProposalMode(source.proposalMode || project.proposalMode || source.cover?.proposalMode);
+
+  if (explicitProposalMode) {
+    normalized.proposalMode = explicitProposalMode;
+    normalized.proposalType = getProposalTypeForMode(explicitProposalMode);
+    normalized.packetMode = getPacketModeForProposalMode(explicitProposalMode);
+    normalized.cover.proposalMode = explicitProposalMode;
+    capture(normalized, "proposalMode");
+  }
 
   normalizeJsonCover(project, source.cover, normalized);
   normalizeJsonPricing(pricing, source, normalized);
@@ -275,6 +297,7 @@ function normalizeJsonCover(project = {}, coverSource = {}, normalized) {
   setCoverValue(cover, "phone", firstJsonText(source.phone, source.contactPhone), "phone");
   setCoverValue(cover, "email", firstJsonText(source.email, source.contactEmail), "email");
   setCoverValue(cover, "proposalStatus", firstJsonText(source.proposalStatus, source.status), "proposal status");
+  setCoverValue(cover, "proposalMode", normalizeProposalMode(source.proposalMode), "proposal mode");
   setCoverValue(cover, "bidPackageNumber", firstJsonText(source.bidPackageNumber), "bid package number");
   setCoverValue(cover, "specSections", firstJsonText(source.specSections, source.specSection), "spec section");
   setCoverValue(cover, "drawingReferences", firstJsonText(source.drawingReferences), "drawing references");
@@ -1690,6 +1713,11 @@ function parseFinalPacketPrintOrder(lines, normalized) {
 
 function finalizeNormalizedSmartPaste(normalized) {
   normalizeChooseOnePricing(normalized.pricing);
+  const proposalMode = normalizeProposalMode(normalized.proposalMode || normalized.cover?.proposalMode) || inferProposalModeFromSmartPaste(normalized, normalized.rawText);
+  normalized.proposalMode = proposalMode;
+  normalized.proposalType = getProposalTypeForMode(proposalMode);
+  normalized.packetMode = getPacketModeForProposalMode(proposalMode);
+  normalized.cover.proposalMode = proposalMode;
   normalized.pricing.lineItems = dedupeRows(normalized.pricing.lineItems, (row) => row.description);
   normalized.pricing.pricingOptions = dedupeRows(normalized.pricing.pricingOptions, (row) => `${row.name} ${row.price}`);
   normalized.pricing.optionalAddOns = dedupeRows(normalized.pricing.optionalAddOns, (row) => `${row.name} ${row.amount}`);
