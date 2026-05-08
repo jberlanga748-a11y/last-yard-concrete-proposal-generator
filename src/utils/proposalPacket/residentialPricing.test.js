@@ -6,6 +6,7 @@ import {
   RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE,
   buildResidentialPaymentTermsCopy,
   buildResidentialOptionBreakdowns,
+  buildResidentialOptionBreakdownPrintPages,
   buildResidentialOptionalAddOnPrintPages,
   buildResidentialPricingOptionPrintPages,
   buildResidentialPricingOptionRows,
@@ -230,6 +231,45 @@ test("builds option-specific SOV breakdowns for every main option", () => {
   assert.ok(breakdowns.every((option) => option.totalMatchesOption));
   assert.match(JSON.stringify(breakdowns), /Stamped Finish Labor/);
   assert.match(JSON.stringify(breakdowns), /Sand Finish Labor/);
+});
+
+test("residential option SOV print pagination keeps three standard five-row options on one page", () => {
+  const pages = buildResidentialOptionBreakdownPrintPages(residentialProposal);
+
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0].title, "Schedule of Values - Pricing Options");
+  assert.deepEqual(
+    pages[0].options.map((option) => option.name),
+    [
+      "Option 1 - Full Scope With Broom Finish",
+      "Option 2 - Full Scope With Stamped Finish",
+      "Option 3 - Full Scope With Sand Finish",
+    ],
+  );
+  assert.deepEqual(
+    pages[0].options.map((option) => formatResidentialCurrency(option.rowsTotal)),
+    ["$82,500", "$97,500", "$90,000"],
+  );
+});
+
+test("residential option SOV print pagination splits longer option data when needed", () => {
+  const longRows = Array.from({ length: 8 }, (_, index) => ({
+    item: `Detailed scope row ${index + 1}`,
+    description: "Long residential option breakdown description with enough detail to require clean pagination instead of page clipping.",
+    amount: 1000,
+  }));
+  const longProposal = {
+    ...residentialProposal,
+    pricingOptions: residentialProposal.pricingOptions.map((option, index) => ({
+      ...option,
+      price: 8000,
+      scheduleOfValues: longRows.map((row) => ({ ...row, amount: 1000 + index })),
+    })),
+  };
+  const pages = buildResidentialOptionBreakdownPrintPages(longProposal);
+
+  assert.ok(pages.length > 1);
+  assert.ok(pages.every((page) => page.options.length > 0));
 });
 
 test("keeps optional add-ons separate from mutually exclusive options", () => {

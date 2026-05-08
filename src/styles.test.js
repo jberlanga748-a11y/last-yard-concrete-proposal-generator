@@ -74,3 +74,14 @@ test("proposal PDF style classes control readability and pricing emphasis", () =
   assert.match(boldPricing, /--packet-pricing-weight:\s*950/);
   assert.match(residentialFriendly, /background:\s*#fffaf0/);
 });
+
+test("residential option SOV tables use compact readable spacing without page breaks between standard options", () => {
+  const breakdowns = getCssBlock(".residential-option-breakdowns");
+  const heading = getCssBlock(".residential-option-breakdown-heading");
+  const sovCell = getCssBlock(".residential-option-sov-table td");
+
+  assert.match(breakdowns, /gap:\s*10px/);
+  assert.match(heading, /padding:\s*6px\s*9px/);
+  assert.match(sovCell, /padding:\s*5px\s*7px/);
+  assert.doesNotMatch(breakdowns, /break-before|page-break-before/);
+});

@@ -11,8 +11,8 @@ import {
 import {
   buildResidentialPaymentTermsCopy,
   buildResidentialOptionalAddOnPrintPages,
+  buildResidentialOptionBreakdownPrintPages,
   buildResidentialPricingOptionPrintPages,
-  buildResidentialOptionBreakdowns,
   buildResidentialPricingOptionRows,
   formatResidentialCurrency,
   formatResidentialMoneyText,
@@ -555,17 +555,7 @@ function StructuredNotesPage({ page }) {
 }
 
 function buildResidentialOptionBreakdownPages(proposal = {}) {
-  const breakdowns = buildResidentialOptionBreakdowns(proposal);
-
-  if (breakdowns.length === 0) {
-    return [];
-  }
-
-  return chunkResidentialOptionBreakdowns(breakdowns, 2).map((options, index, chunks) => ({
-    key: `residential-option-breakdowns-${index}`,
-    title: chunks.length > 1 ? `Schedule of Values - Pricing Options (${index + 1})` : "Schedule of Values - Pricing Options",
-    options,
-  }));
+  return buildResidentialOptionBreakdownPrintPages(proposal);
 }
 
 function ResidentialOptionBreakdownsPage({ company, page, pageNumber, projectName }) {
@@ -613,7 +603,7 @@ function ResidentialOptionBreakdownsPage({ company, page, pageNumber, projectNam
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan="2">{option.totalMatchesOption ? "Option Total" : "Breakdown Total - Review"}</td>
+                    <td colSpan="2">{option.footerLabel || (option.totalMatchesOption ? "Option Total" : "Breakdown Total - Review")}</td>
                     <td>{formatResidentialCurrency(option.rowsTotal)}</td>
                   </tr>
                 </tfoot>
@@ -791,16 +781,6 @@ function ResidentialPacketFooter({ company, pageNumber, projectName }) {
       <span>Page {pageNumber}</span>
     </footer>
   );
-}
-
-function chunkResidentialOptionBreakdowns(items, chunkSize) {
-  const chunks = [];
-
-  for (let index = 0; index < items.length; index += chunkSize) {
-    chunks.push(items.slice(index, index + chunkSize));
-  }
-
-  return chunks;
 }
 
 function getProposalToneLabels(pdfStyle = {}) {

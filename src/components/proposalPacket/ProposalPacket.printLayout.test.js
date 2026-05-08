@@ -16,6 +16,11 @@ test("residential pricing option cards are rendered from paginated print chunks"
   assert.match(source, /residentialPricingItems/);
 });
 
+test("residential option SOV pages use weighted pagination instead of a hard two-option split", () => {
+  assert.match(source, /buildResidentialOptionBreakdownPrintPages/);
+  assert.doesNotMatch(source, /chunkResidentialOptionBreakdowns\(breakdowns,\s*2\)/);
+});
+
 test("residential optional add-ons with photos render on dedicated print pages", () => {
   assert.match(source, /buildResidentialOptionalAddOnPrintPages/);
   assert.match(source, /residentialOptionalAddOnItems/);

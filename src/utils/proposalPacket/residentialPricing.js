@@ -133,6 +133,88 @@ export function buildResidentialOptionalAddOnPrintPages(proposal = {}, photosPer
   });
 }
 
+export function buildResidentialOptionBreakdownPrintPages(proposal = {}, pageBudget = 24, maxRowsPerOptionPage = 14) {
+  const breakdowns = buildResidentialOptionBreakdowns(proposal);
+
+  if (breakdowns.length === 0) {
+    return [];
+  }
+
+  const budget = Math.max(8, Math.floor(toResidentialPricingNumber(pageBudget)) || 24);
+  const optionFragments = breakdowns.flatMap((option) => splitResidentialOptionBreakdownForPrint(option, maxRowsPerOptionPage));
+  const pages = [];
+  let currentPage = [];
+  let currentWeight = 0;
+
+  optionFragments.forEach((option) => {
+    const optionWeight = getResidentialOptionBreakdownPrintWeight(option);
+
+    if (currentPage.length > 0 && currentWeight + optionWeight > budget) {
+      pages.push(currentPage);
+      currentPage = [];
+      currentWeight = 0;
+    }
+
+    currentPage.push(option);
+    currentWeight += optionWeight;
+  });
+
+  if (currentPage.length > 0) {
+    pages.push(currentPage);
+  }
+
+  return pages.map((options, index) => ({
+    key: `residential-option-breakdowns-${index}`,
+    title: pages.length > 1 ? `Schedule of Values - Pricing Options (${index + 1})` : "Schedule of Values - Pricing Options",
+    options,
+    pageIndex: index,
+    pageCount: pages.length,
+  }));
+}
+
+function splitResidentialOptionBreakdownForPrint(option = {}, maxRowsPerOptionPage = 14) {
+  const rows = Array.isArray(option.scheduleOfValues) ? option.scheduleOfValues : [];
+  const chunkSize = Math.max(1, Math.floor(toResidentialPricingNumber(maxRowsPerOptionPage)) || 14);
+
+  if (rows.length <= chunkSize) {
+    return [option];
+  }
+
+  const chunks = [];
+
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    chunks.push(rows.slice(index, index + chunkSize));
+  }
+
+  return chunks.map((rowChunk, index) => {
+    const isLastChunk = index === chunks.length - 1;
+    const chunkTotal = rowChunk.reduce((sum, row) => sum + toResidentialPricingNumber(row.amount), 0);
+
+    return {
+      ...option,
+      name: index === 0 ? option.name : `${option.name} (continued)`,
+      scheduleOfValues: rowChunk,
+      rowsTotal: isLastChunk ? option.rowsTotal : chunkTotal,
+      totalMatchesOption: isLastChunk ? option.totalMatchesOption : false,
+      footerLabel: isLastChunk
+        ? option.totalMatchesOption
+          ? "Option Total"
+          : "Breakdown Total - Review"
+        : "Continued subtotal",
+    };
+  });
+}
+
+export function getResidentialOptionBreakdownPrintWeight(option = {}) {
+  const rows = Array.isArray(option.scheduleOfValues) ? option.scheduleOfValues : [];
+  const rowWeight = rows.reduce((sum, row) => {
+    const textLength = [row.item, row.description, row.pricingBasis].join(" ").length;
+    return sum + 1 + Math.floor(Math.max(0, textLength - 90) / 120);
+  }, 0);
+
+  return 2 + rowWeight;
+}
+
 export function normalizeResidentialOptionImages(images = []) {
   if (!Array.isArray(images)) {
     return [];
