@@ -6,6 +6,7 @@ import {
   RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE,
   buildResidentialPaymentTermsCopy,
   buildResidentialOptionBreakdowns,
+  buildResidentialPricingOptionPrintPages,
   buildResidentialPricingOptionRows,
   countResidentialOptionImagePlaceholders,
   formatResidentialCurrency,
@@ -263,6 +264,47 @@ test("residential pricing rows show base and with-cantilever totals for every op
     [45500, 53000, 49250],
   );
   assert.ok(rows.every((row) => row.comparisonAddOn.name === "Cantilever-Style Stair Upgrade"));
+});
+
+test("residential pricing option print pages keep option cards complete", () => {
+  const pages = buildResidentialPricingOptionPrintPages(residentialProposal);
+
+  assert.equal(pages.length, 3);
+  assert.deepEqual(
+    pages.map((page) => page.options.map((option) => option.name)),
+    [
+      ["Option 1 - Full Scope With Broom Finish"],
+      ["Option 2 - Full Scope With Stamped Finish"],
+      ["Option 3 - Full Scope With Sand Finish"],
+    ],
+  );
+  assert.equal(pages[0].showAddOns, false);
+  assert.equal(pages[1].showAddOns, false);
+  assert.equal(pages[2].showAddOns, true);
+});
+
+test("residential pricing options can share print pages when no photos are uploaded", () => {
+  const proposalWithoutPhotos = {
+    ...residentialProposal,
+    pricingOptions: residentialProposal.pricingOptions.map((option) => ({
+      ...option,
+      images: [],
+    })),
+    optionalAddOns: residentialProposal.optionalAddOns.map((addOn) => ({
+      ...addOn,
+      images: [],
+    })),
+  };
+  const pages = buildResidentialPricingOptionPrintPages(proposalWithoutPhotos);
+
+  assert.equal(pages.length, 2);
+  assert.deepEqual(
+    pages.map((page) => page.options.map((option) => option.name)),
+    [
+      ["Option 1 - Full Scope With Broom Finish", "Option 2 - Full Scope With Stamped Finish"],
+      ["Option 3 - Full Scope With Sand Finish"],
+    ],
+  );
 });
 
 test("residential choose-one page structure separates pricing, SOV, scope, and terms", () => {

@@ -10,6 +10,7 @@ import {
 } from "../../utils/proposalPacket/printContentCleanup.js";
 import {
   buildResidentialPaymentTermsCopy,
+  buildResidentialPricingOptionPrintPages,
   buildResidentialOptionBreakdowns,
   buildResidentialPricingOptionRows,
   formatResidentialCurrency,
@@ -239,6 +240,7 @@ function ProposalPacketContent({ proposal }) {
   const termsCopy = isResidentialMode ? buildResidentialPaymentTermsCopy(packetProposal) : buildTermsCopy(packetProposal.terms);
   const visiblePricingSections = isResidentialMode ? [] : appendixPlan.mainPricingSections;
   const hasChooseOnePricing = hasResidentialChooseOnePricing(packetProposal);
+  const residentialPricingOptionPrintPages = buildResidentialPricingOptionPrintPages(packetProposal);
   const structuredPacketPages = isResidentialMode ? [] : buildStructuredPacketPages(packetProposal);
   const residentialOptionBreakdownPages = buildResidentialOptionBreakdownPages(packetProposal);
   const planSheetPages = isResidentialMode ? getEnabledPlanSheets(packetProposal.planSheets).filter(hasResidentialPlanSheetPrintData) : getEnabledPlanSheets(packetProposal.planSheets);
@@ -257,7 +259,7 @@ function ProposalPacketContent({ proposal }) {
         {showCoverGcPrimeNotes ? <GcPrimeNotes rows={gcPrimeRows} /> : null}
         <div className="page-one-feature-block">
           <PhotoBand photos={packetProposal.projectPhotos} />
-          <WhyChoose />
+          {!isResidentialMode ? <WhyChoose /> : null}
         </div>
         <PageFooter company={company} companyCredentials={companyCredentials} compact />
       </ProposalPage>
@@ -360,15 +362,25 @@ function ProposalPacketContent({ proposal }) {
       />
     ),
   }));
+  const residentialPricingItems = residentialPricingOptionPrintPages.map((page) => ({
+    key: page.key,
+    sectionId: "residential_pricing_options",
+    render: (pageNumber) => (
+      <ResidentialPricingPage
+        company={company}
+        optionRows={page.options}
+        pageIndex={page.pageIndex}
+        pageCount={page.pageCount}
+        pageNumber={pageNumber}
+        projectName={packetProposal.project?.name}
+        proposal={packetProposal}
+        showAddOns={page.showAddOns}
+      />
+    ),
+  }));
   const residentialPacketItems = [
     coverSummaryItem,
-    {
-      key: "residential-pricing-options",
-      sectionId: "residential_pricing_options",
-      render: (pageNumber) => (
-        <ResidentialPricingPage company={company} pageNumber={pageNumber} projectName={packetProposal.project?.name} proposal={packetProposal} />
-      ),
-    },
+    ...residentialPricingItems,
     ...residentialOptionBreakdownItems,
     {
       key: "residential-scope",
@@ -589,17 +601,28 @@ function ResidentialOptionBreakdownsPage({ company, page, pageNumber, projectNam
   );
 }
 
-function ResidentialPricingPage({ company, pageNumber, projectName, proposal }) {
+function ResidentialPricingPage({
+  company,
+  optionRows,
+  pageCount = 1,
+  pageIndex = 0,
+  pageNumber,
+  projectName,
+  proposal,
+  showAddOns = true,
+}) {
+  const pageTitle = pageCount > 1 ? `Customer Pricing Options (${pageIndex + 1})` : "Customer Pricing Options";
+
   return (
     <ProposalPage className="structured-packet-page residential-pricing-page">
-      <ResidentialPacketHeader company={company} pageTitle="Customer Pricing Options" projectName={projectName} />
+      <ResidentialPacketHeader company={company} pageTitle={pageTitle} projectName={projectName} />
 
       <div className="structured-packet-body residential-page-body">
         <div className="structured-accent" />
         <p className="structured-packet-note">
           Customer to select one main option. Optional add-ons are shown with each option so the total is clear before acceptance.
         </p>
-        <ResidentialPricingOptionsTable proposal={proposal} />
+        <ResidentialPricingOptionsTable optionRows={optionRows} proposal={proposal} showAddOns={showAddOns} />
       </div>
 
       <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
@@ -1301,10 +1324,10 @@ function PricingTable({ items, total }) {
   );
 }
 
-function ResidentialPricingOptionsTable({ proposal }) {
+function ResidentialPricingOptionsTable({ optionRows: optionRowsOverride, proposal, showAddOns = true }) {
   const { getImageAssetSource } = usePacketHelpers();
   const addOns = getResidentialOptionalAddOns(proposal);
-  const optionRows = buildResidentialPricingOptionRows(proposal);
+  const optionRows = optionRowsOverride || buildResidentialPricingOptionRows(proposal);
   const comparisonAddOn = getResidentialComparisonAddOn(addOns);
   const addOnName = comparisonAddOn?.name || "Optional Add-On";
   const addOnIsCantilever = /cantilever/i.test(addOnName);
@@ -1363,7 +1386,7 @@ function ResidentialPricingOptionsTable({ proposal }) {
         ))}
       </div>
 
-      {addOns.length > 0 ? (
+      {showAddOns && addOns.length > 0 ? (
         <div className="residential-add-on-callouts">
           {addOns.map((addOn) => (
             <div className="residential-add-on-callout" key={addOn.id || addOn.name}>

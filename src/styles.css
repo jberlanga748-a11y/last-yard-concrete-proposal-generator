@@ -5909,12 +5909,14 @@ h4 {
 }
 
 .residential-add-on-callout {
+  break-inside: avoid;
   border: 1px solid rgba(202, 162, 75, 0.5);
   background: #fffaf0;
   padding: 10px 12px;
   color: var(--ink);
   font-size: 12px;
   line-height: 1.4;
+  page-break-inside: avoid;
 }
 
 .residential-add-on-callout strong {
@@ -7344,13 +7346,17 @@ h4 {
   }
 
   .proposal-page.residential-pricing-page .residential-add-on-callout {
+    break-inside: avoid;
     font-size: 11px;
+    page-break-inside: avoid;
   }
 
   .proposal-page.residential-pricing-page .residential-option-photo-strip {
+    break-inside: avoid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     padding: 7px 10px 10px;
+    page-break-inside: avoid;
   }
 
   .proposal-page.residential-pricing-page .residential-option-photo img {

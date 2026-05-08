@@ -71,6 +71,30 @@ export function buildResidentialPricingOptionRows(proposal = {}) {
   });
 }
 
+export function buildResidentialPricingOptionPrintPages(proposal = {}, optionsPerPage = 2) {
+  if (!hasResidentialChooseOnePricing(proposal)) {
+    return [];
+  }
+
+  const optionRows = buildResidentialPricingOptionRows(proposal);
+  const addOns = getResidentialOptionalAddOns(proposal);
+  const hasPrintableOptionPhotos = [...optionRows, ...addOns].some((item) => getPrintableResidentialOptionImages(item.images).length > 0);
+  const chunkSize = hasPrintableOptionPhotos ? 1 : Math.max(1, Math.floor(toResidentialPricingNumber(optionsPerPage)) || 2);
+  const pages = [];
+
+  for (let index = 0; index < optionRows.length; index += chunkSize) {
+    pages.push(optionRows.slice(index, index + chunkSize));
+  }
+
+  return pages.map((options, index) => ({
+    key: `residential-pricing-options-${index + 1}`,
+    options,
+    pageIndex: index,
+    pageCount: pages.length,
+    showAddOns: index === pages.length - 1,
+  }));
+}
+
 export function normalizeResidentialOptionImages(images = []) {
   if (!Array.isArray(images)) {
     return [];
