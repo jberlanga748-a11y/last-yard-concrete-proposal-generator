@@ -77,8 +77,8 @@ export function buildResidentialPricingOptionPrintPages(proposal = {}, optionsPe
   }
 
   const optionRows = buildResidentialPricingOptionRows(proposal);
-  const addOns = getResidentialOptionalAddOns(proposal);
-  const hasPrintableOptionPhotos = [...optionRows, ...addOns].some((item) => getPrintableResidentialOptionImages(item.images).length > 0);
+  const { withPhotos: addOnsWithPhotos } = splitResidentialOptionalAddOnsForPrint(proposal);
+  const hasPrintableOptionPhotos = [...optionRows, ...addOnsWithPhotos].some((item) => getPrintableResidentialOptionImages(item.images).length > 0);
   const chunkSize = hasPrintableOptionPhotos ? 1 : Math.max(1, Math.floor(toResidentialPricingNumber(optionsPerPage)) || 2);
   const pages = [];
 
@@ -93,6 +93,44 @@ export function buildResidentialPricingOptionPrintPages(proposal = {}, optionsPe
     pageCount: pages.length,
     showAddOns: index === pages.length - 1,
   }));
+}
+
+export function splitResidentialOptionalAddOnsForPrint(proposal = {}) {
+  const withPhotos = [];
+  const withoutPhotos = [];
+
+  getResidentialOptionalAddOns(proposal).forEach((addOn) => {
+    if (getPrintableResidentialOptionImages(addOn.images).length > 0) {
+      withPhotos.push(addOn);
+      return;
+    }
+
+    withoutPhotos.push(addOn);
+  });
+
+  return { withPhotos, withoutPhotos };
+}
+
+export function buildResidentialOptionalAddOnPrintPages(proposal = {}, photosPerPage = 6) {
+  const { withPhotos } = splitResidentialOptionalAddOnsForPrint(proposal);
+  const chunkSize = Math.max(1, Math.floor(toResidentialPricingNumber(photosPerPage)) || 6);
+
+  return withPhotos.flatMap((addOn, addOnIndex) => {
+    const images = getPrintableResidentialOptionImages(addOn.images);
+    const chunks = [];
+
+    for (let index = 0; index < images.length; index += chunkSize) {
+      chunks.push(images.slice(index, index + chunkSize));
+    }
+
+    return chunks.map((imageChunk, pageIndex) => ({
+      key: `residential-optional-add-on-${addOn.id || normalizeResidentialKey(addOn.name) || addOnIndex}-${pageIndex + 1}`,
+      addOn,
+      images: imageChunk,
+      pageIndex,
+      pageCount: chunks.length,
+    }));
+  });
 }
 
 export function normalizeResidentialOptionImages(images = []) {

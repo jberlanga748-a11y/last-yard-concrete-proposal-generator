@@ -6,6 +6,7 @@ import {
   RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE,
   buildResidentialPaymentTermsCopy,
   buildResidentialOptionBreakdowns,
+  buildResidentialOptionalAddOnPrintPages,
   buildResidentialPricingOptionPrintPages,
   buildResidentialPricingOptionRows,
   countResidentialOptionImagePlaceholders,
@@ -22,6 +23,7 @@ import {
   normalizeResidentialOptionalAddOns,
   removeResidentialItemImage,
   replaceResidentialItemImage,
+  splitResidentialOptionalAddOnsForPrint,
 } from "./residentialPricing.js";
 
 const residentialProposal = {
@@ -305,6 +307,42 @@ test("residential pricing options can share print pages when no photos are uploa
       ["Option 3 - Full Scope With Sand Finish"],
     ],
   );
+});
+
+test("residential optional add-ons with uploaded photos get dedicated print pages", () => {
+  const proposalWithAddOnPhoto = {
+    ...residentialProposal,
+    optionalAddOns: [
+      {
+        ...residentialProposal.optionalAddOns[0],
+        images: [
+          {
+            label: "Cantilever stair example",
+            caption: "Cantilever stair photo",
+            src: "data:image/png;base64,cantilever",
+          },
+        ],
+      },
+    ],
+  };
+  const splitAddOns = splitResidentialOptionalAddOnsForPrint(proposalWithAddOnPhoto);
+  const pages = buildResidentialOptionalAddOnPrintPages(proposalWithAddOnPhoto);
+
+  assert.equal(splitAddOns.withPhotos.length, 1);
+  assert.equal(splitAddOns.withoutPhotos.length, 0);
+  assert.equal(pages.length, 1);
+  assert.equal(pages[0].addOn.name, "Cantilever-Style Stair Upgrade");
+  assert.equal(pages[0].images.length, 1);
+  assert.equal(pages[0].images[0].caption, "Cantilever stair photo");
+});
+
+test("residential optional add-on placeholders stay in pricing text and do not create photo pages", () => {
+  const splitAddOns = splitResidentialOptionalAddOnsForPrint(residentialProposal);
+  const pages = buildResidentialOptionalAddOnPrintPages(residentialProposal);
+
+  assert.equal(splitAddOns.withPhotos.length, 0);
+  assert.equal(splitAddOns.withoutPhotos.length, 1);
+  assert.equal(pages.length, 0);
 });
 
 test("residential choose-one page structure separates pricing, SOV, scope, and terms", () => {

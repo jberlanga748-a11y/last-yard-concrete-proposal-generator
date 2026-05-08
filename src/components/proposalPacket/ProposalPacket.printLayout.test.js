@@ -15,3 +15,9 @@ test("residential pricing option cards are rendered from paginated print chunks"
   assert.match(source, /buildResidentialPricingOptionPrintPages/);
   assert.match(source, /residentialPricingItems/);
 });
+
+test("residential optional add-ons with photos render on dedicated print pages", () => {
+  assert.match(source, /buildResidentialOptionalAddOnPrintPages/);
+  assert.match(source, /residentialOptionalAddOnItems/);
+  assert.match(source, /function ResidentialOptionalAddOnPage/);
+});

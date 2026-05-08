@@ -42,14 +42,22 @@ test("plan sheet images keep contain fit while cover logo and tagline have print
 test("residential pricing cards and add-ons use print-safe no-break rules", () => {
   const optionCard = getCssBlock(".residential-pricing-option-card");
   const addOnCallout = getCssBlock(".residential-add-on-callout");
-  const printOptionPhotoStrip =
-    styles.match(/@media print\s*\{[\s\S]*?\.proposal-page\.residential-pricing-page \.residential-option-photo-strip\s*\{([^}]+)\}/)?.[1] ||
+  const addOnPrintCard = getCssBlock(".residential-add-on-print-card");
+  const printPhotoStrip =
+    styles.match(/@media print\s*\{[\s\S]*?\.proposal-page\.residential-add-on-page \.residential-option-photo-strip,\s*\.proposal-page\.residential-pricing-page \.residential-option-photo-strip\s*\{([^}]+)\}/)?.[1] ||
+    "";
+  const printPhotoImage =
+    styles.match(/@media print\s*\{[\s\S]*?\.proposal-page\.residential-add-on-page \.residential-option-photo img,\s*\.proposal-page\.residential-pricing-page \.residential-option-photo img\s*\{([^}]+)\}/)?.[1] ||
     "";
 
   assert.match(optionCard, /break-inside:\s*avoid/);
   assert.match(optionCard, /page-break-inside:\s*avoid/);
   assert.match(addOnCallout, /break-inside:\s*avoid/);
   assert.match(addOnCallout, /page-break-inside:\s*avoid/);
-  assert.match(printOptionPhotoStrip, /break-inside:\s*avoid/);
-  assert.match(printOptionPhotoStrip, /page-break-inside:\s*avoid/);
+  assert.match(addOnPrintCard, /break-inside:\s*avoid/);
+  assert.match(addOnPrintCard, /page-break-inside:\s*avoid/);
+  assert.match(printPhotoStrip, /break-inside:\s*avoid/);
+  assert.match(printPhotoStrip, /page-break-inside:\s*avoid/);
+  assert.match(printPhotoImage, /object-fit:\s*cover/);
+  assert.match(printPhotoImage, /object-position:\s*center/);
 });
