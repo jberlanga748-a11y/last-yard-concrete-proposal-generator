@@ -1,0 +1,40 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+import { dirname, join } from "node:path";
+
+const stylesPath = join(dirname(fileURLToPath(import.meta.url)), "styles.css");
+const styles = readFileSync(stylesPath, "utf8");
+
+function getCssBlock(selector) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = styles.match(new RegExp(`${escapedSelector}\\s*\\{([^}]+)\\}`));
+
+  return match?.[1] || "";
+}
+
+test("print photo renderers use non-distorting cover fit for work examples and residential option photos", () => {
+  const concretePhotoImage = getCssBlock(".concrete-photo img");
+  const residentialOptionImage = getCssBlock(".residential-option-photo img");
+  const printRoutePhotoBand = getCssBlock(".print-route-view .first-page .photo-band");
+
+  assert.match(concretePhotoImage, /object-fit:\s*cover/);
+  assert.match(concretePhotoImage, /object-position:\s*center/);
+  assert.match(printRoutePhotoBand, /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(residentialOptionImage, /aspect-ratio:\s*4\s*\/\s*3/);
+  assert.match(residentialOptionImage, /object-fit:\s*cover/);
+  assert.match(residentialOptionImage, /object-position:\s*center/);
+});
+
+test("plan sheet images keep contain fit while cover logo and tagline have print-safe rules", () => {
+  const planSheetImage = getCssBlock(".plan-sheet-image-area img");
+  const printCoverTagline = styles.match(/@media print\s*\{[\s\S]*?\.cover-tagline\s*\{([^}]+)\}/)?.[1] || "";
+  const printCoverLogo = styles.match(/@media print\s*\{[\s\S]*?\.cover-header \.logo-seal img\s*\{([^}]+)\}/)?.[1] || "";
+
+  assert.match(planSheetImage, /object-fit:\s*contain/);
+  assert.match(printCoverTagline, /overflow:\s*visible/);
+  assert.match(printCoverTagline, /letter-spacing:\s*0\.08em/);
+  assert.match(printCoverLogo, /object-fit:\s*contain/);
+  assert.match(printCoverLogo, /transform:\s*scale\(1\.34\)/);
+});
