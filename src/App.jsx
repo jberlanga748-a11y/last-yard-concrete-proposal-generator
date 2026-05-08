@@ -125,6 +125,7 @@ import {
   normalizeActivityLog,
   saveActivityLogToLocalStorage,
 } from "./utils/activityLog.js";
+import { getAuthGateState, getLogoutCleanupState } from "./utils/authSession.js";
 import {
   getPermissionRoleLabel,
   getRolePermissions,
@@ -437,7 +438,8 @@ export default function App() {
   const isBidsView = route.view === "bids";
   const isActivityView = route.view === "activity";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
-  const permissionRole = normalizePermissionRole(authUser ? cloudSync.currentRole : "local");
+  const authGate = getAuthGateState({ authLoading, authUser, isDev: import.meta.env.DEV, route });
+  const permissionRole = normalizePermissionRole(authUser ? cloudSync.currentRole : authGate.localDevelopmentMode ? "local" : "viewer");
   const permissions = getRolePermissions(permissionRole);
   const permissionRoleLabel = getPermissionRoleLabel(permissionRole, { signedIn: Boolean(authUser) });
   const proposalValidation = getProposalValidationWithPacketPdfWarnings(proposalDraft);
@@ -500,8 +502,14 @@ export default function App() {
       setAuthLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAuthUser(session?.user || null);
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      const nextUser = session?.user || null;
+
+      if (event === "SIGNED_OUT" && !nextUser) {
+        resetSessionWorkspaceState();
+      }
+
+      setAuthUser(nextUser);
       setAuthLoading(false);
     });
 
@@ -2249,10 +2257,43 @@ export default function App() {
     setAuthLoading(false);
   }
 
+  function resetSessionWorkspaceState() {
+    const cleanup = getLogoutCleanupState();
+    const nextRoute = parseRoute(cleanup.routePath);
+
+    clearTransientProposalDraftStorage();
+    resetProposalTransientState({ clearSaveMessage: true });
+    setProposalDraft(createBlankProposalDraft([], companySettings, DEFAULT_PROPOSAL_MODE));
+    setProposalDirty(cleanup.proposalDirty);
+    setValidationNotice(cleanup.validationNotice);
+    setSmartPasteNotes(cleanup.smartPasteNotes);
+    setSmartPasteResult(cleanup.smartPasteResult);
+    setPendingSmartPasteProposal(cleanup.pendingSmartPasteProposal);
+    setAiProposalNotes(cleanup.aiProposalNotes);
+    setAiProposalResult(cleanup.aiProposalResult);
+    setAiProposalMessage(cleanup.aiProposalMessage);
+    setAiProposalLoading(cleanup.aiProposalLoading);
+    setBidDraft(createEmptyBid());
+    setBidEditorOpen(cleanup.bidEditorOpen);
+    setBidMessage(cleanup.bidMessage);
+    setBidSmartPasteNotes(cleanup.bidSmartPasteNotes);
+    setBidSmartPasteResult(cleanup.bidSmartPasteResult);
+    setContactDraft(createEmptyContact());
+    setContactEditorOpen(cleanup.contactEditorOpen);
+    setContactMessage(cleanup.contactMessage);
+    setAssetUploadMessage(cleanup.assetUploadMessage);
+    setBackupMessage(cleanup.backupMessage);
+    setSaveMessage(cleanup.saveMessage);
+    setSaveState(createSaveState());
+    window.history.replaceState({}, "", cleanup.routePath);
+    setRoute(nextRoute);
+  }
+
   async function signOut() {
     if (!isSupabaseConfigured || !supabase) {
       setAuthUser(null);
-      setAuthMessage("Supabase is not configured. The app is running in local mode.");
+      resetSessionWorkspaceState();
+      setAuthMessage("Supabase is not configured. The app is running in development local mode.");
       return;
     }
 
@@ -2266,7 +2307,8 @@ export default function App() {
     }
 
     setAuthUser(null);
-    setAuthMessage("Signed out. Local browser storage remains available.");
+    resetSessionWorkspaceState();
+    setAuthMessage("Signed out. Sign in again to view proposals, bids, settings, or print routes.");
     setTeamMembers([]);
     setTeamMessage("Sign in to sync team access.");
     setCloudSync((currentSync) => ({
@@ -4514,6 +4556,36 @@ export default function App() {
   );
   const backupShortcut = <BackupShortcutCard onOpenBackup={() => navigate("/backup")} />;
 
+  if (!authGate.canRenderProtectedContent) {
+    return (
+      <main className="app-shell auth-gated-shell">
+        <style>{`
+          @media print {
+            @page { size: letter portrait; margin: 0; }
+          }
+        `}</style>
+        <div className="app-content auth-gated-content">
+          {authGate.shouldShowAuthLoading ? (
+            <AuthLoadingScreen />
+          ) : (
+            <LoginView
+              authLoading={authLoading}
+              authMessage={authMessage}
+              authUser={authUser}
+              canNavigateBack={false}
+              isCloudConfigured={isSupabaseConfigured}
+              requireSignIn
+              onBackToDashboard={() => navigate("/dashboard")}
+              onSignIn={signInWithEmail}
+              onSignOut={signOut}
+              onSignUp={signUpWithEmail}
+            />
+          )}
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className={`app-shell ${isPrintView ? "print-route-shell" : ""}`}>
       <style>{`
@@ -4832,6 +4904,17 @@ export default function App() {
       )}
       </div>
     </main>
+  );
+}
+
+function AuthLoadingScreen() {
+  return (
+    <section className="login-panel no-print">
+      <div className="login-card auth-loading-card">
+        <h3>Checking sign-in</h3>
+        <p>Loading your secure Last Yard workspace...</p>
+      </div>
+    </section>
   );
 }
 

@@ -10,6 +10,8 @@ const filesToCheck = [
   "src/utils/cloud/proposalCloud.js",
   "src/utils/cloud/storageCloud.js",
   "src/utils/cloud/teamAccess.js",
+  "src/utils/authSession.js",
+  "src/utils/authSession.test.js",
   "src/utils/formatting/display.js",
   "src/utils/aiProposal/aiProposalNormalizer.js",
   "src/utils/aiProposal/aiProposalNormalizer.test.js",
