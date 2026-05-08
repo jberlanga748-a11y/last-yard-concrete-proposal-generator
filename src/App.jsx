@@ -13692,6 +13692,21 @@ function buildAppendixPlan(proposal) {
   const printableExclusions = cleanPrintableTextList(proposal.exclusions);
   const printableAssumptions = cleanPrintableTextList(proposal.assumptions);
   const printableLineItems = (proposal.lineItems || []).filter((item) => hasPrintableText(item.description));
+  const isResidentialMode = isResidentialProposalMode(inferProposalModeFromProposal(proposal));
+
+  if (isResidentialMode) {
+    return {
+      mainScopeSections: printableScopeSections,
+      mainExclusions: [...printableExclusions, ...printableAssumptions],
+      mainGcPrime: {},
+      mainLineItems: printableLineItems,
+      mainPricingSections: [],
+      scopeNeedsAppendix: false,
+      referenceNotes: [],
+      pages: [],
+    };
+  }
+
   const scopeSummary = buildScopeSummary(printableScopeSections);
   const exclusionsSummary = buildExclusionsSummary(printableExclusions, printableAssumptions);
   const lineItemSummary = buildLineItemSummary(printableLineItems);
@@ -14012,8 +14027,8 @@ function buildTermsCopy(terms) {
   return copyParts.length > 0 ? `Payment terms: ${copyParts.join(" ")}` : "";
 }
 
-function buildConcreteSpecRows(concreteSpecs = {}) {
-  return [
+function buildConcreteSpecRows(concreteSpecs = {}, options = {}) {
+  const rows = [
     ["Estimated Square Feet", concreteSpecs.estimatedSquareFeet],
     ["Estimated Cubic Yards", concreteSpecs.estimatedCubicYards],
     ["Thickness", concreteSpecs.thickness],
@@ -14029,7 +14044,21 @@ function buildConcreteSpecRows(concreteSpecs = {}) {
     ["Concrete Supplier", concreteSpecs.concreteSupplier],
     ["Pump Required", formatBooleanSpec(concreteSpecs.pumpRequired)],
     ["Truck Access Notes", concreteSpecs.truckAccessNotes],
-  ].filter(([, value]) => hasSpecValue(value));
+  ];
+
+  if (options.residential) {
+    const residentialRows = [
+      ["Thickness", concreteSpecs.thickness],
+      ["Reinforcement", concreteSpecs.rebarMeshDetails || concreteSpecs.reinforcement],
+      ["Finish", concreteSpecs.finishType || concreteSpecs.finish],
+      ["Control Joints", concreteSpecs.controlJointSpacing || concreteSpecs.controlJoints],
+      ["Truck / Access Notes", concreteSpecs.truckAccessNotes || concreteSpecs.accessNotes],
+    ];
+
+    return residentialRows.filter(([, value]) => hasSpecValue(value));
+  }
+
+  return rows.filter(([, value]) => hasSpecValue(value));
 }
 
 function formatBooleanSpec(value) {

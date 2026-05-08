@@ -9,8 +9,11 @@ import {
   hasPrintableText,
 } from "../../utils/proposalPacket/printContentCleanup.js";
 import {
+  buildResidentialPaymentTermsCopy,
   buildResidentialOptionBreakdowns,
   formatResidentialCurrency,
+  formatResidentialMoneyText,
+  formatResidentialMoneyTextList,
   getResidentialCoverDescription,
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
@@ -131,6 +134,63 @@ export function ProposalPreview({ proposal, helpers }) {
   );
 }
 
+function formatResidentialProposalTextForPrint(proposal = {}) {
+  return {
+    ...proposal,
+    project: formatResidentialTextObject(proposal.project, proposal, ["proposedSchedule"]),
+    client: formatResidentialTextObject(proposal.client, proposal),
+    scopeSections: (proposal.scopeSections || []).map((section) => ({
+      ...section,
+      title: formatResidentialMoneyText(section.title, proposal),
+      items: formatResidentialMoneyTextList(section.items, proposal),
+    })),
+    exclusions: formatResidentialMoneyTextList(proposal.exclusions, proposal),
+    assumptions: formatResidentialMoneyTextList(proposal.assumptions, proposal),
+    proposalNotes: formatResidentialMoneyText(proposal.proposalNotes, proposal),
+    notes: formatResidentialMoneyText(proposal.notes, proposal),
+    takeoffQuantityBackup: formatResidentialMoneyText(proposal.takeoffQuantityBackup, proposal),
+    quantityBackup: formatResidentialMoneyText(proposal.quantityBackup, proposal),
+    concreteSpecs: formatResidentialTextObject(proposal.concreteSpecs, proposal),
+    terms: formatResidentialTextObject(proposal.terms, proposal),
+    gcPrime: formatResidentialTextObject(proposal.gcPrime, proposal, ["scopeControlSummary"]),
+  };
+}
+
+function formatResidentialTextObject(value = {}, proposal = {}, skipKeys = []) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+
+  const skipKeySet = new Set(skipKeys);
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => {
+      if (skipKeySet.has(key)) {
+        return [key, item];
+      }
+
+      if (typeof item === "string" || typeof item === "number") {
+        return [key, formatResidentialMoneyText(item, proposal)];
+      }
+
+      if (item && typeof item === "object" && !Array.isArray(item)) {
+        return [key, formatResidentialTextObject(item, proposal)];
+      }
+
+      if (Array.isArray(item)) {
+        return [
+          key,
+          item.map((entry) =>
+            typeof entry === "string" || typeof entry === "number" ? formatResidentialMoneyText(entry, proposal) : entry,
+          ),
+        ];
+      }
+
+      return [key, item];
+    }),
+  );
+}
+
 function ProposalPacketContent({ proposal }) {
   const {
     buildAppendixPlan,
@@ -143,21 +203,23 @@ function ProposalPacketContent({ proposal }) {
     getEnabledPlanSheets,
     toEditableNumber,
   } = usePacketHelpers();
-  const packetProposal = cleanProposalForPrint(proposal);
+  const cleanedProposal = cleanProposalForPrint(proposal);
+  const proposalMode = inferProposalModeFromProposal(cleanedProposal);
+  const isResidentialMode = isResidentialProposalMode(proposalMode);
+  const packetProposal = isResidentialMode ? formatResidentialProposalTextForPrint(cleanedProposal) : cleanedProposal;
   const company = packetProposal.company;
   const companyCredentials = company.credentials.join(" | ");
-  const proposalMode = inferProposalModeFromProposal(packetProposal);
-  const isResidentialMode = isResidentialProposalMode(proposalMode);
   const isGcPrime = isGcPrimePacketMode(proposalMode);
   const appendixPlan = buildAppendixPlan(packetProposal);
   const gcPrimeRows = isGcPrime ? buildGcPrimeRows(appendixPlan.mainGcPrime) : [];
   const scopeSplitIndex = Math.ceil(appendixPlan.mainScopeSections.length / 2);
   const scopeLeft = appendixPlan.mainScopeSections.slice(0, scopeSplitIndex);
   const scopeRight = appendixPlan.mainScopeSections.slice(scopeSplitIndex);
-  const specRows = buildConcreteSpecRows(packetProposal.concreteSpecs);
+  const specRows = buildConcreteSpecRows(packetProposal.concreteSpecs, { residential: isResidentialMode });
   const specSplitIndex = Math.ceil(specRows.length / 2);
   const specsLeft = specRows.slice(0, specSplitIndex);
   const specsRight = specRows.slice(specSplitIndex);
+  const specTables = isResidentialMode ? [specRows] : [specsLeft, specsRight];
   const lineItems = appendixPlan.mainLineItems.map((item, index) => {
     const amount = item.amount ?? toEditableNumber(item.quantity) * toEditableNumber(item.unitPrice);
 
@@ -172,14 +234,15 @@ function ProposalPacketContent({ proposal }) {
   });
   const proposalTotals = calculateProposalTotals(packetProposal);
   const totalProposalPrice = formatCurrency(proposalTotals.total);
-  const termsCopy = buildTermsCopy(packetProposal.terms);
-  const visiblePricingSections = appendixPlan.mainPricingSections;
+  const termsCopy = isResidentialMode ? buildResidentialPaymentTermsCopy(packetProposal) : buildTermsCopy(packetProposal.terms);
+  const visiblePricingSections = isResidentialMode ? [] : appendixPlan.mainPricingSections;
   const hasChooseOnePricing = hasResidentialChooseOnePricing(packetProposal);
   const structuredPacketPages = isResidentialMode ? [] : buildStructuredPacketPages(packetProposal);
   const residentialOptionBreakdownPages = buildResidentialOptionBreakdownPages(packetProposal);
   const planSheetPages = isResidentialMode ? getEnabledPlanSheets(packetProposal.planSheets).filter(hasResidentialPlanSheetPrintData) : getEnabledPlanSheets(packetProposal.planSheets);
+  const appendixPages = isResidentialMode ? [] : appendixPlan.pages;
   const hasExtendedPacketPages =
-    structuredPacketPages.length > 0 || residentialOptionBreakdownPages.length > 0 || appendixPlan.pages.length > 0 || planSheetPages.length > 0;
+    structuredPacketPages.length > 0 || residentialOptionBreakdownPages.length > 0 || appendixPages.length > 0 || planSheetPages.length > 0;
   const showCoverGcPrimeNotes = gcPrimeRows.length > 0 && !hasExtendedPacketPages;
   const packetItems = orderPacketRenderItems(
     packetProposal,
@@ -211,13 +274,18 @@ function ProposalPacketContent({ proposal }) {
               <ScopeColumn groups={scopeLeft} />
               <ScopeColumn groups={scopeRight} />
             </div>
-            {appendixPlan.scopeNeedsAppendix ? <AppendixReferenceNote message="See Appendix for detailed scope backup." /> : null}
+            {!isResidentialMode && appendixPlan.scopeNeedsAppendix ? <AppendixReferenceNote message="See Appendix for detailed scope backup." /> : null}
 
-            <SectionTitle icon="gear" title="Concrete Specifications" className="section-title-spaced" />
-            <div className="two-column spec-grid">
-              <SpecTable rows={specsLeft} />
-              <SpecTable rows={specsRight} />
-            </div>
+            {specRows.length > 0 ? (
+              <>
+                <SectionTitle icon="gear" title="Concrete Specifications" className="section-title-spaced" />
+                <div className="two-column spec-grid">
+                  {specTables.map((rows, index) => (
+                    <SpecTable rows={rows} key={`spec-table-${index}`} />
+                  ))}
+                </div>
+              </>
+            ) : null}
 
             <SectionTitle icon="dollar" title="Pricing" className="section-title-spaced" />
             {hasChooseOnePricing ? (
@@ -253,7 +321,7 @@ function ProposalPacketContent({ proposal }) {
                 <SignatureBlock companyName={company.name} />
               </div>
             </div>
-            {appendixPlan.referenceNotes.length > 0 ? <AppendixReferenceNote notes={appendixPlan.referenceNotes} /> : null}
+            {!isResidentialMode && appendixPlan.referenceNotes.length > 0 ? <AppendixReferenceNote notes={appendixPlan.referenceNotes} /> : null}
 
             <div className="footer-push">
               <PageFooter company={company} companyCredentials={companyCredentials} />
@@ -280,7 +348,7 @@ function ProposalPacketContent({ proposal }) {
           <ResidentialOptionBreakdownsPage company={company} page={page} pageNumber={pageNumber} projectName={packetProposal.project?.name} />
         ),
       })),
-      ...appendixPlan.pages.map((page, index) => ({
+      ...appendixPages.map((page, index) => ({
         key: `appendix-page-${index}`,
         sectionId: "appendix_overflow",
         render: (pageNumber) => (
@@ -1028,6 +1096,10 @@ function ScopeColumn({ groups }) {
 }
 
 function SpecTable({ rows }) {
+  if (!rows || rows.length === 0) {
+    return null;
+  }
+
   return (
     <table className="spec-table">
       <thead>

@@ -4,8 +4,10 @@ import test from "node:test";
 import {
   RESIDENTIAL_CHOOSE_ONE_COVER_DESCRIPTION,
   RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE,
+  buildResidentialPaymentTermsCopy,
   buildResidentialOptionBreakdowns,
   formatResidentialCurrency,
+  formatResidentialMoneyText,
   getResidentialCoverDescription,
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
@@ -118,4 +120,35 @@ test("keeps optional add-ons separate from mutually exclusive options", () => {
 test("uses short residential cover copy for choose-one proposals", () => {
   assert.equal(getResidentialCoverSchedule(residentialProposal, "Long schedule text"), RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE);
   assert.equal(getResidentialCoverDescription(residentialProposal, "Long description text"), RESIDENTIAL_CHOOSE_ONE_COVER_DESCRIPTION);
+});
+
+test("residential choose-one payment terms avoid duplicate GC billing language", () => {
+  const terms = buildResidentialPaymentTermsCopy({
+    ...residentialProposal,
+    terms: {
+      payment: "50 percent down payment required.",
+      depositText: "A 50% deposit is required.",
+      progressBilling: "Progress billings will be submitted monthly as work completes.",
+    },
+  });
+
+  assert.match(terms, /50% down payment is required to schedule the project/);
+  assert.match(terms, /Final payment is due when the last concrete/);
+  assert.doesNotMatch(terms, /A 50% deposit is required/i);
+  assert.doesNotMatch(terms, /Progress billings|monthly/i);
+});
+
+test("formats known residential option and add-on amounts inside printed text", () => {
+  const formatted = formatResidentialMoneyText(
+    "Options are 82500, 97500, and 90000. Optional cantilever is 8500. Option 2 with cantilever is 106000 and down payment is 53000.",
+    residentialProposal,
+  );
+
+  assert.match(formatted, /\$82,500/);
+  assert.match(formatted, /\$97,500/);
+  assert.match(formatted, /\$90,000/);
+  assert.match(formatted, /\$8,500/);
+  assert.match(formatted, /\$106,000/);
+  assert.match(formatted, /\$53,000/);
+  assert.doesNotMatch(formatted, /\b82500\b|\b97500\b|\b90000\b|\b8500\b|\b106000\b|\b53000\b/);
 });

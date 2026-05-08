@@ -27,6 +27,67 @@ export function formatResidentialCurrency(value, options = {}) {
   return `${sign}${formatted}`;
 }
 
+export function buildResidentialPaymentTermsCopy(proposal = {}) {
+  if (hasResidentialChooseOnePricing(proposal)) {
+    return [
+      "Payment Terms:",
+      "50% down payment is required to schedule the project.",
+      "Final payment is due when the last concrete for the included scope is poured.",
+      "Down payment and final payment are based on the selected option and any selected add-on.",
+    ].join(" ");
+  }
+
+  const terms = proposal.terms || {};
+  const copyParts = [terms.payment, terms.depositText, terms.finalPayment, terms.acceptance]
+    .map(cleanResidentialText)
+    .filter(Boolean);
+
+  return copyParts.length > 0 ? `Payment Terms: ${copyParts.join(" ")}` : "";
+}
+
+export function formatResidentialMoneyText(value, proposal = {}) {
+  let text = String(value ?? "");
+
+  if (!text.trim()) {
+    return text;
+  }
+
+  getResidentialMoneyValues(proposal).forEach((amount) => {
+    text = replaceResidentialAmountText(text, amount);
+  });
+
+  return text;
+}
+
+export function formatResidentialMoneyTextList(items = [], proposal = {}) {
+  return Array.isArray(items) ? items.map((item) => formatResidentialMoneyText(item, proposal)) : [];
+}
+
+export function getResidentialMoneyValues(proposal = {}) {
+  const options = getResidentialPricingOptions(proposal);
+  const addOns = getResidentialOptionalAddOns(proposal);
+  const addOnTotal = addOns.reduce((sum, addOn) => sum + toResidentialPricingNumber(addOn.amount), 0);
+  const values = [];
+
+  options.forEach((option) => {
+    const optionPrice = toResidentialPricingNumber(option.price);
+    values.push(optionPrice, option.downPayment, option.finalPayment);
+
+    if (addOnTotal > 0) {
+      const totalWithAddOns = optionPrice + addOnTotal;
+      values.push(totalWithAddOns, totalWithAddOns / 2);
+    }
+  });
+
+  addOns.forEach((addOn) => {
+    values.push(addOn.amount);
+  });
+
+  return [...new Set(values.map(toResidentialPricingNumber).filter((amount) => amount > 0).map((amount) => Math.round(amount)))].sort(
+    (a, b) => b - a,
+  );
+}
+
 export function normalizeResidentialScheduleOfValues(rows = []) {
   if (!Array.isArray(rows)) {
     return [];
@@ -234,6 +295,26 @@ export function getResidentialCoverDescription(proposal = {}, fallback = "") {
 
 function cleanResidentialText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function replaceResidentialAmountText(value, amount) {
+  const roundedAmount = Math.round(toResidentialPricingNumber(amount));
+  const formattedAmount = formatResidentialCurrency(roundedAmount);
+  const plainAmount = String(roundedAmount);
+  const commaAmount = new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(roundedAmount);
+  const variants = [plainAmount, `${plainAmount}.00`, commaAmount, `${commaAmount}.00`];
+
+  return variants.reduce((text, variant) => {
+    const pattern = new RegExp(`(^|[^\\w$])${escapeRegex(variant)}(?![\\w])`, "g");
+    return text.replace(pattern, (_match, prefix) => `${prefix}${formattedAmount}`);
+  }, value);
+}
+
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function normalizeResidentialKey(value) {
