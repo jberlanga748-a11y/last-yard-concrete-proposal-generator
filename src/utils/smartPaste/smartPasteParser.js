@@ -12,6 +12,7 @@ import {
   normalizeResidentialOptionImages,
   normalizeResidentialScheduleOfValues,
 } from "../proposalPacket/residentialPricing.js";
+import { normalizeResidentialLegalPapers } from "../proposalPacket/residentialLegalPapers.js";
 import {
   DEFAULT_PROPOSAL_MODE,
   getPacketModeForProposalMode,
@@ -290,6 +291,10 @@ function getSmartPasteApplyTargets(values = {}) {
     ].some(hasTextValue)
   ) {
     targets.push("Legal Terms");
+  }
+
+  if (values.residentialLegalPapers) {
+    targets.push("Residential Legal Papers");
   }
 
   if (values.packetBuilder?.length > 0 || hasTextValue(values.packetPrintOrder)) {
@@ -1241,6 +1246,12 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
 
   mergeNormalizedLegalTerms(values, fields, packet.legalTerms || {});
 
+  if (normalized.residentialLegalPapers) {
+    values.residentialLegalPapers = normalizeResidentialLegalPapers(normalized.residentialLegalPapers);
+    fields.push("residential legal papers");
+    recordSmartPasteSection(sections, "residentialLegalPapers");
+  }
+
   if (packet.finalPacketPrintOrder?.length > 0) {
     values.packetPrintOrder = packet.finalPacketPrintOrder.map((row) => `${row.order} - ${row.label} - ${row.status}`).join("\n");
     values.packetBuilder = mapNormalizedPacketPrintOrder(packet.finalPacketPrintOrder);
@@ -1687,6 +1698,10 @@ function applyParsedNotesToProposal(proposal, parsedNotes) {
 
   if (values.warrantyLimitation) {
     nextProposal.terms.warrantyLimitation = values.warrantyLimitation;
+  }
+
+  if (values.residentialLegalPapers) {
+    nextProposal.residentialLegalPapers = normalizeResidentialLegalPapers(values.residentialLegalPapers);
   }
 
   if (values.gcScopeControl) {

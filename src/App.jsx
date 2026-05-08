@@ -68,6 +68,7 @@ import {
   prepareImageFileForUpload,
   proposalAssetsBucket,
   sanitizeStoragePathSegment,
+  uploadLegalAttachmentPdfToCloud,
   uploadProposalAssetToCloud,
   uploadSubmittedPacketPdfToCloud,
   validatePdfUploadFile,
@@ -100,6 +101,12 @@ import {
   normalizeResidentialScheduleOfValues,
   removeResidentialItemImage,
 } from "./utils/proposalPacket/residentialPricing.js";
+import {
+  RESIDENTIAL_LEGAL_NOTICE_STATUS_OPTIONS,
+  getResidentialLegalStatusLabel,
+  normalizeResidentialLegalAttachment,
+  normalizeResidentialLegalPapers,
+} from "./utils/proposalPacket/residentialLegalPapers.js";
 import {
   PROPOSAL_PDF_BODY_TEXT_SIZE_LABELS,
   PROPOSAL_PDF_BODY_TEXT_SIZE_OPTIONS,
@@ -2713,6 +2720,96 @@ export default function App() {
     });
   }
 
+  async function attachResidentialLegalAttachment(file, attachmentType = "owner_notice") {
+    if (!canPerform("storageUpload")) {
+      return;
+    }
+
+    const legalPapers = normalizeResidentialLegalPapers(proposalDraft.residentialLegalPapers);
+    const attachmentId = createProposalId();
+
+    let pdfValidation;
+
+    try {
+      pdfValidation = validatePdfUploadFile(file);
+    } catch (error) {
+      setSaveMessage(error.message);
+      return;
+    }
+
+    const warningMessage = pdfValidation.warnings.length > 0 ? ` ${pdfValidation.warnings.join(" ")}` : "";
+    setAssetUploadMessage(`Uploading legal paper PDF... ${formatSelectedFileLabel(file)}${warningMessage}`);
+
+    try {
+      const uploadedAttachment = await uploadLegalAttachmentPdfToCloud(file, {
+        attachmentId,
+        companySettings,
+        companyUser: authUser,
+        companyDeps: companyCloudDeps,
+        proposalId: proposalDraft.id,
+      });
+      const nextAttachment = normalizeResidentialLegalAttachment({
+        id: attachmentId,
+        title: attachmentType === "owner_notice" ? "Information Notice to Owner About Construction Liens" : file.name || "Residential Legal Paper",
+        type: attachmentType,
+        ...uploadedAttachment,
+        includedInPdf: false,
+        providedSeparately: true,
+        acknowledgementRequired: true,
+      });
+      const nextProposal = createEditableProposal({
+        ...proposalDraft,
+        residentialLegalPapers: {
+          ...legalPapers,
+          legalAttachments: [...legalPapers.legalAttachments, nextAttachment],
+        },
+        updatedAt: new Date().toISOString(),
+      });
+
+      setProposalDirty(false);
+      setProposalDraft(nextProposal);
+      setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
+      await syncSingleProposalToCloud(nextProposal, "Residential legal paper uploaded to Supabase Storage and proposal synced.");
+      setAssetUploadMessage(`Uploaded legal paper PDF: ${nextAttachment.fileName || nextAttachment.title}.`);
+      recordActivity({
+        action: "Legal paper uploaded",
+        entityType: "storage",
+        entityId: proposalDraft.id,
+        entityLabel: nextAttachment.title,
+        notes: nextAttachment.storagePath,
+      });
+    } catch (error) {
+      console.error("Residential legal paper upload failed:", error);
+      setAssetUploadMessage(`Legal paper upload failed: ${formatStorageUploadError(error)}`);
+      recordActivity({
+        action: "Legal paper upload failed",
+        entityType: "storage",
+        entityId: proposalDraft.id,
+        entityLabel: file?.name || "Residential legal paper",
+        notes: formatStorageUploadError(error),
+      });
+    }
+  }
+
+  function removeResidentialLegalAttachment(attachmentIndex) {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    setProposalDirty(true);
+    setProposalDraft((currentProposal) => {
+      const legalPapers = normalizeResidentialLegalPapers(currentProposal.residentialLegalPapers);
+
+      return {
+        ...currentProposal,
+        residentialLegalPapers: {
+          ...legalPapers,
+          legalAttachments: legalPapers.legalAttachments.filter((_, index) => index !== attachmentIndex),
+        },
+      };
+    });
+  }
+
   async function markSendPackageSent(sendDraft) {
     if (!canPerform("sendWorkflow")) {
       return;
@@ -5098,6 +5195,8 @@ export default function App() {
                 onPlanSheetChange={updatePlanSheet}
                 onPlanSheetImageUpload={uploadPlanSheetImage}
                 onRemovePlanSheet={removePlanSheet}
+                onResidentialLegalAttachmentRemove={removeResidentialLegalAttachment}
+                onResidentialLegalAttachmentUpload={attachResidentialLegalAttachment}
                 onAddGcPacketTableRow={addGcPacketTableRow}
                 onGcPacketTableChange={updateGcPacketTable}
                 onGcPacketTableRowChange={updateGcPacketTableRow}
@@ -7784,6 +7883,8 @@ function ProposalEditor({
   onPlanSheetChange,
   onPlanSheetImageUpload,
   onRemovePlanSheet,
+  onResidentialLegalAttachmentRemove,
+  onResidentialLegalAttachmentUpload,
   onAddGcPacketTableRow,
   onGcPacketTableChange,
   onGcPacketTableRowChange,
@@ -8120,6 +8221,18 @@ function ProposalEditor({
         <LegalTermsEditor terms={proposal.terms} onChange={onChange} />
       </EditorSection>
 
+      {isResidentialProposalMode(proposalMode) ? (
+        <EditorSection id="residential-legal-papers-section" title="Residential Legal Papers">
+          <ResidentialLegalPapersEditor
+            message={assetUploadMessage}
+            papers={proposal.residentialLegalPapers}
+            onAttachmentRemove={onResidentialLegalAttachmentRemove}
+            onAttachmentUpload={onResidentialLegalAttachmentUpload}
+            onChange={onChange}
+          />
+        </EditorSection>
+      ) : null}
+
       <EditorSection id="pricing-section" title="Pricing / Line Items">
         <nav className="pricing-mini-toolbar" aria-label="Pricing editor shortcuts">
           <a href="#pricing-line-items" onClick={(event) => openEditorAccordionSection(event, "pricing-section")}>Line Items</a>
@@ -8313,6 +8426,7 @@ function EditorNavigation({ proposal, showTemplatePicker = false }) {
     isGcPrime ? ["Packet Builder", "packet-builder-section"] : null,
     isGcPrime ? ["Plan Sheets", "plan-sheets-section"] : null,
     isResidential ? ["Residential Terms", "legal-terms-section"] : ["Addenda / RFIs / Legal Terms", "legal-terms-section"],
+    isResidential ? ["Residential Legal Papers", "residential-legal-papers-section"] : null,
     ["Submitted Packet History", "submitted-packet-section"],
     ["PDF Archive", "pdf-archive-section"],
     ["Send / Submission", "send-submission-section"],
@@ -8818,6 +8932,166 @@ function LegalTermsEditor({ terms = {}, onChange }) {
           multiline
         />
       ))}
+    </div>
+  );
+}
+
+function ResidentialLegalPapersEditor({ message = "", papers = {}, onAttachmentRemove, onAttachmentUpload, onChange }) {
+  const normalizedPapers = normalizeResidentialLegalPapers(papers);
+  const ownerNotice = normalizedPapers.informationNoticeToOwner;
+  const cancellationNotice = normalizedPapers.rightToCancelNotice;
+
+  return (
+    <div className="residential-legal-papers-editor">
+      <p className="smart-paste-help">
+        Track customer-facing residential legal paperwork. This is a checklist only; Last Yard should verify current requirements before signing.
+      </p>
+
+      <div className="residential-legal-checklist-grid">
+        <section className="residential-legal-checklist-card">
+          <div className="residential-legal-checklist-heading">
+            <strong>Information Notice to Owner About Construction Liens</strong>
+            <span>{getResidentialLegalStatusLabel(ownerNotice.status)}</span>
+          </div>
+          <EditorField
+            label="Owner Notice Status"
+            path="residentialLegalPapers.informationNoticeToOwner.status"
+            value={ownerNotice.status}
+            onChange={onChange}
+            options={RESIDENTIAL_LEGAL_NOTICE_STATUS_OPTIONS.filter((status) => status !== "not_applicable")}
+          />
+          <label className="editor-check">
+            <input
+              checked={Boolean(ownerNotice.providedToCustomer)}
+              type="checkbox"
+              onChange={(event) => onChange("residentialLegalPapers.informationNoticeToOwner.providedToCustomer", event.target.checked)}
+            />
+            <span>Information Notice included / provided</span>
+          </label>
+          <EditorField
+            label="Provided Date"
+            path="residentialLegalPapers.informationNoticeToOwner.providedDate"
+            type="date"
+            value={ownerNotice.providedDate}
+            onChange={onChange}
+          />
+          <label className="editor-check">
+            <input
+              checked={Boolean(ownerNotice.customerAcknowledged)}
+              type="checkbox"
+              onChange={(event) => onChange("residentialLegalPapers.informationNoticeToOwner.customerAcknowledged", event.target.checked)}
+            />
+            <span>Customer acknowledged receipt</span>
+          </label>
+          <EditorField
+            label="Acknowledged Date"
+            path="residentialLegalPapers.informationNoticeToOwner.customerAcknowledgedDate"
+            type="date"
+            value={ownerNotice.customerAcknowledgedDate}
+            onChange={onChange}
+          />
+          <EditorField
+            label="Owner Notice Notes"
+            path="residentialLegalPapers.informationNoticeToOwner.notes"
+            value={ownerNotice.notes}
+            onChange={onChange}
+            multiline
+          />
+        </section>
+
+        <section className="residential-legal-checklist-card">
+          <div className="residential-legal-checklist-heading">
+            <strong>Cancellation Notice</strong>
+            <span>{getResidentialLegalStatusLabel(cancellationNotice.status)}</span>
+          </div>
+          <EditorField
+            label="Right-to-Cancel Status"
+            path="residentialLegalPapers.rightToCancelNotice.status"
+            value={cancellationNotice.status}
+            onChange={onChange}
+            options={RESIDENTIAL_LEGAL_NOTICE_STATUS_OPTIONS}
+          />
+          <EditorField
+            label="Cancellation Notice Notes"
+            path="residentialLegalPapers.rightToCancelNotice.notes"
+            value={cancellationNotice.notes}
+            onChange={onChange}
+            multiline
+          />
+        </section>
+      </div>
+
+      <section className="residential-legal-attachments">
+        <div className="residential-legal-checklist-heading">
+          <strong>Legal Attachments</strong>
+          <span>Listed in the residential proposal</span>
+        </div>
+        {/* TODO: Embed/merge uploaded legal PDFs when the PDF export pipeline supports external PDF pages. */}
+        <p className="smart-paste-help">
+          Uploaded legal PDFs are listed with the proposal. PDF page merging is intentionally deferred until a dedicated merge/export phase.
+        </p>
+        <label className="submitted-packet-upload-button" title="Upload a legal paper PDF for this residential proposal.">
+          <span>Attach Legal PDF</span>
+          <input
+            type="file"
+            accept="application/pdf,.pdf"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) {
+                onAttachmentUpload(file, "owner_notice");
+              }
+              event.target.value = "";
+            }}
+          />
+        </label>
+        {message ? <p className="asset-upload-message">{message}</p> : null}
+        {normalizedPapers.legalAttachments.length > 0 ? (
+          <div className="residential-legal-attachment-list">
+            {normalizedPapers.legalAttachments.map((attachment, index) => (
+              <article className="residential-legal-attachment-card" key={attachment.id || `${attachment.title}-${index}`}>
+                <EditorField
+                  label="Attachment Title"
+                  path={`residentialLegalPapers.legalAttachments.${index}.title`}
+                  value={attachment.title}
+                  onChange={onChange}
+                />
+                <EditorField
+                  label="Attachment Type"
+                  path={`residentialLegalPapers.legalAttachments.${index}.type`}
+                  value={attachment.type}
+                  onChange={onChange}
+                />
+                <div className="residential-legal-attachment-meta">
+                  <span>{attachment.fileName || "Legal PDF"}</span>
+                  {attachment.fileSize ? <span>{formatAssetFileSize(attachment.fileSize)}</span> : null}
+                  {attachment.uploadedAt ? <span>Uploaded {formatCloudSyncTime(attachment.uploadedAt)}</span> : null}
+                </div>
+                <label className="editor-check">
+                  <input
+                    checked={Boolean(attachment.providedSeparately)}
+                    type="checkbox"
+                    onChange={(event) => onChange(`residentialLegalPapers.legalAttachments.${index}.providedSeparately`, event.target.checked)}
+                  />
+                  <span>Provided separately</span>
+                </label>
+                <label className="editor-check">
+                  <input
+                    checked={Boolean(attachment.acknowledgementRequired)}
+                    type="checkbox"
+                    onChange={(event) => onChange(`residentialLegalPapers.legalAttachments.${index}.acknowledgementRequired`, event.target.checked)}
+                  />
+                  <span>Acknowledgement requested</span>
+                </label>
+                <button type="button" onClick={() => onAttachmentRemove(index)}>
+                  Remove Legal Attachment
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-list-message">No legal paper PDFs attached yet.</p>
+        )}
+      </section>
     </div>
   );
 }
@@ -10952,6 +11226,7 @@ function createBlankProposalDraft(existingProposals, companySettings = getDefaul
     pricingSections: [],
     exclusions: [],
     assumptions: [],
+    residentialLegalPapers: isResidentialProposalMode(normalizedMode) ? normalizeResidentialLegalPapers() : undefined,
     projectPhotos: normalizeProjectPhotos([]),
     planSheets: normalizePlanSheets([]),
     packetBuilder: isGcPrimePacketMode(normalizedMode) ? normalizePacketBuilder([]) : [],
@@ -10982,6 +11257,9 @@ function applyProposalModeToBlankProposal(proposal = {}, mode = DEFAULT_PROPOSAL
     pricingMode: isResidentialProposalMode(normalizedMode) ? proposal.pricingMode || "" : proposal.pricingMode || "",
     pricingOptions: isResidentialProposalMode(normalizedMode) ? proposal.pricingOptions || [] : [],
     optionalAddOns: isResidentialProposalMode(normalizedMode) ? proposal.optionalAddOns || [] : [],
+    residentialLegalPapers: isResidentialProposalMode(normalizedMode)
+      ? normalizeResidentialLegalPapers(proposal.residentialLegalPapers)
+      : proposal.residentialLegalPapers,
     packetBuilder: isGcPrimePacketMode(normalizedMode) ? normalizePacketBuilder(proposal.packetBuilder) : [],
   };
 
@@ -13196,6 +13474,11 @@ function createEditableProposal(seedProposal) {
     pricingMode: proposal.pricingMode || "",
     pricingOptions: normalizePricingOptions(proposal.pricingOptions),
     optionalAddOns: normalizeOptionalAddOns(proposal.optionalAddOns),
+    residentialLegalPapers: isResidentialProposalMode(proposalMode)
+      ? normalizeResidentialLegalPapers(proposal.residentialLegalPapers)
+      : proposal.residentialLegalPapers
+        ? normalizeResidentialLegalPapers(proposal.residentialLegalPapers)
+        : undefined,
     submittedPacketRecords: normalizeSubmittedPacketRecords(proposal.submittedPacketRecords),
     sendRecords: normalizeSendRecords(proposal.sendRecords),
     client: {

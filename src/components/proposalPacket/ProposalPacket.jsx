@@ -35,6 +35,11 @@ import {
   getProposalPdfStyleForMode,
   normalizeProposalPdfStyle,
 } from "../../utils/proposalPacket/proposalPdfStyle.js";
+import {
+  buildResidentialLegalPaperRows,
+  buildResidentialLegalSummarySections,
+  normalizeResidentialLegalPapers,
+} from "../../utils/proposalPacket/residentialLegalPapers.js";
 
 const legacyLogoSrc = "/assets/last-yard-logo.jpg";
 const logoSrc = legacyLogoSrc;
@@ -250,6 +255,9 @@ function ProposalPacketContent({ companySettings, proposal }) {
   const proposalTotals = calculateProposalTotals(packetProposal);
   const totalProposalPrice = formatCurrency(proposalTotals.total);
   const termsCopy = isResidentialMode ? buildResidentialPaymentTermsCopy(packetProposal) : buildTermsCopy(packetProposal.terms);
+  const residentialLegalPapers = isResidentialMode ? normalizeResidentialLegalPapers(packetProposal.residentialLegalPapers) : null;
+  const residentialLegalSummarySections = isResidentialMode ? buildResidentialLegalSummarySections(packetProposal) : [];
+  const residentialLegalPaperRows = isResidentialMode ? buildResidentialLegalPaperRows({ ...packetProposal, residentialLegalPapers }) : [];
   const visiblePricingSections = isResidentialMode ? [] : appendixPlan.mainPricingSections;
   const hasChooseOnePricing = hasResidentialChooseOnePricing(packetProposal);
   const residentialPricingOptionPrintPages = buildResidentialPricingOptionPrintPages(packetProposal);
@@ -406,6 +414,19 @@ function ProposalPacketContent({ companySettings, proposal }) {
       />
     ),
   }));
+  const residentialLegalPapersItem = {
+    key: "residential-legal-papers",
+    sectionId: "residential_legal_papers",
+    render: (pageNumber) => (
+      <ResidentialLegalPapersPage
+        company={company}
+        legalPaperRows={residentialLegalPaperRows}
+        legalSummarySections={residentialLegalSummarySections}
+        pageNumber={pageNumber}
+        projectName={packetProposal.project?.name}
+      />
+    ),
+  };
   const residentialPacketItems = [
     coverSummaryItem,
     ...residentialPricingItems,
@@ -428,6 +449,7 @@ function ProposalPacketContent({ companySettings, proposal }) {
       ),
     },
     ...planSheetItems,
+    residentialLegalPapersItem,
     {
       key: "residential-payment-terms",
       sectionId: "residential_payment_terms",
@@ -437,6 +459,7 @@ function ProposalPacketContent({ companySettings, proposal }) {
           pageNumber={pageNumber}
           pdfStyle={pdfStyle}
           projectName={packetProposal.project?.name}
+          showTermsCopy={residentialLegalSummarySections.length === 0}
           termsCopy={termsCopy}
         />
       ),
@@ -448,6 +471,7 @@ function ProposalPacketContent({ companySettings, proposal }) {
     ...structuredPacketItems,
     ...appendixItems,
     ...planSheetItems,
+    ...(isResidentialMode ? [residentialLegalPapersItem] : []),
   ];
   const packetItems = orderPacketRenderItems(
     packetProposal,
@@ -734,19 +758,73 @@ function ResidentialScopePage({ company, exclusions = [], pageNumber, pdfStyle, 
   );
 }
 
-function ResidentialPaymentTermsPage({ company, pageNumber, pdfStyle, projectName, termsCopy }) {
+function ResidentialLegalPapersPage({ company, legalPaperRows = [], legalSummarySections = [], pageNumber, projectName }) {
+  return (
+    <ProposalPage className="structured-packet-page residential-legal-papers-page">
+      <ResidentialPacketHeader company={company} pageTitle="Legal Summary / Customer Terms" projectName={projectName} />
+
+      <div className="structured-packet-body residential-page-body residential-legal-papers-body">
+        <div className="structured-accent" />
+        <p className="structured-packet-note">
+          Residential paperwork summary for customer review. Last Yard should verify current requirements before signing.
+        </p>
+
+        {legalSummarySections.length > 0 ? (
+          <section className="residential-print-section residential-legal-summary-section">
+            <h3>Legal Summary / Customer Terms</h3>
+            <div className="residential-legal-summary-grid">
+              {legalSummarySections.map((section) => (
+                <article className="residential-legal-summary-card" key={section.title}>
+                  <strong>{section.title}</strong>
+                  <p>{section.body}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : (
+          <section className="residential-print-section residential-legal-summary-section">
+            <h3>Legal Summary / Customer Terms</h3>
+            <p className="residential-empty-note">Customer terms should be reviewed before signing.</p>
+          </section>
+        )}
+
+        <section className="residential-print-section residential-legal-papers-section">
+          <h3>Legal Papers / Notices</h3>
+          <div className="residential-legal-paper-list">
+            {legalPaperRows.map((row) => (
+              <article className="residential-legal-paper-row" key={row.key || row.title}>
+                <div>
+                  <strong>{row.title}</strong>
+                  {row.notes ? <span>{row.notes}</span> : null}
+                  {row.meta ? <span>{row.meta}</span> : null}
+                </div>
+                <em>{row.status}</em>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
+    </ProposalPage>
+  );
+}
+
+function ResidentialPaymentTermsPage({ company, pageNumber, pdfStyle, projectName, showTermsCopy = true, termsCopy }) {
   const labels = getProposalToneLabels(pdfStyle);
 
   return (
     <ProposalPage className="structured-packet-page residential-terms-page">
-      <ResidentialPacketHeader company={company} pageTitle="Payment Terms / Acceptance" projectName={projectName} />
+      <ResidentialPacketHeader company={company} pageTitle={showTermsCopy ? "Payment Terms / Acceptance" : "Signature / Acceptance"} projectName={projectName} />
 
       <div className="structured-packet-body residential-page-body residential-terms-body">
         <div className="structured-accent" />
-        <section className="residential-print-section">
-          <h3>{labels.paymentTerms}</h3>
-          <p className="terms-copy residential-terms-copy">{termsCopy}</p>
-        </section>
+        {showTermsCopy ? (
+          <section className="residential-print-section">
+            <h3>{labels.paymentTerms}</h3>
+            <p className="terms-copy residential-terms-copy">{termsCopy}</p>
+          </section>
+        ) : null}
         <section className="residential-print-section">
           <h3>{labels.acceptance}</h3>
           <SignatureBlock companyName={company.name} />

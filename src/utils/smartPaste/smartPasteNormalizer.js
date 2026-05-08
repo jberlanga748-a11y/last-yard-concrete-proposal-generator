@@ -4,6 +4,7 @@ import {
   normalizeResidentialPricingOptions,
   normalizeResidentialScheduleOfValues,
 } from "../proposalPacket/residentialPricing.js";
+import { normalizeResidentialLegalPapers } from "../proposalPacket/residentialLegalPapers.js";
 import {
   getPacketModeForProposalMode,
   getProposalTypeForMode,
@@ -80,6 +81,7 @@ const EMPTY_NORMALIZED_SMART_PASTE = {
   confidence: 0,
   cleanupActions: [],
   sectionsCaptured: [],
+  residentialLegalPapers: null,
 };
 
 const SIMPLE_COVER_LABELS = {
@@ -272,9 +274,21 @@ function normalizeSmartPasteJsonImport(notes = "") {
   normalizeJsonPricing(pricing, source, normalized);
   normalizeJsonScope(scope, source, normalized);
   normalizeJsonPacket(packet, source, normalized);
+  normalizeJsonResidentialLegalPapers(source, normalized);
   finalizeNormalizedSmartPaste(normalized);
 
   return normalized;
+}
+
+function normalizeJsonResidentialLegalPapers(source = {}, normalized) {
+  const legalPaperSource = source.residentialLegalPapers || source.residentialLegal || source.legalPapers;
+
+  if (!legalPaperSource) {
+    return;
+  }
+
+  normalized.residentialLegalPapers = normalizeResidentialLegalPapers(legalPaperSource);
+  capture(normalized, "residentialLegalPapers");
 }
 
 function markInvalidJsonImport(normalized, warning) {

@@ -1081,6 +1081,29 @@ ${JSON.stringify(
       alternates: [],
       allowances: [],
     },
+    residentialLegalPapers: {
+      informationNoticeToOwner: {
+        status: "needs_review",
+        providedToCustomer: false,
+        providedDate: "",
+        customerAcknowledged: false,
+        customerAcknowledgedDate: "",
+        notes: "Verify Oregon CCB owner notice requirements before signing.",
+      },
+      rightToCancelNotice: {
+        status: "provided_separately",
+        notes: "Provided separately if applicable.",
+      },
+      legalAttachments: [
+        {
+          title: "Information Notice to Owner About Construction Liens",
+          type: "owner_notice",
+          fileName: "owner-notice.pdf",
+          providedSeparately: true,
+          acknowledgementRequired: true,
+        },
+      ],
+    },
   },
   null,
   2,
@@ -1110,6 +1133,9 @@ ${JSON.stringify(
   assert.equal(result.proposal.optionalAddOns[0].name, "Cantilever-Style Stair Upgrade");
   assert.equal(result.proposal.optionalAddOns[0].amount, 8500);
   assert.equal(result.proposal.optionalAddOns[0].images[0].label, "Cantilever stair example");
+  assert.equal(result.proposal.residentialLegalPapers.informationNoticeToOwner.status, "needs_review");
+  assert.equal(result.proposal.residentialLegalPapers.rightToCancelNotice.status, "provided_separately");
+  assert.equal(result.proposal.residentialLegalPapers.legalAttachments[0].title, "Information Notice to Owner About Construction Liens");
   assert.equal(result.proposal.lineItems.length, 1);
   assert.equal(result.proposal.lineItems[0].description, "Option 1 - Full Scope With Broom Finish");
   assert.equal(result.proposal.lineItems[0].unitPrice, 82500);
@@ -1127,6 +1153,7 @@ ${JSON.stringify(
   assert.equal(result.summary.optionalAddOns[0].images[0].uploadRequired, true);
   assert.equal(result.summary.scheduleOfValuesCount, 15);
   assert.ok(result.summary.applyTargets.includes("Schedule of Values"));
+  assert.ok(result.summary.applyTargets.includes("Residential Legal Papers"));
   assert.match(warningText(result), /Residential pricing options detected/);
   assert.match(warningText(result), /Image placeholders detected/);
 });

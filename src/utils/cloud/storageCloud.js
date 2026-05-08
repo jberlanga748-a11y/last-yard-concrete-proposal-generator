@@ -314,6 +314,51 @@ export async function uploadSubmittedPacketPdfToCloud(file, { companySettings, c
   };
 }
 
+export async function uploadLegalAttachmentPdfToCloud(file, { attachmentId, companySettings, companyUser, proposalId, companyDeps = {} }) {
+  if (!canUseCloudSync(companyUser)) {
+    throw new Error("Legal paper attachment upload requires cloud sign-in.");
+  }
+
+  validatePdfUploadFile(file);
+
+  const activeUser = await getActiveSupabaseUser();
+  const companyRecord = await ensureCloudCompany(activeUser, companySettings, companyDeps);
+  const timestamp = Date.now();
+  const safeAttachmentId = sanitizeStoragePathSegment(attachmentId || "legal-paper");
+  const proposalPathSegment = sanitizeStoragePathSegment(proposalId || "unsaved");
+  const storagePath = `company/${companyRecord.id}/proposals/${proposalPathSegment}/legal-papers/${safeAttachmentId}-${timestamp}.pdf`;
+  const uploadOptions = {
+    cacheControl: "3600",
+    contentType: file.type || "application/pdf",
+    upsert: false,
+  };
+  const { data, error } = await supabase.storage.from(proposalAssetsBucket).upload(storagePath, file, uploadOptions);
+
+  if (error) {
+    console.error("Supabase Storage legal paper PDF upload failed:", {
+      bucket: proposalAssetsBucket,
+      error,
+      path: storagePath,
+    });
+    throw new Error(formatStorageUploadError(error));
+  }
+
+  const uploadedPath = data?.path || storagePath;
+  const publicUrl = getStoragePublicUrl(uploadedPath);
+
+  return {
+    fileName: file.name || `${safeAttachmentId}.pdf`,
+    fileSize: file.size || 0,
+    fileType: file.type || "application/pdf",
+    publicUrl,
+    storagePath: uploadedPath,
+    uploadedAt: new Date().toISOString(),
+    uploadedBy: activeUser.email || "",
+    uploadedByEmail: activeUser.email || "",
+    uploadedByUserId: activeUser.id || "",
+  };
+}
+
 export async function getActiveSupabaseUser() {
   const { data, error } = await supabase.auth.getSession();
 

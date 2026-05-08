@@ -26,6 +26,8 @@ const filesToCheck = [
   "src/utils/proposalPacket/printContentCleanup.test.js",
   "src/utils/proposalPacket/proposalPdfStyle.js",
   "src/utils/proposalPacket/proposalPdfStyle.test.js",
+  "src/utils/proposalPacket/residentialLegalPapers.js",
+  "src/utils/proposalPacket/residentialLegalPapers.test.js",
   "src/utils/proposalPacket/residentialPricing.js",
   "src/utils/proposalPacket/residentialPricing.test.js",
   "src/utils/proposals/proposalDraftCleanup.js",
