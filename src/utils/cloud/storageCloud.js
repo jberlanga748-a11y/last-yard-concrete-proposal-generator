@@ -194,11 +194,11 @@ export async function uploadProposalAssetToCloud(file, { area, companySettings, 
     throw new Error("Sign in to upload images to cloud storage.");
   }
 
-  validateImageUploadFile(file, { kind: area === "plans" ? "plan" : "featured" });
+  const safeArea = getProposalAssetArea(area);
+  validateImageUploadFile(file, { kind: safeArea === "plans" ? "plan" : "featured" });
 
   const activeUser = await getActiveSupabaseUser();
   const companyRecord = await ensureCloudCompany(activeUser, companySettings, companyDeps);
-  const safeArea = area === "plans" ? "plans" : "featured";
   const timestamp = Date.now();
   const extension = getFileExtension(file);
   const safeFileStem = sanitizeStoragePathSegment(fileStem || file.name || "image");
@@ -246,6 +246,18 @@ export async function uploadProposalAssetToCloud(file, { area, companySettings, 
     storagePath: uploadedPath,
     uploadedAt: new Date().toISOString(),
   };
+}
+
+function getProposalAssetArea(area) {
+  if (area === "plans") {
+    return "plans";
+  }
+
+  if (area === "option-photos") {
+    return "option-photos";
+  }
+
+  return "featured";
 }
 
 export async function uploadSubmittedPacketPdfToCloud(file, { companySettings, companyUser, packetRecordId, proposalId, companyDeps = {} }) {

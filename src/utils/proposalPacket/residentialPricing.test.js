@@ -20,6 +20,7 @@ import {
   normalizeResidentialPricingOptions,
   normalizeResidentialOptionalAddOns,
   removeResidentialItemImage,
+  replaceResidentialItemImage,
 } from "./residentialPricing.js";
 
 const residentialProposal = {
@@ -138,7 +139,61 @@ test("prints uploaded option images but hides placeholder-only images", () => {
   assert.equal(getPrintableResidentialOptionImages(options[0].images).length, 0);
   assert.equal(getPrintableResidentialOptionImages(options[1].images).length, 1);
   assert.equal(getPrintableResidentialOptionImages([{ label: "Upload", src: "UPLOAD IMAGE" }]).length, 0);
+  assert.equal(getPrintableResidentialOptionImages([{ label: "Missing source", caption: "No uploaded image yet" }]).length, 0);
   assert.equal(countResidentialOptionImagePlaceholders(residentialProposal), 2);
+});
+
+test("keeps multiple uploaded option images printable under the selected option", () => {
+  const options = normalizeResidentialPricingOptions([
+    {
+      name: "Option 1",
+      price: 82500,
+      images: [
+        { label: "Broom finish one", caption: "Broom finish photo 1", src: "data:image/png;base64,one" },
+        { label: "Broom finish two", caption: "Broom finish photo 2", publicUrl: "https://example.test/broom-two.jpg" },
+        { label: "Broom upload reminder", caption: "Upload broom photo", uploadRequired: true },
+      ],
+    },
+    {
+      name: "Option 2",
+      price: 97500,
+      images: [{ label: "Stamped upload reminder", caption: "Upload stamped photo", uploadRequired: true }],
+    },
+  ]);
+
+  assert.equal(getPrintableResidentialOptionImages(options[0].images).length, 2);
+  assert.equal(getPrintableResidentialOptionImages(options[1].images).length, 0);
+  assert.deepEqual(
+    getPrintableResidentialOptionImages(options[0].images).map((image) => image.caption),
+    ["Broom finish photo 1", "Broom finish photo 2"],
+  );
+});
+
+test("caption edits replace only the targeted residential option image", () => {
+  const options = normalizeResidentialPricingOptions([
+    {
+      name: "Option 1",
+      price: 82500,
+      images: [
+        { label: "Broom one", caption: "Old broom caption", src: "data:image/png;base64,one" },
+        { label: "Broom two", caption: "Second broom caption", src: "data:image/png;base64,two" },
+      ],
+    },
+    {
+      name: "Option 2",
+      price: 97500,
+      images: [{ label: "Stamped", caption: "Stamped caption", src: "data:image/png;base64,stamped" }],
+    },
+  ]);
+
+  const nextOptions = replaceResidentialItemImage(options, 0, 1, {
+    ...options[0].images[1],
+    caption: "Updated second broom caption",
+  });
+
+  assert.equal(nextOptions[0].images[0].caption, "Old broom caption");
+  assert.equal(nextOptions[0].images[1].caption, "Updated second broom caption");
+  assert.equal(nextOptions[1].images[0].caption, "Stamped caption");
 });
 
 test("removing residential images only affects the selected option or add-on", () => {

@@ -28,9 +28,9 @@ import {
   isResidentialProposalMode,
 } from "../../utils/proposals/proposalModes.js";
 
-const logoSrc = "/assets/last-yard/last-yard-concrete-logo.png";
 const legacyLogoSrc = "/assets/last-yard-logo.jpg";
-const fallbackLogoSources = ["/last-yard-concrete-logo.png", legacyLogoSrc];
+const logoSrc = legacyLogoSrc;
+const fallbackLogoSources = ["/assets/last-yard/last-yard-concrete-logo.png", "/last-yard-concrete-logo.png"];
 const PacketRenderContext = createContext(null);
 
 const defaultProjectPhotos = [
@@ -1162,7 +1162,7 @@ function Field({ label, value, className = "" }) {
 
 function PhotoBand({ photos = defaultProjectPhotos }) {
   const { normalizeProjectPhotos } = usePacketHelpers();
-  const photoSlots = normalizeProjectPhotos(photos);
+  const photoSlots = normalizeProjectPhotos(photos).slice(0, 3);
 
   return (
     <section className="photo-band">
