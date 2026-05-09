@@ -4,11 +4,14 @@ import test from "node:test";
 import {
   fetchCloudProposals,
   fetchCloudProposalById,
+  fetchCloudProposalByShareToken,
   formatCloudProposalSaveError,
   getCloudProposalRowStatus,
   getCloudProposalLoadWarning,
   getCloudProposalSaveWarning,
+  isCloudProposalListSummaryOnly,
   mergeCloudPortalFieldsForSave,
+  saveCloudProposals,
   sanitizeProposalDataForCloudSave,
   saveCloudProposal,
   uploadLocalProposalImagesToStorage,
@@ -32,6 +35,7 @@ function createFakeSupabase({
   rows = [],
   onUpdate = () => {},
   onInsert = () => {},
+  onSelect = () => {},
   onUpsert = () => {},
   onRange = () => {},
   updateResults = [],
@@ -49,7 +53,8 @@ function createFakeSupabase({
       assert.equal(tableName, "proposals");
 
       return {
-        select() {
+        select(columns = "") {
+          onSelect(columns);
           const filters = {};
           const applyFilters = () =>
             rows.filter((row) => {
@@ -61,7 +66,15 @@ function createFakeSupabase({
                 return false;
               }
 
+              if (filters.customer_share_token && row.customer_share_token !== filters.customer_share_token) {
+                return false;
+              }
+
               if (filters["proposal_data->>id"] && row.proposal_data?.id !== filters["proposal_data->>id"]) {
+                return false;
+              }
+
+              if (filters["proposal_data->>customerShareToken"] && row.proposal_data?.customerShareToken !== filters["proposal_data->>customerShareToken"]) {
                 return false;
               }
 
@@ -171,6 +184,95 @@ test("fetchCloudProposals loads proposal collections with paginated range querie
   assert.equal(proposals[0].proposalNumber, "LYC-1");
 });
 
+test("fetchCloudProposals uses lightweight summary columns without selecting proposal_data", async () => {
+  const selectedColumns = [];
+  const rows = [
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      company_id: "company-1",
+      created_at: "2026-05-08T08:00:00.000Z",
+      updated_at: "2026-05-08T09:00:00.000Z",
+      status: "sent",
+      proposal_number: "LYC-100",
+      proposal_type: "estimate",
+      packet_mode: "summary",
+      project_name: "Residential Patio",
+      client_name: "Homeowner",
+      proposal_mode: "residential",
+      pricing_mode: "base_plus_addons",
+      total_amount: 50000,
+      customer_share_enabled: true,
+      customer_share_token: "lyp_public",
+      customer_selection_status: "submitted",
+      customer_approval_status: "none",
+      proposal_status: "customer_selection_submitted",
+    },
+  ];
+
+  const proposals = await fetchCloudProposals("company-1", {
+    ...cloudDeps,
+    supabaseClient: createFakeSupabase({
+      rows,
+      onSelect(columns) {
+        selectedColumns.push(columns);
+      },
+    }),
+  });
+
+  assert.equal(selectedColumns.length, 1);
+  assert.equal(selectedColumns[0].includes("proposal_data"), false);
+  assert.equal(selectedColumns[0].includes("project_name"), true);
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0].project.name, "Residential Patio");
+  assert.equal(proposals[0].client.companyName, "Homeowner");
+  assert.equal(proposals[0].pricing.pricingMode, "base_plus_addons");
+  assert.equal(proposals[0].totalProposal, 50000);
+  assert.equal(proposals[0].customerSelection.status, "submitted");
+  assert.equal(isCloudProposalListSummaryOnly(proposals[0]), true);
+});
+
+test("fetchCloudProposals retries minimal summary columns when optional summary columns are missing", async () => {
+  const selectedColumns = [];
+  const rows = [
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      company_id: "company-1",
+      created_at: "2026-05-08T08:00:00.000Z",
+      updated_at: "2026-05-08T09:00:00.000Z",
+      status: "draft",
+      proposal_number: "LYC-BASIC",
+      proposal_type: "estimate",
+      packet_mode: "summary",
+    },
+  ];
+
+  const proposals = await fetchCloudProposals("company-1", {
+    ...cloudDeps,
+    supabaseClient: createFakeSupabase({
+      rows,
+      onSelect(columns) {
+        selectedColumns.push(columns);
+      },
+      rangeResults: [
+        {
+          data: null,
+          error: {
+            code: "PGRST204",
+            message: "Could not find the 'customer_share_token' column of 'proposals' in the schema cache",
+          },
+        },
+        { data: rows, error: null },
+      ],
+    }),
+  });
+
+  assert.equal(selectedColumns[0].includes("customer_share_token"), true);
+  assert.equal(selectedColumns[1].includes("customer_share_token"), false);
+  assert.equal(selectedColumns[1].includes("proposal_data"), false);
+  assert.equal(proposals.length, 1);
+  assert.match(getCloudProposalLoadWarning(proposals), /summary columns are missing/);
+});
+
 test("fetchCloudProposals retries statement timeout with a smaller page size", async () => {
   const ranges = [];
   const rows = [
@@ -227,7 +329,7 @@ test("fetchCloudProposals returns partial results if a later page times out afte
   });
 
   assert.equal(proposals.length, 2);
-  assert.match(getCloudProposalLoadWarning(proposals), /Cloud proposal load timed out after 2 proposals/);
+  assert.match(getCloudProposalLoadWarning(proposals), /Cloud proposal list timed out because full proposal data is too large/);
 });
 
 test("cloud save merge preserves newer public customer selection from portal writes", () => {
@@ -421,6 +523,11 @@ test("saveCloudProposal does not wipe portal fields while persisting residential
   assert.equal(updatePayload.proposal_data.customerSelection.status, "submitted");
   assert.equal(updatePayload.proposal_data.proposalListSummary.proposalMode, "residential");
   assert.equal(updatePayload.proposal_data.proposalListSummary.projectName || "", "");
+  assert.equal(updatePayload.proposal_mode, "residential");
+  assert.equal(updatePayload.pricing_mode, "base_plus_addons");
+  assert.equal(updatePayload.customer_share_enabled, true);
+  assert.equal(updatePayload.customer_share_token, "lyp_public");
+  assert.equal(updatePayload.customer_selection_status, "submitted");
   assert.equal(updatePayload.status, "draft");
   assert.ok(updatePayload.updated_at);
 });
@@ -738,6 +845,7 @@ test("saveCloudProposal blocks oversized sanitized proposal payload before cloud
 });
 
 test("fetchCloudProposalById hydrates full customer portal data for signed-in proposal opens", async () => {
+  const selectedColumns = [];
   const row = createProposalRow({
     customerSelection: {
       status: "submitted",
@@ -762,14 +870,78 @@ test("fetchCloudProposalById hydrates full customer portal data for signed-in pr
 
   const proposal = await fetchCloudProposalById("company-1", "proposal-1", {
     ...cloudDeps,
-    supabaseClient: createFakeSupabase({ rows: [row] }),
+    supabaseClient: createFakeSupabase({
+      rows: [row],
+      onSelect(columns) {
+        selectedColumns.push(columns);
+      },
+    }),
   });
 
+  assert.equal(selectedColumns.every((columns) => columns.includes("proposal_data")), true);
   assert.equal(proposal.id, "proposal-1");
   assert.equal(proposal.customerSelection.status, "submitted");
   assert.equal(proposal.customerApproval.status, "approved_signed");
   assert.equal(proposal.pricing.optionalAddOns[0].amount, 10000);
   assert.equal(proposal.residentialLegalPapers.informationNoticeToOwner.status, "needs_review");
+});
+
+test("fetchCloudProposalByShareToken uses indexed customer_share_token column before JSON fallback", async () => {
+  const row = createProposalRow({
+    id: "proposal-share-token",
+    customerShareEnabled: true,
+    customerShareToken: "",
+    proposalMode: "residential",
+  });
+  row.company_id = "company-1";
+  row.customer_share_token = "lyp_indexed";
+
+  const proposal = await fetchCloudProposalByShareToken("lyp_indexed", {
+    ...cloudDeps,
+    supabaseClient: createFakeSupabase({ rows: [row] }),
+  });
+
+  assert.equal(proposal.id, "proposal-share-token");
+});
+
+test("saveCloudProposals skips lightweight summary rows so they cannot overwrite full proposal data", async () => {
+  const rows = [
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      company_id: "company-1",
+      created_at: "2026-05-08T08:00:00.000Z",
+      updated_at: "2026-05-08T09:00:00.000Z",
+      status: "draft",
+      proposal_number: "LYC-SUMMARY",
+      project_name: "Summary Only",
+      client_name: "Homeowner",
+      total_amount: 50000,
+    },
+  ];
+  let wroteProposal = false;
+  const summaries = await fetchCloudProposals("company-1", {
+    ...cloudDeps,
+    supabaseClient: createFakeSupabase({ rows }),
+  });
+
+  const saved = await saveCloudProposals("company-1", summaries, {
+    ...cloudDeps,
+    supabaseClient: createFakeSupabase({
+      onInsert() {
+        wroteProposal = true;
+      },
+      onUpdate() {
+        wroteProposal = true;
+      },
+      onUpsert() {
+        wroteProposal = true;
+      },
+    }),
+  });
+
+  assert.equal(saved.length, 1);
+  assert.equal(wroteProposal, false);
+  assert.equal(isCloudProposalListSummaryOnly(saved[0]), true);
 });
 
 test("cloud proposal row status keeps workflow status inside proposal data while using compatible row status", () => {
@@ -857,7 +1029,7 @@ test("formatCloudProposalSaveError returns safe actionable reasons", () => {
     formatCloudProposalSaveError({ message: "canceling statement due to statement timeout", code: "57014" }),
     {
       code: "57014",
-      message: "Cloud proposal load timed out. Try loading fewer proposals or contact support.",
+      message: "Cloud proposal list timed out because full proposal data is too large. Local drafts are still safe.",
       reason: "statement-timeout",
     },
   );

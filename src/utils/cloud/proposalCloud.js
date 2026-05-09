@@ -40,28 +40,56 @@ const cloudProposalRowStatusByWorkflowStatus = {
 const defaultCloudProposalPageSize = 25;
 const retryCloudProposalPageSize = 10;
 const maxCloudProposalPayloadBytes = 2 * 1024 * 1024;
+const cloudProposalFullSelectColumns = "id,proposal_data,created_at,updated_at";
+const cloudProposalSummarySelectColumns = [
+  "id",
+  "created_at",
+  "updated_at",
+  "status",
+  "proposal_number",
+  "proposal_type",
+  "packet_mode",
+  "project_name",
+  "client_name",
+  "proposal_mode",
+  "pricing_mode",
+  "total_amount",
+  "customer_share_enabled",
+  "customer_share_token",
+  "customer_share_expires_at",
+  "customer_selection_status",
+  "customer_approval_status",
+  "proposal_status",
+].join(",");
+const cloudProposalMinimalSummarySelectColumns = "id,created_at,updated_at,status,proposal_number,proposal_type,packet_mode";
+const cloudProposalSummaryColumnsMissingWarning =
+  "Cloud proposal summary columns are missing. Run the Supabase summary-column migration; showing a basic cloud proposal list.";
+const cloudProposalListTimeoutMessage = "Cloud proposal list timed out because full proposal data is too large. Local drafts are still safe.";
 const localOnlyImageCloudSaveWarning = "Some photos are stored locally only until uploaded to cloud storage.";
 const failedImageCloudUploadWarning = "Some photos could not be uploaded to cloud storage yet. They may not appear for customers until uploaded.";
 const cloudSaveBlockedLargePayloadMessage =
   "Cloud save blocked because this proposal contains too much embedded image data. Local draft is still saved. Upload photos to cloud storage or remove/compress photos.";
 const cloudSaveNetworkFailureMessage = "Cloud save failed before Supabase returned details. Your local draft is still saved.";
 const embeddedImageFieldNames = new Set(["dataUrl", "src", "imageSrc", "publicUrl", "signedUrl", "thumbnailUrl", "url"]);
+const cloudProposalListSummaryOnlyProperty = "__lastYardCloudListSummaryOnly";
 
 function normalizeProposalForCloud(proposal = {}, deps = {}, options = {}) {
   const lightweightNormalizer = options.forCollection ? deps.normalizeProposalForCollection : null;
+  const summaryOnly = isCloudProposalListSummaryOnly(proposal);
+  let normalizedProposal;
 
   if (lightweightNormalizer) {
-    return lightweightNormalizer(proposal);
+    normalizedProposal = lightweightNormalizer(proposal);
+  } else if (deps.normalizeProposal) {
+    normalizedProposal = deps.normalizeProposal(proposal);
+  } else {
+    normalizedProposal = {
+      ...proposal,
+      id: proposal.id || createCloudFallbackId("proposal"),
+    };
   }
 
-  if (deps.normalizeProposal) {
-    return deps.normalizeProposal(proposal);
-  }
-
-  return {
-    ...proposal,
-    id: proposal.id || createCloudFallbackId("proposal"),
-  };
+  return summaryOnly ? attachCloudProposalListSummaryOnly(normalizedProposal) : normalizedProposal;
 }
 
 function createProposalId(deps = {}) {
@@ -131,13 +159,23 @@ export async function fetchCloudProposals(companyId, deps = {}) {
   let pageSize = normalizeCloudProposalPageSize(deps.cloudProposalPageSize, defaultCloudProposalPageSize);
   const smallerPageSize = normalizeCloudProposalPageSize(deps.cloudProposalRetryPageSize, retryCloudProposalPageSize);
   let retriedAfterTimeout = false;
+  let useMinimalSummaryColumns = false;
+  const warnings = [];
 
   while (true) {
     let rows;
 
     try {
-      rows = await fetchCloudProposalPage(client, companyId, start, pageSize);
+      rows = await fetchCloudProposalPage(client, companyId, start, pageSize, { minimalColumns: useMinimalSummaryColumns });
     } catch (error) {
+      if (isMissingOptionalCloudSummaryColumnError(error) && !useMinimalSummaryColumns) {
+        useMinimalSummaryColumns = true;
+        proposals.length = 0;
+        start = 0;
+        warnings.push(cloudProposalSummaryColumnsMissingWarning);
+        continue;
+      }
+
       if (isStatementTimeoutError(error) && !retriedAfterTimeout && smallerPageSize < pageSize) {
         pageSize = smallerPageSize;
         retriedAfterTimeout = true;
@@ -147,7 +185,10 @@ export async function fetchCloudProposals(companyId, deps = {}) {
       if (isStatementTimeoutError(error) && proposals.length > 0) {
         return attachCloudProposalLoadWarning(
           proposals,
-          `Cloud proposal load timed out after ${proposals.length} proposal${proposals.length === 1 ? "" : "s"}. Showing partial cloud results; try again later or contact support.`,
+          joinCloudProposalWarnings(
+            warnings,
+            `${cloudProposalListTimeoutMessage} Showing partial cloud results after ${proposals.length} proposal${proposals.length === 1 ? "" : "s"}.`,
+          ),
         );
       }
 
@@ -170,7 +211,7 @@ export async function fetchCloudProposals(companyId, deps = {}) {
     start += rows.length;
   }
 
-  return proposals;
+  return warnings.length > 0 ? attachCloudProposalLoadWarning(proposals, joinCloudProposalWarnings(warnings)) : proposals;
 }
 
 export async function fetchCloudProposalByShareToken(shareToken, deps = {}) {
@@ -181,9 +222,42 @@ export async function fetchCloudProposalByShareToken(shareToken, deps = {}) {
   }
 
   const client = getSupabaseClient(deps);
+  let row = null;
+
+  try {
+    row = await fetchCloudProposalRowByShareTokenColumn(client, normalizedToken);
+  } catch (error) {
+    if (!isMissingOptionalCloudSummaryColumnError(error)) {
+      throw error;
+    }
+  }
+
+  if (!row) {
+    row = await fetchCloudProposalRowByShareTokenJson(client, normalizedToken);
+  }
+
+  return row ? normalizeCloudProposalRow(row, deps, { forCollection: false }) : null;
+}
+
+async function fetchCloudProposalRowByShareTokenColumn(client, normalizedToken) {
   const { data, error } = await client
     .from("proposals")
-    .select("id,proposal_data,created_at,updated_at")
+    .select(cloudProposalFullSelectColumns)
+    .eq("customer_share_token", normalizedToken)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data || null;
+}
+
+async function fetchCloudProposalRowByShareTokenJson(client, normalizedToken) {
+  const { data, error } = await client
+    .from("proposals")
+    .select(cloudProposalFullSelectColumns)
     .filter("proposal_data->>customerShareToken", "eq", normalizedToken)
     .limit(1)
     .maybeSingle();
@@ -192,7 +266,7 @@ export async function fetchCloudProposalByShareToken(shareToken, deps = {}) {
     throw error;
   }
 
-  return data ? normalizeCloudProposalRow(data, deps, { forCollection: false }) : null;
+  return data || null;
 }
 
 export async function fetchCloudProposalById(companyId, proposalId, deps = {}) {
@@ -212,6 +286,11 @@ export async function saveCloudProposals(companyId, proposals = [], deps = {}) {
   const savedProposals = [];
 
   for (const proposal of proposals.filter(isPlainObject)) {
+    if (isCloudProposalListSummaryOnly(proposal)) {
+      savedProposals.push(proposal);
+      continue;
+    }
+
     savedProposals.push(await saveCloudProposal(companyId, proposal, deps));
   }
 
@@ -293,7 +372,7 @@ async function findCloudProposalRow(companyId, proposalId, client = getSupabaseC
   if (isUuid(normalizedProposalId)) {
     const { data, error } = await client
       .from("proposals")
-      .select("id,proposal_data,created_at,updated_at")
+      .select(cloudProposalFullSelectColumns)
       .eq("company_id", companyId)
       .eq("id", normalizedProposalId)
       .maybeSingle();
@@ -309,7 +388,7 @@ async function findCloudProposalRow(companyId, proposalId, client = getSupabaseC
 
   const { data, error } = await client
     .from("proposals")
-    .select("id,proposal_data,created_at,updated_at")
+    .select(cloudProposalFullSelectColumns)
     .eq("company_id", companyId)
     .filter("proposal_data->>id", "eq", normalizedProposalId)
     .limit(1)
@@ -324,18 +403,33 @@ async function findCloudProposalRow(companyId, proposalId, client = getSupabaseC
 
 function createCloudProposalRow(companyId, proposal, deps = {}) {
   const normalizedProposal = normalizeProposalForCloud(proposal, deps);
+  const proposalListSummary = createCloudProposalListSummary(normalizedProposal);
   const proposalData = {
     ...normalizedProposal,
-    proposalListSummary: createCloudProposalListSummary(normalizedProposal),
+    proposalListSummary,
   };
+  const pricingMode = getCloudProposalSummaryPricingMode(normalizedProposal);
+  const customerSelection = normalizeCustomerSelection(normalizedProposal.customerSelection);
+  const customerApproval = normalizeCustomerApproval(normalizedProposal.customerApproval);
   const row = {
+    client_name: proposalListSummary.clientName || proposalListSummary.contactName || "",
     company_id: companyId,
     contact_id: isUuid(normalizedProposal.contactId) ? normalizedProposal.contactId : null,
+    customer_approval_status: customerApproval.status || CUSTOMER_APPROVAL_STATUS_NONE,
+    customer_selection_status: customerSelection.status || CUSTOMER_SELECTION_STATUS_NONE,
+    customer_share_enabled: normalizedProposal.customerShareEnabled === true,
+    customer_share_expires_at: normalizedProposal.customerShareExpiresAt || null,
+    customer_share_token: normalizeCustomerShareToken(normalizedProposal.customerShareToken) || null,
     packet_mode: normalizedProposal.packetMode || "summary",
+    pricing_mode: pricingMode,
+    project_name: proposalListSummary.projectName || "",
+    proposal_mode: proposalListSummary.proposalMode || "",
     proposal_data: proposalData,
     proposal_number: normalizedProposal.proposalNumber || "",
+    proposal_status: normalizedProposal.status || "draft",
     proposal_type: normalizedProposal.proposalType || normalizedProposal.type || "",
     status: getCloudProposalRowStatus(normalizedProposal.status),
+    total_amount: proposalListSummary.total || 0,
     updated_at: normalizedProposal.updatedAt || new Date().toISOString(),
   };
 
@@ -363,7 +457,10 @@ function createCompatibleCloudProposalRow(row = {}) {
 
 function shouldRetryWithCompatibleProposalRow(error = {}) {
   const combined = getCloudErrorText(error);
-  const mentionsOptionalColumn = /(contact_id|packet_mode|proposal_number|proposal_type)/i.test(combined);
+  const mentionsOptionalColumn =
+    /(contact_id|packet_mode|proposal_number|proposal_type|project_name|client_name|proposal_mode|pricing_mode|total_amount|customer_share_enabled|customer_share_token|customer_share_expires_at|customer_selection_status|customer_approval_status|proposal_status)/i.test(
+      combined,
+    );
   return mentionsOptionalColumn && /(column|schema cache|pgrst204|42703)/i.test(combined);
 }
 
@@ -396,7 +493,7 @@ export function formatCloudProposalSaveError(error = {}) {
   if (/statement timeout|canceling statement due to statement timeout|57014/.test(lowerCombined)) {
     return {
       code,
-      message: "Cloud proposal load timed out. Try loading fewer proposals or contact support.",
+      message: cloudProposalListTimeoutMessage,
       reason: "statement-timeout",
     };
   }
@@ -820,11 +917,11 @@ function attachCloudProposalSaveWarning(proposal = {}, warning = "") {
   return proposal;
 }
 
-async function fetchCloudProposalPage(client, companyId, start, pageSize) {
+async function fetchCloudProposalPage(client, companyId, start, pageSize, { minimalColumns = false } = {}) {
   const end = start + pageSize - 1;
   const { data, error } = await client
     .from("proposals")
-    .select("id,proposal_data,created_at,updated_at")
+    .select(minimalColumns ? cloudProposalMinimalSummarySelectColumns : cloudProposalSummarySelectColumns)
     .eq("company_id", companyId)
     .order("updated_at", { ascending: false })
     .range(start, end);
@@ -846,11 +943,28 @@ function isStatementTimeoutError(error = {}) {
 }
 
 function createCloudProposalStatementTimeoutError(error = {}) {
-  const timeoutError = new Error("Cloud proposal load timed out. Try loading fewer proposals or contact support.");
+  const timeoutError = new Error(cloudProposalListTimeoutMessage);
   timeoutError.code = error?.code || error?.status || "";
   timeoutError.reason = "statement-timeout";
   timeoutError.originalMessage = getCloudErrorMessage(error);
   return timeoutError;
+}
+
+function isMissingOptionalCloudSummaryColumnError(error = {}) {
+  const combined = getCloudErrorText(error);
+  const mentionsSummaryColumn =
+    /(project_name|client_name|proposal_mode|pricing_mode|total_amount|customer_share_enabled|customer_share_token|customer_share_expires_at|customer_selection_status|customer_approval_status|proposal_status)/i.test(
+      combined,
+    );
+  return mentionsSummaryColumn && /(column|schema cache|pgrst204|42703)/i.test(combined);
+}
+
+function joinCloudProposalWarnings(...warnings) {
+  return warnings
+    .flat()
+    .map((warning) => String(warning || "").trim())
+    .filter(Boolean)
+    .join(" ");
 }
 
 function attachCloudProposalLoadWarning(proposals = [], warning = "") {
@@ -865,6 +979,20 @@ function attachCloudProposalLoadWarning(proposals = [], warning = "") {
 
 export function getCloudProposalLoadWarning(proposals = []) {
   return Array.isArray(proposals) ? proposals.cloudLoadWarning || "" : "";
+}
+
+function attachCloudProposalListSummaryOnly(proposal = {}) {
+  Object.defineProperty(proposal, cloudProposalListSummaryOnlyProperty, {
+    configurable: true,
+    enumerable: false,
+    value: true,
+  });
+
+  return proposal;
+}
+
+export function isCloudProposalListSummaryOnly(proposal = {}) {
+  return Boolean(proposal?.[cloudProposalListSummaryOnlyProperty]);
 }
 
 function withCloudProposalLoadWarning(message = "", warning = "") {
@@ -916,6 +1044,11 @@ function getCloudProposalSummaryTotal(proposal = {}) {
   }, 0);
 }
 
+function getCloudProposalSummaryPricingMode(proposal = {}) {
+  const pricing = isPlainObject(proposal.pricing) ? proposal.pricing : {};
+  return String(proposal.pricingMode || pricing.pricingMode || "").trim();
+}
+
 function toCloudSummaryNumber(value) {
   const numericValue = typeof value === "number" ? value : Number.parseFloat(String(value ?? "").replace(/[$,%\s,]/g, ""));
   return Number.isFinite(numericValue) ? numericValue : 0;
@@ -949,9 +1082,9 @@ function sanitizeCloudErrorMessage(message = "") {
 }
 
 function normalizeCloudProposalRow(row = {}, deps = {}, { forCollection = true } = {}) {
-  const proposalData = isPlainObject(row.proposal_data) ? row.proposal_data : {};
-
-  return normalizeProposalForCloud(
+  const hasFullProposalData = isPlainObject(row.proposal_data) && Object.keys(row.proposal_data).length > 0;
+  const proposalData = hasFullProposalData ? row.proposal_data : createProposalDataFromCloudSummaryRow(row);
+  const normalizedProposal = normalizeProposalForCloud(
     {
       ...proposalData,
       id: proposalData.id || row.id,
@@ -961,15 +1094,17 @@ function normalizeCloudProposalRow(row = {}, deps = {}, { forCollection = true }
     deps,
     { forCollection },
   );
+
+  return hasFullProposalData ? normalizedProposal : attachCloudProposalListSummaryOnly(normalizedProposal);
 }
 
 function safelyNormalizeCloudProposalRow(row = {}, deps = {}, options = {}) {
   try {
     return normalizeCloudProposalRow(row, deps, options);
   } catch {
-    const proposalData = isPlainObject(row.proposal_data) ? row.proposal_data : {};
-
-    return normalizeProposalForCloud(
+    const hasFullProposalData = isPlainObject(row.proposal_data) && Object.keys(row.proposal_data).length > 0;
+    const proposalData = hasFullProposalData ? row.proposal_data : createProposalDataFromCloudSummaryRow(row);
+    const normalizedProposal = normalizeProposalForCloud(
       {
         id: proposalData.id || row.id,
         createdAt: proposalData.createdAt || row.created_at,
@@ -984,7 +1119,39 @@ function safelyNormalizeCloudProposalRow(row = {}, deps = {}, options = {}) {
       deps,
       { forCollection: true },
     );
+
+    return hasFullProposalData ? normalizedProposal : attachCloudProposalListSummaryOnly(normalizedProposal);
   }
+}
+
+function createProposalDataFromCloudSummaryRow(row = {}) {
+  const pricingMode = String(row.pricing_mode || "").trim();
+  const totalAmount = toCloudSummaryNumber(row.total_amount);
+  const customerShareToken = normalizeCustomerShareToken(row.customer_share_token);
+  const proposalData = {
+    id: row.id || "",
+    client: row.client_name ? { companyName: row.client_name, contactName: row.client_name } : {},
+    createdAt: row.created_at || "",
+    customerApproval: row.customer_approval_status ? { status: row.customer_approval_status } : undefined,
+    customerSelection: row.customer_selection_status ? { status: row.customer_selection_status } : undefined,
+    customerShareEnabled: row.customer_share_enabled === true,
+    customerShareExpiresAt: row.customer_share_expires_at || "",
+    customerShareToken,
+    packetMode: row.packet_mode || "",
+    pricing: pricingMode || totalAmount ? { pricingMode, totalProposal: totalAmount, total: totalAmount } : undefined,
+    pricingMode,
+    project: row.project_name ? { name: row.project_name } : {},
+    proposalMode: row.proposal_mode || "",
+    proposalNumber: row.proposal_number || "",
+    proposalType: row.proposal_type || "",
+    status: row.proposal_status || row.status || "draft",
+    totalAmount,
+    totalProposal: totalAmount,
+    type: row.proposal_type || "",
+    updatedAt: row.updated_at || "",
+  };
+
+  return removeEmptyCloudSummaryFields(proposalData);
 }
 
 export function mergeCloudPortalFieldsForSave(localProposal = {}, cloudProposal = {}, { cloudTimestamp = 0, sourceUpdatedAt = 0 } = {}) {
@@ -1137,6 +1304,11 @@ export function mergeProposalCollections(localProposals = [], cloudProposals = [
       return;
     }
 
+    if (isCloudProposalListSummaryOnly(cloudProposal)) {
+      mergedById.set(cloudProposal.id, mergeCloudProposalSummaryIntoLocalProposal(localProposal, cloudProposal));
+      return;
+    }
+
     const comparison = compareProposalUpdatedAt(localProposal, cloudProposal, deps);
 
     if (comparison > 0) {
@@ -1173,6 +1345,63 @@ export function mergeProposalCollections(localProposals = [], cloudProposals = [
     proposals: [...mergedById.values()].sort((a, b) => getProposalTimestamp(b, deps) - getProposalTimestamp(a, deps)),
     warning: warnings.join(" "),
   };
+}
+
+function mergeCloudProposalSummaryIntoLocalProposal(localProposal = {}, cloudProposalSummary = {}) {
+  const mergedProposal = { ...localProposal };
+  const summaryFields = [
+    "proposalNumber",
+    "proposalMode",
+    "proposalType",
+    "type",
+    "packetMode",
+    "pricingMode",
+    "status",
+    "totalAmount",
+    "totalProposal",
+    "updatedAt",
+    "createdAt",
+    "customerShareEnabled",
+    "customerShareToken",
+    "customerShareExpiresAt",
+  ];
+
+  summaryFields.forEach((field) => {
+    if (cloudProposalSummary[field] !== undefined && cloudProposalSummary[field] !== "") {
+      mergedProposal[field] = cloudProposalSummary[field];
+    }
+  });
+
+  if (cloudProposalSummary.project?.name) {
+    mergedProposal.project = {
+      ...(isPlainObject(localProposal.project) ? localProposal.project : {}),
+      name: cloudProposalSummary.project.name,
+    };
+  }
+
+  if (cloudProposalSummary.client?.companyName || cloudProposalSummary.client?.contactName) {
+    mergedProposal.client = {
+      ...(isPlainObject(localProposal.client) ? localProposal.client : {}),
+      ...cloudProposalSummary.client,
+    };
+  }
+
+  if (cloudProposalSummary.pricingMode || cloudProposalSummary.totalProposal) {
+    mergedProposal.pricing = {
+      ...(isPlainObject(localProposal.pricing) ? localProposal.pricing : {}),
+    };
+
+    if (cloudProposalSummary.pricingMode && !mergedProposal.pricing.pricingMode) {
+      mergedProposal.pricing.pricingMode = cloudProposalSummary.pricingMode;
+    }
+
+    if (cloudProposalSummary.totalProposal) {
+      mergedProposal.pricing.totalProposal = cloudProposalSummary.totalProposal;
+      mergedProposal.pricing.total = cloudProposalSummary.totalProposal;
+    }
+  }
+
+  return mergedProposal;
 }
 
 function compareProposalUpdatedAt(localProposal = {}, cloudProposal = {}, deps = {}) {

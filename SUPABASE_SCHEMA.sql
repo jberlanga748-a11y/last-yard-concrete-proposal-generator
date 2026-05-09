@@ -48,12 +48,32 @@ create table if not exists public.proposals (
   updated_at timestamptz not null default now()
 );
 
+-- Lightweight proposal list/customer portal lookup columns.
+-- These mirror customer-safe summary fields from proposal_data so the app does
+-- not have to load photo-heavy JSON blobs just to render /proposals.
+alter table public.proposals
+  add column if not exists project_name text,
+  add column if not exists client_name text,
+  add column if not exists proposal_mode text,
+  add column if not exists pricing_mode text,
+  add column if not exists total_amount numeric,
+  add column if not exists customer_share_enabled boolean not null default false,
+  add column if not exists customer_share_token text,
+  add column if not exists customer_share_expires_at timestamptz,
+  add column if not exists customer_selection_status text,
+  add column if not exists customer_approval_status text,
+  add column if not exists proposal_status text;
+
 create index if not exists companies_owner_id_idx on public.companies(owner_id);
 create index if not exists company_settings_company_id_idx on public.company_settings(company_id);
 create index if not exists contacts_company_id_idx on public.contacts(company_id);
 create index if not exists proposals_company_id_idx on public.proposals(company_id);
 create index if not exists proposals_contact_id_idx on public.proposals(contact_id);
 create index if not exists proposals_status_idx on public.proposals(status);
+create index if not exists proposals_company_updated_idx on public.proposals(company_id, updated_at desc);
+create index if not exists proposals_customer_share_token_idx on public.proposals(customer_share_token);
+create index if not exists proposals_company_status_idx on public.proposals(company_id, status);
+create index if not exists proposals_company_proposal_mode_idx on public.proposals(company_id, proposal_mode);
 
 create or replace function public.set_updated_at()
 returns trigger
