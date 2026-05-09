@@ -38,6 +38,18 @@ test("customer portal loads through server token lookup before browser Supabase 
   assert.match(appSource, /fetchCloudProposalByShareToken\(token, proposalCloudDeps\)/);
 });
 
+test("signed-in proposal opens refresh latest cloud detail before hydration", () => {
+  assert.match(appSource, /async function openProposal\(proposalId\)/);
+  assert.match(appSource, /fetchCloudProposalById\(cloudSync\.companyId, proposalId, proposalCloudDeps\)/);
+  assert.match(appSource, /Loaded latest proposal details from Supabase/);
+});
+
+test("editor cloud save accepts merged portal fields returned from cloud persistence", () => {
+  assert.match(appSource, /const cloudSavedProposal = await saveCloudProposal\(companyRecord\.id, proposal, proposalCloudDeps\)/);
+  assert.match(appSource, /setSavedProposals\(\(currentProposals\) => upsertProposal\(currentProposals, syncedProposal\)\)/);
+  assert.match(appSource, /if \(proposalDraft\.id === syncedProposal\.id\)/);
+});
+
 test("editable proposals mirror residential pricing into nested pricing payload for cloud save", () => {
   assert.match(appSource, /const sourcePricing = isPlainObject\(proposal\.pricing\) \? proposal\.pricing : \{\}/);
   assert.match(appSource, /const normalizedResidentialPricing = normalizeResidentialPricingPayload/);
@@ -136,6 +148,8 @@ test("customer portal selection API validates token and writes only requested pu
   assert.match(customerPortalApiSource, /request\.method === "POST"/);
   assert.match(customerPortalApiSource, /getCustomerShareStatus\(proposal, shareToken\)/);
   assert.match(customerPortalApiSource, /buildSubmittedCustomerSelection\(proposal, body\.selection/);
+  assert.match(customerPortalApiSource, /updatedAt: submittedAt/);
+  assert.match(customerPortalApiSource, /updated_at: proposalData\.updatedAt \|\| new Date\(\)\.toISOString\(\)/);
   assert.match(customerPortalApiSource, /const proposalWithSelection = \{[\s\S]*?customerSelection,[\s\S]*?\};/);
   assert.match(customerPortalApiSource, /updateCustomerProposalData\(supabase, data\.id, proposalWithSelection, \{ required: true \}\)/);
   assert.match(customerPortalApiSource, /action === "approve"/);

@@ -1,6 +1,35 @@
 import { supabase } from "../../supabaseClient.js";
-import { normalizeCustomerShareToken } from "../customerPortal.js";
+import {
+  CUSTOMER_APPROVAL_STATUS_APPROVED_SIGNED,
+  CUSTOMER_APPROVAL_STATUS_CHANGE_REQUESTED,
+  CUSTOMER_APPROVAL_STATUS_NONE,
+  CUSTOMER_SELECTION_STATUS_APPROVAL_SENT,
+  CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED,
+  CUSTOMER_SELECTION_STATUS_APPLIED,
+  CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED,
+  CUSTOMER_SELECTION_STATUS_NONE,
+  CUSTOMER_SELECTION_STATUS_REVIEWED,
+  CUSTOMER_SELECTION_STATUS_SUBMITTED,
+  normalizeCustomerApproval,
+  normalizeCustomerSelection,
+  normalizeCustomerShareToken,
+} from "../customerPortal.js";
 import { createCloudFallbackId, isPlainObject, isUuid } from "./cloudSync.js";
+
+const customerSelectionStatusRank = {
+  [CUSTOMER_SELECTION_STATUS_NONE]: 0,
+  [CUSTOMER_SELECTION_STATUS_SUBMITTED]: 10,
+  [CUSTOMER_SELECTION_STATUS_REVIEWED]: 20,
+  [CUSTOMER_SELECTION_STATUS_APPLIED]: 30,
+  [CUSTOMER_SELECTION_STATUS_APPROVAL_SENT]: 40,
+  [CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED]: 50,
+  [CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED]: 50,
+};
+const customerApprovalStatusRank = {
+  [CUSTOMER_APPROVAL_STATUS_NONE]: 0,
+  [CUSTOMER_APPROVAL_STATUS_CHANGE_REQUESTED]: 40,
+  [CUSTOMER_APPROVAL_STATUS_APPROVED_SIGNED]: 50,
+};
 
 function normalizeProposalForCloud(proposal = {}, deps = {}, options = {}) {
   const lightweightNormalizer = options.forCollection ? deps.normalizeProposalForCollection : null;
@@ -73,7 +102,8 @@ export async function loadOrMergeCloudProposals(companyId, localProposals = [], 
 }
 
 export async function fetchCloudProposals(companyId, deps = {}) {
-  const { data, error } = await supabase
+  const client = getSupabaseClient(deps);
+  const { data, error } = await client
     .from("proposals")
     .select("id,proposal_data,created_at,updated_at")
     .eq("company_id", companyId)
@@ -83,7 +113,9 @@ export async function fetchCloudProposals(companyId, deps = {}) {
     throw error;
   }
 
-  return (data || []).map((row) => normalizeCloudProposalRow(row, deps));
+  return (data || [])
+    .map((row) => safelyNormalizeCloudProposalRow(row, deps, { forCollection: true }))
+    .filter(Boolean);
 }
 
 export async function fetchCloudProposalByShareToken(shareToken, deps = {}) {
@@ -93,7 +125,8 @@ export async function fetchCloudProposalByShareToken(shareToken, deps = {}) {
     return null;
   }
 
-  const { data, error } = await supabase
+  const client = getSupabaseClient(deps);
+  const { data, error } = await client
     .from("proposals")
     .select("id,proposal_data,created_at,updated_at")
     .filter("proposal_data->>customerShareToken", "eq", normalizedToken)
@@ -104,16 +137,35 @@ export async function fetchCloudProposalByShareToken(shareToken, deps = {}) {
     throw error;
   }
 
-  return data ? normalizeCloudProposalRow(data, deps) : null;
+  return data ? normalizeCloudProposalRow(data, deps, { forCollection: false }) : null;
+}
+
+export async function fetchCloudProposalById(companyId, proposalId, deps = {}) {
+  const normalizedProposalId = String(proposalId || "").trim();
+
+  if (!companyId || !normalizedProposalId) {
+    return null;
+  }
+
+  const client = getSupabaseClient(deps);
+  const row = await findCloudProposalRow(companyId, normalizedProposalId, client);
+
+  return row ? normalizeCloudProposalRow(row, deps, { forCollection: false }) : null;
 }
 
 export async function saveCloudProposals(companyId, proposals = [], deps = {}) {
+  const savedProposals = [];
+
   for (const proposal of proposals.filter(isPlainObject)) {
-    await saveCloudProposal(companyId, proposal, deps);
+    savedProposals.push(await saveCloudProposal(companyId, proposal, deps));
   }
+
+  return savedProposals;
 }
 
 export async function saveCloudProposal(companyId, proposal, deps = {}) {
+  const client = getSupabaseClient(deps);
+  const sourceUpdatedAt = getProposalTimestamp(proposal, deps);
   const normalizedProposal = normalizeProposalForCloud(
     {
       ...proposal,
@@ -121,41 +173,73 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
     },
     deps,
   );
-  const row = createCloudProposalRow(companyId, normalizedProposal, deps);
+  const existingRow = await findCloudProposalRow(companyId, normalizedProposal.id, client);
+  const existingProposal = existingRow ? normalizeCloudProposalRow(existingRow, deps, { forCollection: false }) : null;
+  const proposalToSave = existingProposal
+    ? mergeCloudPortalFieldsForSave(normalizedProposal, existingProposal, {
+        cloudTimestamp: getProposalTimestamp(existingProposal, deps),
+        sourceUpdatedAt,
+      })
+    : normalizedProposal;
+  const row = createCloudProposalRow(companyId, proposalToSave, deps);
+  const targetRowId = row.id || existingRow?.id || "";
 
   if (row.id) {
-    const { error } = await supabase.from("proposals").upsert(row, { onConflict: "id" });
+    const { error } = await client.from("proposals").upsert(row, { onConflict: "id" });
 
     if (error) {
       throw error;
     }
 
-    return;
+    return proposalToSave;
   }
 
-  const existingRowId = await findCloudProposalRowId(companyId, normalizedProposal.id);
-
-  if (existingRowId) {
-    const { error } = await supabase.from("proposals").update(row).eq("id", existingRowId);
+  if (targetRowId) {
+    const { error } = await client.from("proposals").update(row).eq("id", targetRowId);
 
     if (error) {
       throw error;
     }
 
-    return;
+    return proposalToSave;
   }
 
-  const { error } = await supabase.from("proposals").insert(row);
+  const { error } = await client.from("proposals").insert(row);
 
   if (error) {
     throw error;
   }
+
+  return proposalToSave;
 }
 
-async function findCloudProposalRowId(companyId, proposalId) {
-  const { data, error } = await supabase
+async function findCloudProposalRow(companyId, proposalId, client = getSupabaseClient()) {
+  const normalizedProposalId = String(proposalId || "").trim();
+
+  if (!companyId || !normalizedProposalId) {
+    return null;
+  }
+
+  if (isUuid(normalizedProposalId)) {
+    const { data, error } = await client
+      .from("proposals")
+      .select("id,proposal_data,created_at,updated_at")
+      .eq("company_id", companyId)
+      .eq("id", normalizedProposalId)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    if (data) {
+      return data;
+    }
+  }
+
+  const { data, error } = await client
     .from("proposals")
-    .select("id,proposal_data")
+    .select("id,proposal_data,created_at,updated_at")
     .eq("company_id", companyId);
 
   if (error) {
@@ -163,7 +247,7 @@ async function findCloudProposalRowId(companyId, proposalId) {
   }
 
   const match = (data || []).find((row) => row.proposal_data?.id === proposalId);
-  return match?.id || "";
+  return match || null;
 }
 
 function createCloudProposalRow(companyId, proposal, deps = {}) {
@@ -176,6 +260,7 @@ function createCloudProposalRow(companyId, proposal, deps = {}) {
     proposal_number: normalizedProposal.proposalNumber || "",
     proposal_type: normalizedProposal.proposalType || normalizedProposal.type || "",
     status: normalizedProposal.status || "draft",
+    updated_at: normalizedProposal.updatedAt || new Date().toISOString(),
   };
 
   if (isUuid(normalizedProposal.id)) {
@@ -185,7 +270,7 @@ function createCloudProposalRow(companyId, proposal, deps = {}) {
   return row;
 }
 
-function normalizeCloudProposalRow(row = {}, deps = {}) {
+function normalizeCloudProposalRow(row = {}, deps = {}, { forCollection = true } = {}) {
   const proposalData = isPlainObject(row.proposal_data) ? row.proposal_data : {};
 
   return normalizeProposalForCloud(
@@ -196,8 +281,162 @@ function normalizeCloudProposalRow(row = {}, deps = {}) {
       updatedAt: proposalData.updatedAt || row.updated_at,
     },
     deps,
-    { forCollection: true },
+    { forCollection },
   );
+}
+
+function safelyNormalizeCloudProposalRow(row = {}, deps = {}, options = {}) {
+  try {
+    return normalizeCloudProposalRow(row, deps, options);
+  } catch {
+    const proposalData = isPlainObject(row.proposal_data) ? row.proposal_data : {};
+
+    return normalizeProposalForCloud(
+      {
+        id: proposalData.id || row.id,
+        createdAt: proposalData.createdAt || row.created_at,
+        customerShareEnabled: proposalData.customerShareEnabled === true,
+        customerShareToken: normalizeCustomerShareToken(proposalData.customerShareToken),
+        project: isPlainObject(proposalData.project) ? proposalData.project : {},
+        proposalMode: proposalData.proposalMode || "",
+        proposalNumber: proposalData.proposalNumber || "",
+        status: proposalData.status || "draft",
+        updatedAt: proposalData.updatedAt || row.updated_at,
+      },
+      deps,
+      { forCollection: true },
+    );
+  }
+}
+
+export function mergeCloudPortalFieldsForSave(localProposal = {}, cloudProposal = {}, { cloudTimestamp = 0, sourceUpdatedAt = 0 } = {}) {
+  if (!isPlainObject(localProposal)) {
+    return localProposal;
+  }
+
+  if (!isPlainObject(cloudProposal)) {
+    return localProposal;
+  }
+
+  const mergedProposal = { ...localProposal };
+  const localSelection = normalizeCustomerSelection(localProposal.customerSelection);
+  const cloudSelection = normalizeCustomerSelection(cloudProposal.customerSelection);
+  const localApproval = normalizeCustomerApproval(localProposal.customerApproval);
+  const cloudApproval = normalizeCustomerApproval(cloudProposal.customerApproval);
+  const cloudIsNewerThanSource = isTimestampAfter(cloudTimestamp, sourceUpdatedAt);
+
+  if (shouldUseCloudSelection(localSelection, cloudSelection, { cloudIsNewerThanSource })) {
+    mergedProposal.customerSelection = cloudSelection;
+  }
+
+  if (shouldUseCloudApproval(localApproval, cloudApproval, { cloudIsNewerThanSource })) {
+    mergedProposal.customerApproval = cloudApproval;
+  }
+
+  const localShareToken = normalizeCustomerShareToken(localProposal.customerShareToken);
+  const cloudShareToken = normalizeCustomerShareToken(cloudProposal.customerShareToken);
+
+  if ((cloudIsNewerThanSource && cloudShareToken) || (!localShareToken && cloudShareToken)) {
+    mergedProposal.customerShareEnabled = cloudProposal.customerShareEnabled === true;
+    mergedProposal.customerShareToken = cloudShareToken;
+    mergedProposal.customerShareCreatedAt = cloudProposal.customerShareCreatedAt || mergedProposal.customerShareCreatedAt || "";
+    mergedProposal.customerShareExpiresAt = cloudProposal.customerShareExpiresAt || "";
+  }
+
+  if (isTimestampAfter(getDateTimestamp(cloudProposal.customerShareLastViewedAt), getDateTimestamp(localProposal.customerShareLastViewedAt))) {
+    mergedProposal.customerShareLastViewedAt = cloudProposal.customerShareLastViewedAt || "";
+  }
+
+  if (
+    (mergedProposal.customerApproval?.status === CUSTOMER_APPROVAL_STATUS_APPROVED_SIGNED ||
+      mergedProposal.customerSelection?.status === CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED) &&
+    cloudProposal.status === "accepted_deposit_due"
+  ) {
+    mergedProposal.status = "accepted_deposit_due";
+  }
+
+  if (cloudIsNewerThanSource && getProposalPortalTimestamp(cloudProposal) > getProposalPortalTimestamp(localProposal)) {
+    mergedProposal.updatedAt = cloudProposal.updatedAt || mergedProposal.updatedAt;
+  }
+
+  return mergedProposal;
+}
+
+function shouldUseCloudSelection(localSelection, cloudSelection, { cloudIsNewerThanSource = false } = {}) {
+  const cloudRank = customerSelectionStatusRank[cloudSelection.status] || 0;
+  const localRank = customerSelectionStatusRank[localSelection.status] || 0;
+
+  if (cloudRank === 0) {
+    return false;
+  }
+
+  if (cloudRank > localRank) {
+    return true;
+  }
+
+  if (cloudRank < localRank) {
+    return false;
+  }
+
+  return getSelectionTimestamp(cloudSelection) > getSelectionTimestamp(localSelection) || cloudIsNewerThanSource;
+}
+
+function shouldUseCloudApproval(localApproval, cloudApproval, { cloudIsNewerThanSource = false } = {}) {
+  const cloudRank = customerApprovalStatusRank[cloudApproval.status] || 0;
+  const localRank = customerApprovalStatusRank[localApproval.status] || 0;
+
+  if (cloudRank === 0) {
+    return false;
+  }
+
+  if (cloudRank > localRank) {
+    return true;
+  }
+
+  if (cloudRank < localRank) {
+    return false;
+  }
+
+  return getApprovalTimestamp(cloudApproval) > getApprovalTimestamp(localApproval) || cloudIsNewerThanSource;
+}
+
+function getSelectionTimestamp(selection = {}) {
+  return Math.max(
+    getDateTimestamp(selection.submittedAt),
+    getDateTimestamp(selection.reviewedAt),
+    getDateTimestamp(selection.appliedAt),
+  );
+}
+
+function getApprovalTimestamp(approval = {}) {
+  return getDateTimestamp(approval.approvedAt);
+}
+
+function getProposalPortalTimestamp(proposal = {}) {
+  return Math.max(
+    getSelectionTimestamp(normalizeCustomerSelection(proposal.customerSelection)),
+    getApprovalTimestamp(normalizeCustomerApproval(proposal.customerApproval)),
+    getDateTimestamp(proposal.customerShareLastViewedAt),
+  );
+}
+
+function getDateTimestamp(value = "") {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isTimestampAfter(firstTimestamp = 0, secondTimestamp = 0) {
+  return Number.isFinite(firstTimestamp) && firstTimestamp > 0 && firstTimestamp > (Number.isFinite(secondTimestamp) ? secondTimestamp : 0);
+}
+
+function getSupabaseClient(deps = {}) {
+  const client = deps.supabaseClient || supabase;
+
+  if (!client) {
+    throw new Error("Supabase is not configured.");
+  }
+
+  return client;
 }
 
 export function mergeProposalCollections(localProposals = [], cloudProposals = [], deps = {}) {

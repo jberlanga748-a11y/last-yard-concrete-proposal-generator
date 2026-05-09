@@ -177,10 +177,12 @@ export async function handleCustomerProposalRequest(
       }
 
       const customerSelection = buildSubmittedCustomerSelection(proposal, body.selection || body.customerSelection || {});
+      const submittedAt = customerSelection.submittedAt || new Date().toISOString();
       const proposalWithSelection = {
         ...proposal,
         customerSelection,
         status: proposal.status === "accepted_deposit_due" ? proposal.status : "customer_selection_submitted",
+        updatedAt: submittedAt,
       };
 
       await updateCustomerProposalData(supabase, data.id, proposalWithSelection, { required: true });
@@ -299,7 +301,14 @@ async function updateCustomerProposalData(supabase, rowId, proposalData, { requi
   }
 
   try {
-    const { error } = await supabase.from(proposalsTable).update({ proposal_data: proposalData }).eq("id", rowId);
+    const { error } = await supabase
+      .from(proposalsTable)
+      .update({
+        proposal_data: proposalData,
+        status: proposalData.status || "draft",
+        updated_at: proposalData.updatedAt || new Date().toISOString(),
+      })
+      .eq("id", rowId);
 
     if (error) {
       throw error;

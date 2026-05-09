@@ -50,6 +50,7 @@ import {
   saveCloudContact,
 } from "./utils/cloud/contactCloud.js";
 import {
+  fetchCloudProposalById,
   fetchCloudProposalByShareToken,
   fetchCloudProposals,
   loadOrMergeCloudProposals,
@@ -1175,8 +1176,8 @@ export default function App() {
     }
   }
 
-  function openProposal(proposalId) {
-    const proposal = savedProposals.find((item) => item.id === proposalId);
+  async function openProposal(proposalId) {
+    let proposal = savedProposals.find((item) => item.id === proposalId);
     if (!proposal) {
       return;
     }
@@ -1193,6 +1194,36 @@ export default function App() {
     }
 
     setProposalOpenMessage("Opening proposal details...");
+
+    if (canUseCloudSync(authUser) && cloudSync.companyId) {
+      try {
+        const cloudProposal = await measureAsyncDevPerformance(
+          "cloud proposal detail refresh",
+          () => fetchCloudProposalById(cloudSync.companyId, proposalId, proposalCloudDeps),
+          { proposalId },
+        );
+
+        if (cloudProposal) {
+          proposal = createEditableProposal(cloudProposal);
+          setSavedProposals((currentProposals) => upsertProposal(currentProposals, proposal));
+          setCloudSync((currentSync) => ({
+            ...currentSync,
+            lastError: "",
+            lastSyncedAt: new Date().toISOString(),
+            message: "Loaded latest proposal details from Supabase.",
+            proposalStatus: cloudSyncedLabel,
+          }));
+        }
+      } catch (error) {
+        setCloudSync((currentSync) => ({
+          ...currentSync,
+          lastError: error.message,
+          message: `Could not refresh proposal from cloud: ${error.message}`,
+          proposalStatus: cloudSyncErrorLabel,
+        }));
+        setProposalOpenMessage("Could not refresh this proposal from cloud. Opening the local copy.");
+      }
+    }
 
     const scheduleHydration = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
     scheduleHydration(() => {
@@ -1745,7 +1776,7 @@ export default function App() {
         const syncedDraft = proposalsResult.proposals.find((proposal) => proposal.id === proposalDraft.id);
 
         if (syncedDraft) {
-          setProposalDraft(syncedDraft);
+          setProposalDraft(createEditableProposal(syncedDraft));
         }
       }
 
@@ -2112,7 +2143,14 @@ export default function App() {
 
     try {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
-      await saveCloudProposal(companyRecord.id, proposal, proposalCloudDeps);
+      const cloudSavedProposal = await saveCloudProposal(companyRecord.id, proposal, proposalCloudDeps);
+      const syncedProposal = cloudSavedProposal ? createEditableProposal(cloudSavedProposal) : proposal;
+
+      setSavedProposals((currentProposals) => upsertProposal(currentProposals, syncedProposal));
+
+      if (proposalDraft.id === syncedProposal.id) {
+        setProposalDraft(syncedProposal);
+      }
 
       setCloudSync((currentSync) => ({
         ...currentSync,
@@ -2164,7 +2202,20 @@ export default function App() {
 
     try {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
-      await saveCloudProposals(companyRecord.id, proposals, proposalCloudDeps);
+      const cloudSavedProposals = await saveCloudProposals(companyRecord.id, proposals, proposalCloudDeps);
+      const syncedProposals = cloudSavedProposals.length > 0 ? cloudSavedProposals.map((proposal) => createEditableProposal(proposal)) : proposals;
+
+      if (cloudSavedProposals.length > 0) {
+        setSavedProposals(syncedProposals);
+
+        if (isProposalRouteView(route.view)) {
+          const syncedDraft = syncedProposals.find((proposal) => proposal.id === proposalDraft.id);
+
+          if (syncedDraft) {
+            setProposalDraft(syncedDraft);
+          }
+        }
+      }
 
       setCloudSync((currentSync) => ({
         ...currentSync,
@@ -2294,9 +2345,11 @@ export default function App() {
       );
       const mergeResult = mergeProposalCollections(savedProposals, cloudProposals, proposalCloudDeps);
 
-      await saveCloudProposals(companyRecord.id, mergeResult.proposals, proposalCloudDeps);
-      setSavedProposals(mergeResult.proposals);
-      syncDraftAfterProposalRestore(mergeResult.proposals);
+      const cloudSavedProposals = await saveCloudProposals(companyRecord.id, mergeResult.proposals, proposalCloudDeps);
+      const syncedProposals = cloudSavedProposals.length > 0 ? cloudSavedProposals.map((proposal) => createEditableProposal(proposal)) : mergeResult.proposals;
+
+      setSavedProposals(syncedProposals);
+      syncDraftAfterProposalRestore(syncedProposals);
       setCloudSync((currentSync) => ({
         ...currentSync,
         companyId: companyRecord.id,
