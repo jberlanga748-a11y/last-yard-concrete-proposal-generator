@@ -172,14 +172,20 @@ import {
 } from "./utils/activityLog.js";
 import { getAuthGateState, getLogoutCleanupState } from "./utils/authSession.js";
 import {
+  buildSubmittedCustomerSelection,
+  calculateCustomerSelectionSummary,
+  createCustomerPortalSelectionDraft,
   createCustomerShareToken,
   fetchCustomerPortalProposalByToken,
   findCustomerProposalByShareToken,
+  getCustomerSelectionItemId,
   getCustomerPortalLink,
   getCustomerPortalUnavailableMessage,
   getCustomerSafeImageCaption,
   getCustomerShareFields,
+  normalizeCustomerSelection,
   normalizeCustomerShareToken,
+  submitCustomerPortalSelectionByToken,
 } from "./utils/customerPortal.js";
 import {
   getPermissionRoleLabel,
@@ -1073,6 +1079,62 @@ export default function App() {
 
       setProposalOpenMessage(navigated ? "" : "Opening canceled.");
     });
+  }
+
+  async function submitCustomerPortalSelection(selectionDraft) {
+    const token = route.shareToken;
+    const apiResult = await submitCustomerPortalSelectionByToken(token, selectionDraft);
+
+    if (apiResult.ok && apiResult.available) {
+      const nextProposal = createEditableProposal(apiResult.proposal || {
+        ...customerPortalState.proposal,
+        customerSelection: apiResult.customerSelection,
+      });
+
+      setCustomerPortalState({
+        loading: false,
+        message: "",
+        proposal: nextProposal,
+        reason: "available",
+      });
+
+      return apiResult;
+    }
+
+    if (!["api-unavailable", "unconfigured", "load-error"].includes(apiResult.reason)) {
+      return apiResult;
+    }
+
+    const localResult = findCustomerProposalByShareToken(savedProposals, token);
+
+    if (!localResult.available) {
+      return {
+        ...apiResult,
+        reason: localResult.reason || apiResult.reason,
+      };
+    }
+
+    const customerSelection = buildSubmittedCustomerSelection(localResult.proposal, selectionDraft);
+    const nextProposal = createEditableProposal({
+      ...localResult.proposal,
+      customerSelection,
+    });
+
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
+    setCustomerPortalState({
+      loading: false,
+      message: "",
+      proposal: nextProposal,
+      reason: "available",
+    });
+
+    return {
+      available: true,
+      customerSelection,
+      ok: true,
+      proposal: nextProposal,
+      reason: "available",
+    };
   }
 
   function createNewProposal() {
@@ -2819,6 +2881,40 @@ export default function App() {
       setSaveMessage("Customer portal link copied.");
     } catch {
       setSaveMessage(`Customer portal link: ${url}`);
+    }
+  }
+
+  async function markCustomerSelectionReviewed() {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    const currentSelection = normalizeCustomerSelection(proposalDraft.customerSelection);
+
+    if (currentSelection.status !== "submitted") {
+      setSaveMessage("No submitted customer selection is waiting for review.");
+      return;
+    }
+
+    const reviewedAt = new Date().toISOString();
+    const proposalToSave = createEditableProposal({
+      ...proposalDraft,
+      customerSelection: {
+        ...currentSelection,
+        status: "reviewed",
+      },
+      updatedAt: reviewedAt,
+    });
+
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, proposalToSave));
+    setProposalDraft(proposalToSave);
+    setProposalDirty(false);
+    setSaveMessage(getCloudReadyMessage(authUser, "Customer selection marked reviewed locally. Syncing to cloud...", "Customer selection marked reviewed."));
+
+    if (canUseCloudSync(authUser)) {
+      await syncSingleProposalToCloud(proposalToSave, "Customer selection marked reviewed and synced.");
+    } else {
+      markProposalsNeedCloudSync("Customer selection marked reviewed locally. Sync proposals to update Supabase.");
     }
   }
 
@@ -5615,6 +5711,7 @@ export default function App() {
           reason={customerPortalState.reason}
           loading={customerPortalState.loading}
           onPrint={() => window.print()}
+          onSubmitSelection={submitCustomerPortalSelection}
         />
       </main>
     );
@@ -5988,6 +6085,7 @@ export default function App() {
                 onCustomerShareEnableChange={updateCustomerShareEnabled}
                 onCustomerShareExpirationChange={updateCustomerShareExpiration}
                 onCustomerShareRegenerate={regenerateCustomerShareToken}
+                onCustomerSelectionReviewed={markCustomerSelectionReviewed}
               />
             )}
             <div className="preview-pane">
@@ -6033,7 +6131,17 @@ function AuthLoadingScreen() {
   );
 }
 
-function CustomerProposalPortalView({ companySettings = {}, helpers = {}, loading = false, message = "", proposal = null, onPrint }) {
+function CustomerProposalPortalView({ companySettings = {}, helpers = {}, loading = false, message = "", proposal = null, onPrint, onSubmitSelection }) {
+  const [selectionDraft, setSelectionDraft] = useState(() => createCustomerPortalSelectionDraft(proposal || {}));
+  const [selectionMessage, setSelectionMessage] = useState("");
+  const [selectionSubmitting, setSelectionSubmitting] = useState(false);
+
+  useEffect(() => {
+    setSelectionDraft(createCustomerPortalSelectionDraft(proposal || {}));
+    setSelectionMessage("");
+    setSelectionSubmitting(false);
+  }, [proposal?.id, proposal?.customerSelection?.submittedAt]);
+
   if (loading) {
     return (
       <section className="customer-portal-unavailable">
@@ -6057,6 +6165,28 @@ function CustomerProposalPortalView({ companySettings = {}, helpers = {}, loadin
   const company = getCustomerPortalCompany(proposal, companySettings);
   const projectAddress = proposal.project?.address || proposal.project?.location || proposal.client?.projectAddress || "";
   const isResidential = isResidentialProposalMode(inferProposalModeFromProposal(proposal));
+  const selectionSummary = calculateCustomerSelectionSummary(proposal, selectionDraft);
+
+  async function handleSubmitSelection(event) {
+    event.preventDefault();
+
+    if (typeof onSubmitSelection !== "function") {
+      setSelectionMessage("Customer selection is not available for this proposal link. Please contact Last Yard Concrete.");
+      return;
+    }
+
+    setSelectionSubmitting(true);
+    setSelectionMessage("Submitting your selection...");
+    const result = await onSubmitSelection(selectionDraft);
+
+    if (result?.ok && result?.available) {
+      setSelectionMessage("Your selection has been submitted. Last Yard Concrete will review and confirm next steps.");
+    } else {
+      setSelectionMessage(getCustomerPortalUnavailableMessage(result?.reason));
+    }
+
+    setSelectionSubmitting(false);
+  }
 
   return (
     <div className="customer-portal-page">
@@ -6072,10 +6202,21 @@ function CustomerProposalPortalView({ companySettings = {}, helpers = {}, loadin
 
       <article className="customer-portal-document">
         <CustomerPortalHero company={company} proposal={proposal} projectAddress={projectAddress} />
-        <CustomerPortalPricing proposal={proposal} />
+        <CustomerPortalPricing proposal={proposal} selectionDraft={selectionDraft} onSelectionChange={setSelectionDraft} />
         <CustomerPortalProjectPhotos proposal={proposal} />
         <CustomerPortalScope proposal={proposal} />
         <CustomerPortalPaymentAndLegal company={company} proposal={proposal} />
+        {isResidential ? (
+          <CustomerPortalSelectionSubmitPanel
+            message={selectionMessage}
+            proposal={proposal}
+            selectionDraft={selectionDraft}
+            selectionSummary={selectionSummary}
+            submitting={selectionSubmitting}
+            onChange={setSelectionDraft}
+            onSubmit={handleSubmitSelection}
+          />
+        ) : null}
 
         {!isResidential ? (
           <CustomerPortalCommercialNotice helpers={helpers} proposal={proposal} />
@@ -6126,13 +6267,13 @@ function CustomerPortalHero({ company = {}, projectAddress = "", proposal = {} }
   );
 }
 
-function CustomerPortalPricing({ proposal = {} }) {
+function CustomerPortalPricing({ proposal = {}, selectionDraft = {}, onSelectionChange }) {
   if (hasResidentialChooseOnePricing(proposal)) {
-    return <CustomerPortalChooseOnePricing proposal={proposal} />;
+    return <CustomerPortalChooseOnePricing proposal={proposal} selectionDraft={selectionDraft} onSelectionChange={onSelectionChange} />;
   }
 
   if (hasResidentialBasePlusAddOnsPricing(proposal)) {
-    return <CustomerPortalSimpleEstimatePricing proposal={proposal} />;
+    return <CustomerPortalSimpleEstimatePricing proposal={proposal} selectionDraft={selectionDraft} onSelectionChange={onSelectionChange} />;
   }
 
   const totals = calculateProposalTotals(proposal);
@@ -6161,14 +6302,31 @@ function CustomerPortalPricing({ proposal = {} }) {
   );
 }
 
-function CustomerPortalSimpleEstimatePricing({ proposal = {} }) {
+function CustomerPortalSimpleEstimatePricing({ proposal = {}, selectionDraft = {}, onSelectionChange }) {
   const totals = calculateResidentialSimpleEstimateTotals(proposal);
+  const selectionSummary = calculateCustomerSelectionSummary(proposal, selectionDraft);
+  const selectedAddOnIds = new Set(selectionSummary.selectedAddOnIds);
+
+  function toggleAddOn(addOnId, checked) {
+    const currentIds = new Set(selectionDraft.selectedAddOnIds || []);
+
+    if (checked) {
+      currentIds.add(addOnId);
+    } else {
+      currentIds.delete(addOnId);
+    }
+
+    onSelectionChange?.({
+      ...selectionDraft,
+      selectedAddOnIds: [...currentIds],
+    });
+  }
 
   return (
     <section className="customer-portal-section">
       <div className="customer-portal-section-heading">
         <span>Estimate Total</span>
-        <strong>{formatResidentialCurrency(totals.total)}</strong>
+        <strong>{formatResidentialCurrency(selectionSummary.selectedTotal)}</strong>
       </div>
       <div className="customer-portal-table">
         <div className="customer-portal-table-row customer-portal-table-row-primary">
@@ -6178,24 +6336,55 @@ function CustomerPortalSimpleEstimatePricing({ proposal = {} }) {
         </div>
         {totals.addOns.map((addOn, index) => (
           <div className="customer-portal-table-row" key={addOn.id || `portal-addon-${index}`}>
-            <span>Optional Add-On: {addOn.name}</span>
-            <span>{addOn.selected || addOn.included ? "Selected" : "Not Selected"}</span>
-            <strong>{addOn.selected || addOn.included ? formatResidentialCurrency(addOn.amount) : `Optional +${formatResidentialCurrency(addOn.amount)}`}</strong>
+            <label className="customer-portal-selection-control">
+              <input
+                checked={selectedAddOnIds.has(getCustomerSelectionItemId(addOn, index, "addon"))}
+                type="checkbox"
+                onChange={(event) => toggleAddOn(getCustomerSelectionItemId(addOn, index, "addon"), event.target.checked)}
+              />
+              <span>Optional Add-On: {addOn.name}</span>
+            </label>
+            <span>{selectedAddOnIds.has(getCustomerSelectionItemId(addOn, index, "addon")) ? "Selected" : "Not Selected"}</span>
+            <strong>{selectedAddOnIds.has(getCustomerSelectionItemId(addOn, index, "addon")) ? formatResidentialCurrency(addOn.amount) : `Optional +${formatResidentialCurrency(addOn.amount)}`}</strong>
           </div>
         ))}
       </div>
       <div className="customer-portal-payment-mini">
-        <span>50% Down: {formatResidentialCurrency(totals.downPayment)}</span>
-        <span>Final Payment: {formatResidentialCurrency(totals.finalPayment)}</span>
+        <span>50% Down: {formatResidentialCurrency(selectionSummary.selectedDownPayment)}</span>
+        <span>Final Payment: {formatResidentialCurrency(selectionSummary.selectedFinalPayment)}</span>
       </div>
       <CustomerPortalAddOnPhotos addOns={totals.addOns} />
     </section>
   );
 }
 
-function CustomerPortalChooseOnePricing({ proposal = {} }) {
+function CustomerPortalChooseOnePricing({ proposal = {}, selectionDraft = {}, onSelectionChange }) {
   const optionRows = buildResidentialPricingOptionRows(proposal);
   const optionalAddOns = getResidentialOptionalAddOns(proposal);
+  const selectionSummary = calculateCustomerSelectionSummary(proposal, selectionDraft);
+  const selectedAddOnIds = new Set(selectionSummary.selectedAddOnIds);
+
+  function selectOption(optionId) {
+    onSelectionChange?.({
+      ...selectionDraft,
+      selectedOptionId: optionId,
+    });
+  }
+
+  function toggleAddOn(addOnId, checked) {
+    const currentIds = new Set(selectionDraft.selectedAddOnIds || []);
+
+    if (checked) {
+      currentIds.add(addOnId);
+    } else {
+      currentIds.delete(addOnId);
+    }
+
+    onSelectionChange?.({
+      ...selectionDraft,
+      selectedAddOnIds: [...currentIds],
+    });
+  }
 
   return (
     <section className="customer-portal-section">
@@ -6207,7 +6396,15 @@ function CustomerPortalChooseOnePricing({ proposal = {} }) {
         {optionRows.map((option, index) => (
           <article className="customer-portal-option-card" key={option.id || option.name || `portal-option-${index}`}>
             <div>
-              <span>Option {index + 1}</span>
+              <label className="customer-portal-selection-control customer-portal-option-select">
+                <input
+                  checked={selectionSummary.selectedOptionId === getCustomerSelectionItemId(option, index, "option")}
+                  name="customer-pricing-option"
+                  type="radio"
+                  onChange={() => selectOption(getCustomerSelectionItemId(option, index, "option"))}
+                />
+                <span>Option {index + 1}</span>
+              </label>
               <h2>{option.name || `Option ${index + 1}`}</h2>
               {option.description ? <p>{option.description}</p> : null}
               {option.finishType ? <small>Finish: {option.finishType}</small> : null}
@@ -6235,7 +6432,14 @@ function CustomerPortalChooseOnePricing({ proposal = {} }) {
           {optionalAddOns.map((addOn, index) => (
             <article className="customer-portal-addon-row" key={addOn.id || addOn.name || `portal-option-addon-${index}`}>
               <div>
-                <strong>{addOn.name}</strong>
+                <label className="customer-portal-selection-control">
+                  <input
+                    checked={selectedAddOnIds.has(getCustomerSelectionItemId(addOn, index, "addon"))}
+                    type="checkbox"
+                    onChange={(event) => toggleAddOn(getCustomerSelectionItemId(addOn, index, "addon"), event.target.checked)}
+                  />
+                  <strong>{addOn.name}</strong>
+                </label>
                 {addOn.description ? <span>{addOn.description}</span> : null}
               </div>
               <strong>+{formatResidentialCurrency(addOn.amount)}</strong>
@@ -6243,7 +6447,86 @@ function CustomerPortalChooseOnePricing({ proposal = {} }) {
           ))}
         </div>
       ) : null}
+      <div className="customer-portal-selection-total">
+        <strong>Selected Total: {formatResidentialCurrency(selectionSummary.selectedTotal)}</strong>
+        <span>50% Down: {formatResidentialCurrency(selectionSummary.selectedDownPayment)}</span>
+        <span>Final Payment: {formatResidentialCurrency(selectionSummary.selectedFinalPayment)}</span>
+      </div>
       <CustomerPortalAddOnPhotos addOns={optionalAddOns} />
+    </section>
+  );
+}
+
+function CustomerPortalSelectionSubmitPanel({
+  message = "",
+  proposal = {},
+  selectionDraft = {},
+  selectionSummary = {},
+  submitting = false,
+  onChange,
+  onSubmit,
+}) {
+  const existingSelection = normalizeCustomerSelection(proposal.customerSelection);
+  const hasSubmittedSelection = existingSelection.status === "submitted" || existingSelection.status === "reviewed";
+
+  return (
+    <section className="customer-portal-section customer-portal-selection-submit">
+      <div className="customer-portal-section-heading">
+        <span>Submit Selection</span>
+        <strong>{formatResidentialCurrency(selectionSummary.selectedTotal)}</strong>
+      </div>
+      {hasSubmittedSelection ? (
+        <p className="customer-portal-submitted-note">
+          Current submitted selection: {existingSelection.selectedOptionName || "Base package"}
+          {existingSelection.selectedAddOnNames.length > 0 ? ` with ${existingSelection.selectedAddOnNames.join(", ")}` : ""}.
+        </p>
+      ) : null}
+      <form className="customer-portal-selection-form" onSubmit={onSubmit}>
+        <div className="customer-portal-payment-mini">
+          <span>Estimate Total: {formatResidentialCurrency(selectionSummary.selectedTotal)}</span>
+          <span>50% Down: {formatResidentialCurrency(selectionSummary.selectedDownPayment)}</span>
+          <span>Final Payment: {formatResidentialCurrency(selectionSummary.selectedFinalPayment)}</span>
+        </div>
+        <div className="customer-portal-selection-fields">
+          <label>
+            <span>Name</span>
+            <input
+              value={selectionDraft.customerName || ""}
+              onChange={(event) => onChange?.({ ...selectionDraft, customerName: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Email</span>
+            <input
+              type="email"
+              value={selectionDraft.customerEmail || ""}
+              onChange={(event) => onChange?.({ ...selectionDraft, customerEmail: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Phone</span>
+            <input
+              value={selectionDraft.customerPhone || ""}
+              onChange={(event) => onChange?.({ ...selectionDraft, customerPhone: event.target.value })}
+            />
+          </label>
+          <label className="customer-portal-selection-notes">
+            <span>Notes for Last Yard</span>
+            <textarea
+              rows={3}
+              value={selectionDraft.customerNotes || ""}
+              onChange={(event) => onChange?.({ ...selectionDraft, customerNotes: event.target.value })}
+            />
+          </label>
+        </div>
+        <button type="submit" disabled={submitting}>
+          {submitting ? "Submitting..." : "Submit Selection to Last Yard"}
+        </button>
+        {message ? <p className="customer-portal-selection-message">{message}</p> : null}
+        <p className="customer-portal-contact-note">
+          This is a selection request only. It is not final approval, e-signature, or payment.
+        </p>
+      </form>
     </section>
   );
 }
@@ -9089,6 +9372,70 @@ function CustomerPortalLinkEditor({
   );
 }
 
+function CustomerPortalSelectionEditor({ proposal = {}, onMarkReviewed }) {
+  const selection = normalizeCustomerSelection(proposal.customerSelection);
+  const hasSelection = selection.status === "submitted" || selection.status === "reviewed";
+
+  return (
+    <EditorSection id="customer-selection-section" title="Customer Portal Selection">
+      {hasSelection ? (
+        <div className="customer-selection-review-card">
+          <div>
+            <span>Status</span>
+            <strong>{formatOptionLabel(selection.status)}</strong>
+          </div>
+          <div>
+            <span>Submitted</span>
+            <strong>{selection.submittedAt ? formatCloudSyncTime(selection.submittedAt) : "Not recorded"}</strong>
+          </div>
+          {selection.selectedOptionName ? (
+            <div>
+              <span>Selected Option</span>
+              <strong>{selection.selectedOptionName}</strong>
+            </div>
+          ) : null}
+          <div>
+            <span>Selected Add-Ons</span>
+            <strong>{selection.selectedAddOnNames.length > 0 ? selection.selectedAddOnNames.join(", ") : "None selected"}</strong>
+          </div>
+          <div>
+            <span>Selected Total</span>
+            <strong>{formatResidentialCurrency(selection.selectedTotal)}</strong>
+          </div>
+          <div>
+            <span>50% Down</span>
+            <strong>{formatResidentialCurrency(selection.selectedDownPayment)}</strong>
+          </div>
+          <div>
+            <span>Final Payment</span>
+            <strong>{formatResidentialCurrency(selection.selectedFinalPayment)}</strong>
+          </div>
+          <div>
+            <span>Customer</span>
+            <strong>{[selection.customerName, selection.customerEmail, selection.customerPhone].filter(Boolean).join(" | ") || "Not provided"}</strong>
+          </div>
+          {selection.customerNotes ? (
+            <div className="customer-selection-review-notes">
+              <span>Customer Notes</span>
+              <p>{selection.customerNotes}</p>
+            </div>
+          ) : null}
+          <p className="smart-paste-help">
+            Customer selections are pending review only. They do not mark the proposal accepted or change proposal pricing.
+          </p>
+          <button type="button" onClick={onMarkReviewed} disabled={selection.status !== "submitted"}>
+            Mark Reviewed
+          </button>
+        </div>
+      ) : (
+        <p className="smart-paste-help">
+          No customer selection has been submitted from the portal yet.
+        </p>
+      )}
+    </EditorSection>
+  );
+}
+
 function ProposalEditor({
   aiProposalLoading = "",
   aiProposalMessage = "",
@@ -9182,6 +9529,7 @@ function ProposalEditor({
   onCustomerShareEnableChange,
   onCustomerShareExpirationChange,
   onCustomerShareRegenerate,
+  onCustomerSelectionReviewed,
 }) {
   const proposalTotals = calculateProposalTotals(proposal);
   const proposalMode = inferProposalModeFromProposal(proposal);
@@ -9325,6 +9673,11 @@ function ProposalEditor({
         onEnableChange={onCustomerShareEnableChange}
         onExpirationChange={onCustomerShareExpirationChange}
         onRegenerate={onCustomerShareRegenerate}
+      />
+
+      <CustomerPortalSelectionEditor
+        proposal={proposal}
+        onMarkReviewed={onCustomerSelectionReviewed}
       />
 
       <EditorSection id="client-contact-section" title="Client / Prepared For">
@@ -9709,6 +10062,7 @@ function EditorNavigation({ proposal, showTemplatePicker = false }) {
     ["Smart Paste", "smart-paste-section"],
     ["Proposal Info", "proposal-info-section"],
     ["Customer Portal", "customer-portal-section"],
+    ["Customer Selection", "customer-selection-section"],
     ["Client / Contact", "saved-contact-section"],
     ["Project Summary", "project-summary-section"],
     ["Photos", "project-photos-section"],
@@ -15537,6 +15891,7 @@ function createEditableProposal(seedProposal) {
     customerShareCreatedAt: proposal.customerShareCreatedAt || "",
     customerShareExpiresAt: proposal.customerShareExpiresAt || "",
     customerShareLastViewedAt: proposal.customerShareLastViewedAt || "",
+    customerSelection: normalizeCustomerSelection(proposal.customerSelection),
     ...getDefaultTrackingFields(),
     sentDate: proposal.sentDate || "",
     sentToName: proposal.sentToName || "",

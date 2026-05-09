@@ -5,6 +5,7 @@ import test from "node:test";
 const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
 const styleSource = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const storageCloudSource = readFileSync(new URL("./utils/cloud/storageCloud.js", import.meta.url), "utf8");
+const customerPortalApiSource = readFileSync(new URL("../api/customer-proposal.js", import.meta.url), "utf8");
 
 test("app defines a public customer proposal route outside protected app chrome", () => {
   assert.match(appSource, /segments\[0\] === "proposal-view"/);
@@ -28,6 +29,7 @@ test("editable proposals preserve customer share fields safely", () => {
   assert.match(appSource, /customerShareCreatedAt: proposal\.customerShareCreatedAt \|\| ""/);
   assert.match(appSource, /customerShareExpiresAt: proposal\.customerShareExpiresAt \|\| ""/);
   assert.match(appSource, /customerShareLastViewedAt: proposal\.customerShareLastViewedAt \|\| ""/);
+  assert.match(appSource, /customerSelection: normalizeCustomerSelection\(proposal\.customerSelection\)/);
 });
 
 test("customer portal loads through server token lookup before browser Supabase fallback", () => {
@@ -88,4 +90,29 @@ test("customer portal renders simple-estimate and choose-one customer pricing co
   assert.match(appSource, /Customer to Select One/);
   assert.match(appSource, /getCustomerSafeImageCaption/);
   assert.match(appSource, /\.filter\(\(image\) => image\.src\)/);
+});
+
+test("customer portal supports read-only customer selection requests", () => {
+  assert.match(appSource, /Submit Selection to Last Yard/);
+  assert.match(appSource, /function CustomerPortalSelectionSubmitPanel/);
+  assert.match(appSource, /calculateCustomerSelectionSummary\(proposal, selectionDraft\)/);
+  assert.match(appSource, /submitCustomerPortalSelectionByToken\(token, selectionDraft\)/);
+  assert.match(appSource, /This is a selection request only/);
+  assert.match(appSource, /function CustomerPortalSelectionEditor/);
+  assert.match(appSource, /Customer Portal Selection/);
+});
+
+test("customer portal selection API validates token and writes only customer selection state", () => {
+  assert.match(customerPortalApiSource, /request\.method === "POST"/);
+  assert.match(customerPortalApiSource, /getCustomerShareStatus\(proposal, shareToken\)/);
+  assert.match(customerPortalApiSource, /buildSubmittedCustomerSelection\(proposal, body\.selection/);
+  assert.match(customerPortalApiSource, /customerSelection/);
+  assert.doesNotMatch(customerPortalApiSource, /status:\s*"approved"/);
+  assert.doesNotMatch(customerPortalApiSource, /accepted/i);
+});
+
+test("customer portal selection mobile controls are tap-friendly", () => {
+  assert.match(styleSource, /\.customer-portal-selection-control input\s*\{[\s\S]*?height:\s*22px/);
+  assert.match(styleSource, /\.customer-portal-selection-form button\s*\{[\s\S]*?min-height:\s*48px/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*?\.customer-portal-selection-fields\s*\{[\s\S]*?grid-template-columns:\s*1fr/);
 });

@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildSubmittedCustomerSelection,
+  calculateCustomerSelectionSummary,
   createCustomerSafeProposalPayload,
   createCustomerShareToken,
+  createCustomerPortalSelectionDraft,
   fetchCustomerPortalProposalByToken,
   findCustomerProposalByShareToken,
   getCustomerPortalLink,
@@ -12,7 +15,9 @@ import {
   getCustomerShareFields,
   getCustomerShareStatus,
   isCustomerPortalRoute,
+  normalizeCustomerSelection,
   normalizeCustomerShareToken,
+  submitCustomerPortalSelectionByToken,
 } from "./customerPortal.js";
 
 test("customer share token is normalized and generated with a safe prefix", () => {
@@ -145,9 +150,112 @@ test("customer-safe proposal payload preserves residential cloud fields and stri
   assert.equal(payload.pricing.basePackage.images[0].publicUrl, "https://cdn.example/base.jpg");
   assert.equal(payload.projectPhotos[0].caption || "", "");
   assert.equal(payload.residentialLegalPapers.termsAndConditions.status, "included");
+  assert.equal(payload.customerSelection.status, "none");
   assert.equal("smartPasteNotes" in payload, false);
   assert.equal("internalTrackingNotes" in payload, false);
   assert.equal("fileName" in payload.pricing.pricingOptions[0].images[0], false);
+});
+
+test("base-plus-addons customer selection calculates selected total without changing pricing", () => {
+  const proposal = {
+    pricingMode: "base_plus_addons",
+    pricing: {
+      pricingMode: "base_plus_addons",
+      basePackage: { name: "Base package", price: 40000 },
+      optionalAddOns: [
+        { id: "walls", name: "Walls", amount: 10000 },
+        { id: "lighting", name: "Lighting", amount: 7000 },
+      ],
+    },
+  };
+  const summary = calculateCustomerSelectionSummary(proposal, {
+    selectedAddOnIds: ["walls"],
+    selectedPricingMode: "base_plus_addons",
+  });
+  const submitted = buildSubmittedCustomerSelection(proposal, {
+    customerName: "Homeowner",
+    selectedAddOnIds: ["walls"],
+    selectedPricingMode: "base_plus_addons",
+  }, "2026-05-09T12:00:00.000Z");
+
+  assert.equal(summary.selectedTotal, 50000);
+  assert.equal(summary.selectedDownPayment, 25000);
+  assert.equal(summary.selectedFinalPayment, 25000);
+  assert.deepEqual(summary.selectedAddOnNames, ["Walls"]);
+  assert.equal(submitted.status, "submitted");
+  assert.equal(submitted.customerName, "Homeowner");
+  assert.equal(proposal.pricing.optionalAddOns[0].selected, undefined);
+});
+
+test("choose-one customer selection allows one option and selected add-ons only", () => {
+  const proposal = {
+    pricingMode: "choose_one_option",
+    pricingOptions: [
+      { id: "broom", name: "Broom Finish", price: 82500 },
+      { id: "stamped", name: "Stamped Finish", price: 97500 },
+    ],
+    optionalAddOns: [
+      { id: "cantilever", name: "Cantilever", amount: 8500, appliesTo: ["Broom Finish", "Stamped Finish"] },
+      { id: "border", name: "Decorative Border", amount: 2500, appliesTo: ["Broom Finish"] },
+    ],
+  };
+  const summary = calculateCustomerSelectionSummary(proposal, {
+    selectedAddOnIds: ["cantilever", "border"],
+    selectedOptionId: "stamped",
+    selectedPricingMode: "choose_one_option",
+  });
+
+  assert.equal(summary.selectedOptionName, "Stamped Finish");
+  assert.equal(summary.selectedTotal, 106000);
+  assert.deepEqual(summary.selectedAddOnNames, ["Cantilever"]);
+  assert.equal(summary.selectedAddOnNames.includes("Decorative Border"), false);
+});
+
+test("customer portal selection draft defaults from proposal but preserves submitted selection", () => {
+  const proposal = {
+    client: { contactName: "Homeowner", email: "home@example.com" },
+    pricingMode: "choose_one_option",
+    pricingOptions: [
+      { id: "option-1", name: "Option 1", price: 40000, included: false },
+      { id: "option-2", name: "Option 2", price: 50000, included: true },
+    ],
+    optionalAddOns: [{ id: "walls", name: "Walls", amount: 10000, selected: true }],
+  };
+  const draft = createCustomerPortalSelectionDraft(proposal);
+  const submittedDraft = createCustomerPortalSelectionDraft({
+    ...proposal,
+    customerSelection: {
+      status: "submitted",
+      selectedOptionId: "option-1",
+      selectedAddOnIds: [],
+    },
+  });
+
+  assert.equal(draft.customerName, "Homeowner");
+  assert.equal(draft.customerEmail, "home@example.com");
+  assert.equal(draft.selectedOptionId, "option-2");
+  assert.deepEqual(draft.selectedAddOnIds, ["walls"]);
+  assert.equal(submittedDraft.selectedOptionId, "option-1");
+  assert.deepEqual(submittedDraft.selectedAddOnIds, []);
+});
+
+test("customer selection normalization is safe for old proposals", () => {
+  assert.deepEqual(normalizeCustomerSelection({ selectedAddOnIds: "walls\nlighting", selectedTotal: "$50,000" }), {
+    status: "none",
+    submittedAt: "",
+    selectedPricingMode: "",
+    selectedOptionId: "",
+    selectedOptionName: "",
+    selectedAddOnIds: ["walls", "lighting"],
+    selectedAddOnNames: [],
+    selectedTotal: 50000,
+    selectedDownPayment: 0,
+    selectedFinalPayment: 0,
+    customerName: "",
+    customerEmail: "",
+    customerPhone: "",
+    customerNotes: "",
+  });
 });
 
 test("customer portal API helper loads public proposal payload without signed-in local state", async () => {
@@ -222,4 +330,48 @@ test("customer portal API helper returns disabled, expired, and unavailable reas
   assert.equal(disabled.reason, "disabled");
   assert.equal(expired.reason, "expired");
   assert.equal(unavailable.reason, "api-unavailable");
+});
+
+test("customer portal submit helper posts selection and handles rejected tokens", async () => {
+  const submitted = await submitCustomerPortalSelectionByToken("lyp_public", { selectedAddOnIds: ["walls"] }, {
+    fetchImpl: async (url, options) => {
+      assert.equal(url, "/api/customer-proposal");
+      assert.equal(options.method, "POST");
+      assert.deepEqual(JSON.parse(options.body), {
+        shareToken: "lyp_public",
+        selection: { selectedAddOnIds: ["walls"] },
+      });
+
+      return {
+        ok: true,
+        headers: { get: () => "application/json" },
+        async json() {
+          return {
+            ok: true,
+            available: true,
+            customerSelection: {
+              status: "submitted",
+              selectedTotal: 50000,
+            },
+            proposal: { id: "proposal-1" },
+          };
+        },
+      };
+    },
+  });
+  const disabled = await submitCustomerPortalSelectionByToken("lyp_disabled", {}, {
+    fetchImpl: async () => ({
+      ok: false,
+      status: 403,
+      headers: { get: () => "application/json" },
+      async json() {
+        return { reason: "disabled" };
+      },
+    }),
+  });
+
+  assert.equal(submitted.ok, true);
+  assert.equal(submitted.customerSelection.status, "submitted");
+  assert.equal(submitted.customerSelection.selectedTotal, 50000);
+  assert.equal(disabled.reason, "disabled");
 });

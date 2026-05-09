@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import {
+  buildSubmittedCustomerSelection,
   createCustomerSafeProposalPayload,
   getCustomerShareStatus,
   normalizeCustomerShareToken,
@@ -15,12 +16,13 @@ export default async function handler(request, response) {
     return;
   }
 
-  if (request.method !== "GET") {
+  if (!["GET", "POST"].includes(request.method)) {
     response.status(405).json({ ok: false, available: false, reason: "method-not-allowed", error: "Method not allowed." });
     return;
   }
 
-  const shareToken = normalizeCustomerShareToken(request.query?.shareToken || getQueryParam(request.url, "shareToken"));
+  const body = request.method === "POST" ? await readJsonBody(request) : {};
+  const shareToken = normalizeCustomerShareToken(body.shareToken || request.query?.shareToken || getQueryParam(request.url, "shareToken"));
 
   if (!shareToken) {
     response.status(400).json({ ok: false, available: false, reason: "missing-token", error: "Missing proposal share token." });
@@ -77,13 +79,32 @@ export default async function handler(request, response) {
       return;
     }
 
+    if (request.method === "POST") {
+      const customerSelection = buildSubmittedCustomerSelection(proposal, body.selection || body.customerSelection || {});
+      const proposalWithSelection = {
+        ...proposal,
+        customerSelection,
+      };
+
+      await updateCustomerProposalData(supabase, data.id, proposalWithSelection);
+
+      response.status(200).json({
+        ok: true,
+        available: true,
+        reason: "available",
+        customerSelection,
+        proposal: createCustomerSafeProposalPayload(proposalWithSelection),
+      });
+      return;
+    }
+
     const viewedAt = new Date().toISOString();
     const proposalWithLastViewed = {
       ...proposal,
       customerShareLastViewedAt: viewedAt,
     };
 
-    await markCustomerProposalViewed(supabase, data.id, proposalWithLastViewed);
+    await updateCustomerProposalData(supabase, data.id, proposalWithLastViewed);
 
     response.status(200).json({
       ok: true,
@@ -101,7 +122,7 @@ export default async function handler(request, response) {
   }
 }
 
-async function markCustomerProposalViewed(supabase, rowId, proposalData) {
+async function updateCustomerProposalData(supabase, rowId, proposalData) {
   if (!rowId) {
     return;
   }
@@ -110,6 +131,33 @@ async function markCustomerProposalViewed(supabase, rowId, proposalData) {
     await supabase.from(proposalsTable).update({ proposal_data: proposalData }).eq("id", rowId);
   } catch {
     // Viewing should not fail just because last-viewed tracking could not be written.
+  }
+}
+
+async function readJsonBody(request) {
+  if (request.body && typeof request.body === "object") {
+    return request.body;
+  }
+
+  if (typeof request.body === "string") {
+    try {
+      return JSON.parse(request.body);
+    } catch {
+      return {};
+    }
+  }
+
+  try {
+    const chunks = [];
+
+    for await (const chunk of request) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+
+    const rawBody = Buffer.concat(chunks).toString("utf8").trim();
+    return rawBody ? JSON.parse(rawBody) : {};
+  } catch {
+    return {};
   }
 }
 

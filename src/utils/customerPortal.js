@@ -1,5 +1,8 @@
+import { BASE_PLUS_ADDONS_PRICING_MODE, CHOOSE_ONE_PRICING_MODE } from "./proposalPacket/residentialPricing.js";
+
 const customerPortalTokenPrefix = "lyp_";
 const customerPortalTokenByteLength = 18;
+const customerSelectionStatuses = ["none", "submitted", "reviewed"];
 
 export function normalizeCustomerShareToken(value = "") {
   return String(value ?? "")
@@ -196,6 +199,207 @@ export async function fetchCustomerPortalProposalByToken(shareToken = "", { endp
   }
 }
 
+export async function submitCustomerPortalSelectionByToken(
+  shareToken = "",
+  selection = {},
+  { endpoint = "/api/customer-proposal", fetchImpl = globalThis.fetch } = {},
+) {
+  const token = normalizeCustomerShareToken(shareToken);
+
+  if (!token) {
+    return {
+      available: false,
+      ok: false,
+      proposal: null,
+      reason: "missing-token",
+    };
+  }
+
+  if (typeof fetchImpl !== "function") {
+    return {
+      available: false,
+      ok: false,
+      proposal: null,
+      reason: "api-unavailable",
+    };
+  }
+
+  try {
+    const response = await fetchImpl(endpoint, {
+      body: JSON.stringify({
+        shareToken: token,
+        selection,
+      }),
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    });
+    const payload = await readCustomerPortalJsonResponse(response);
+
+    if (!response.ok) {
+      return {
+        available: false,
+        ok: false,
+        proposal: null,
+        reason:
+          payload.reason ||
+          (response.status === 503 ? "unconfigured" : response.status === 410 ? "expired" : response.status === 403 ? "disabled" : "api-unavailable"),
+      };
+    }
+
+    return {
+      available: payload.available === true,
+      customerSelection: normalizeCustomerSelection(payload.customerSelection),
+      ok: payload.ok === true,
+      proposal: payload.proposal || null,
+      reason: payload.reason || (payload.available ? "available" : "not-found"),
+    };
+  } catch {
+    return {
+      available: false,
+      ok: false,
+      proposal: null,
+      reason: "api-unavailable",
+    };
+  }
+}
+
+export function createDefaultCustomerSelection(overrides = {}) {
+  return normalizeCustomerSelection(overrides);
+}
+
+export function normalizeCustomerSelection(selection = {}) {
+  const sourceSelection = isCustomerPortalObject(selection) ? selection : {};
+  const status = customerSelectionStatuses.includes(sourceSelection.status) ? sourceSelection.status : "none";
+
+  return {
+    status,
+    submittedAt: cleanCustomerPortalText(sourceSelection.submittedAt),
+    selectedPricingMode: cleanCustomerPortalText(sourceSelection.selectedPricingMode),
+    selectedOptionId: cleanCustomerPortalText(sourceSelection.selectedOptionId),
+    selectedOptionName: cleanCustomerPortalText(sourceSelection.selectedOptionName),
+    selectedAddOnIds: sanitizeCustomerPortalTextList(sourceSelection.selectedAddOnIds),
+    selectedAddOnNames: sanitizeCustomerPortalTextList(sourceSelection.selectedAddOnNames),
+    selectedTotal: toCustomerPortalNumber(sourceSelection.selectedTotal),
+    selectedDownPayment: toCustomerPortalNumber(sourceSelection.selectedDownPayment),
+    selectedFinalPayment: toCustomerPortalNumber(sourceSelection.selectedFinalPayment),
+    customerName: cleanCustomerPortalText(sourceSelection.customerName),
+    customerEmail: cleanCustomerPortalText(sourceSelection.customerEmail),
+    customerPhone: cleanCustomerPortalText(sourceSelection.customerPhone),
+    customerNotes: cleanCustomerPortalLongText(sourceSelection.customerNotes),
+  };
+}
+
+export function createCustomerPortalSelectionDraft(proposal = {}) {
+  const existingSelection = normalizeCustomerSelection(proposal.customerSelection);
+  const hasSubmittedSelection = existingSelection.status !== "none";
+  const selectionSummary = calculateCustomerSelectionSummary(proposal, hasSubmittedSelection ? existingSelection : {});
+  const client = isCustomerPortalObject(proposal.client) ? proposal.client : {};
+
+  return {
+    customerEmail: existingSelection.customerEmail || cleanCustomerPortalText(client.email),
+    customerName: existingSelection.customerName || cleanCustomerPortalText(client.contactName || client.companyName),
+    customerNotes: existingSelection.customerNotes,
+    customerPhone: existingSelection.customerPhone || cleanCustomerPortalText(client.phone),
+    selectedAddOnIds: hasSubmittedSelection ? existingSelection.selectedAddOnIds : selectionSummary.selectedAddOnIds,
+    selectedOptionId: hasSubmittedSelection ? existingSelection.selectedOptionId : selectionSummary.selectedOptionId,
+    selectedPricingMode: selectionSummary.selectedPricingMode,
+  };
+}
+
+export function buildSubmittedCustomerSelection(proposal = {}, selection = {}, submittedAt = new Date().toISOString()) {
+  const summary = calculateCustomerSelectionSummary(proposal, selection);
+
+  return normalizeCustomerSelection({
+    status: "submitted",
+    submittedAt,
+    selectedPricingMode: summary.selectedPricingMode,
+    selectedOptionId: summary.selectedOptionId,
+    selectedOptionName: summary.selectedOptionName,
+    selectedAddOnIds: summary.selectedAddOnIds,
+    selectedAddOnNames: summary.selectedAddOnNames,
+    selectedTotal: summary.selectedTotal,
+    selectedDownPayment: summary.selectedDownPayment,
+    selectedFinalPayment: summary.selectedFinalPayment,
+    customerName: selection.customerName,
+    customerEmail: selection.customerEmail,
+    customerPhone: selection.customerPhone,
+    customerNotes: selection.customerNotes,
+  });
+}
+
+export function calculateCustomerSelectionSummary(proposal = {}, selection = {}) {
+  const pricing = isCustomerPortalObject(proposal.pricing) ? proposal.pricing : {};
+  const selectedPricingMode = cleanCustomerPortalText(selection.selectedPricingMode || proposal.pricingMode || pricing.pricingMode);
+  const addOns = selectCustomerPortalRows(proposal.optionalAddOns, pricing.optionalAddOns);
+  const selectedAddOnIds = getSelectedCustomerAddOnIds(addOns, selection);
+
+  if (selectedPricingMode === CHOOSE_ONE_PRICING_MODE) {
+    const options = selectCustomerPortalRows(proposal.pricingOptions, pricing.pricingOptions);
+    const selectedOption = selectCustomerPortalOption(options, selection.selectedOptionId);
+    const selectedOptionId = selectedOption ? getCustomerSelectionItemId(selectedOption.item, selectedOption.index, "option") : "";
+    const selectedOptionName = selectedOption?.item?.name || "";
+    const optionPrice = toCustomerPortalNumber(selectedOption?.item?.price ?? selectedOption?.item?.amount ?? selectedOption?.item?.total);
+    const selectedAddOns = addOns
+      .map((addOn, index) => ({ addOn, id: getCustomerSelectionItemId(addOn, index, "addon"), index }))
+      .filter(({ addOn, id }) => selectedAddOnIds.includes(id) && doesCustomerAddOnApplyToOption(addOn, selectedOption?.item));
+    const addOnsTotal = selectedAddOns.reduce((sum, { addOn }) => sum + toCustomerPortalNumber(addOn.amount ?? addOn.price ?? addOn.total), 0);
+    const selectedTotal = optionPrice + addOnsTotal;
+    const selectedDownPayment = toCustomerPortalNumber(selectedOption?.item?.downPayment) || optionPrice / 2;
+    const selectedFinalPayment = toCustomerPortalNumber(selectedOption?.item?.finalPayment) || optionPrice / 2;
+
+    return {
+      selectedPricingMode,
+      selectedOptionId,
+      selectedOptionName,
+      selectedAddOnIds: selectedAddOns.map(({ id }) => id),
+      selectedAddOnNames: selectedAddOns.map(({ addOn }) => cleanCustomerPortalText(addOn.name)).filter(Boolean),
+      selectedTotal,
+      selectedDownPayment: selectedDownPayment + addOnsTotal / 2,
+      selectedFinalPayment: selectedFinalPayment + addOnsTotal / 2,
+    };
+  }
+
+  if (selectedPricingMode === BASE_PLUS_ADDONS_PRICING_MODE) {
+    const basePrice = getCustomerPortalBasePackagePrice(proposal);
+    const selectedAddOns = addOns
+      .map((addOn, index) => ({ addOn, id: getCustomerSelectionItemId(addOn, index, "addon") }))
+      .filter(({ id }) => selectedAddOnIds.includes(id));
+    const addOnsTotal = selectedAddOns.reduce((sum, { addOn }) => sum + toCustomerPortalNumber(addOn.amount ?? addOn.price ?? addOn.total), 0);
+    const selectedTotal = basePrice + addOnsTotal;
+
+    return {
+      selectedPricingMode,
+      selectedOptionId: "",
+      selectedOptionName: "",
+      selectedAddOnIds: selectedAddOns.map(({ id }) => id),
+      selectedAddOnNames: selectedAddOns.map(({ addOn }) => cleanCustomerPortalText(addOn.name)).filter(Boolean),
+      selectedTotal,
+      selectedDownPayment: selectedTotal / 2,
+      selectedFinalPayment: selectedTotal / 2,
+    };
+  }
+
+  const fallbackTotal = toCustomerPortalNumber(proposal.revisedTotal ?? proposal.totalAmount ?? pricing.totalProposal ?? pricing.total ?? 0);
+
+  return {
+    selectedPricingMode,
+    selectedOptionId: "",
+    selectedOptionName: "",
+    selectedAddOnIds: [],
+    selectedAddOnNames: [],
+    selectedTotal: fallbackTotal,
+    selectedDownPayment: fallbackTotal / 2,
+    selectedFinalPayment: fallbackTotal / 2,
+  };
+}
+
+export function getCustomerSelectionItemId(item = {}, index = 0, prefix = "item") {
+  return cleanCustomerPortalText(item.id || item.optionId || item.addOnId || item.name) || `${prefix}-${index + 1}`;
+}
+
 export function createCustomerSafeProposalPayload(proposal = {}) {
   const pricing = isCustomerPortalObject(proposal.pricing) ? proposal.pricing : {};
   const pricingOptions = sanitizeCustomerPortalPricingOptions(selectCustomerPortalRows(proposal.pricingOptions, pricing.pricingOptions));
@@ -216,6 +420,7 @@ export function createCustomerSafeProposalPayload(proposal = {}) {
     residentialPdfLayout: cleanCustomerPortalText(proposal.residentialPdfLayout),
     pdfStyle: sanitizeCustomerPortalObject(proposal.pdfStyle),
     ...getCustomerShareFields(proposal),
+    customerSelection: normalizeCustomerSelection(proposal.customerSelection),
     company: sanitizeCustomerPortalCompany(proposal.company),
     client: sanitizeCustomerPortalClient(proposal.client),
     project: sanitizeCustomerPortalProject(proposal.project),
@@ -264,6 +469,72 @@ export function getCustomerSafeImageCaption(image = {}, fallback = "Project Phot
 
 function cleanCustomerPortalText(value = "") {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function cleanCustomerPortalLongText(value = "") {
+  return String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .trim()
+    .slice(0, 2000);
+}
+
+function getCustomerPortalBasePackagePrice(proposal = {}) {
+  const pricing = isCustomerPortalObject(proposal.pricing) ? proposal.pricing : {};
+  const basePackage = isCustomerPortalObject(pricing.basePackage) ? pricing.basePackage : {};
+  const explicitBase = toCustomerPortalNumber(basePackage.total ?? basePackage.price ?? basePackage.amount ?? pricing.baseBid ?? proposal.baseBid);
+
+  if (explicitBase > 0) {
+    return explicitBase;
+  }
+
+  return selectCustomerPortalRows(proposal.lineItems, pricing.lineItems).reduce((sum, item) => {
+    const amount = toCustomerPortalNumber(item.amount ?? item.total);
+    const quantity = toCustomerPortalNumber(item.quantity ?? item.qty) || 1;
+    const unitPrice = toCustomerPortalNumber(item.unitPrice ?? item.rate ?? item.price);
+
+    return sum + (amount || quantity * unitPrice);
+  }, 0);
+}
+
+function selectCustomerPortalOption(options = [], selectedOptionId = "") {
+  const normalizedSelectedOptionId = cleanCustomerPortalText(selectedOptionId);
+  const optionRows = selectCustomerPortalRows(options).map((item, index) => ({
+    id: getCustomerSelectionItemId(item, index, "option"),
+    index,
+    item,
+  }));
+
+  return (
+    optionRows.find((option) => option.id === normalizedSelectedOptionId || cleanCustomerPortalText(option.item.name) === normalizedSelectedOptionId) ||
+    optionRows.find((option) => option.item?.selected || option.item?.included) ||
+    optionRows[0] ||
+    null
+  );
+}
+
+function getSelectedCustomerAddOnIds(addOns = [], selection = {}) {
+  if (Object.prototype.hasOwnProperty.call(selection, "selectedAddOnIds")) {
+    return sanitizeCustomerPortalTextList(selection.selectedAddOnIds);
+  }
+
+  return selectCustomerPortalRows(addOns)
+    .map((addOn, index) => ({ addOn, id: getCustomerSelectionItemId(addOn, index, "addon") }))
+    .filter(({ addOn }) => addOn?.selected || addOn?.included)
+    .map(({ id }) => id);
+}
+
+function doesCustomerAddOnApplyToOption(addOn = {}, option = {}) {
+  const appliesTo = sanitizeCustomerPortalTextList(addOn.appliesTo).map((value) => value.toLowerCase());
+
+  if (!option || appliesTo.length === 0) {
+    return true;
+  }
+
+  const optionId = cleanCustomerPortalText(option.id).toLowerCase();
+  const optionName = cleanCustomerPortalText(option.name).toLowerCase();
+
+  return appliesTo.some((value) => value === "all" || value === optionId || value === optionName || optionName.includes(value) || value.includes(optionName));
 }
 
 async function readCustomerPortalJsonResponse(response) {
