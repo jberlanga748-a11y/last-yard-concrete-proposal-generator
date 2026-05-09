@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  fetchCloudProposals,
   fetchCloudProposalById,
   formatCloudProposalSaveError,
   getCloudProposalRowStatus,
+  getCloudProposalLoadWarning,
   mergeCloudPortalFieldsForSave,
   saveCloudProposal,
 } from "./proposalCloud.js";
@@ -28,13 +30,16 @@ function createFakeSupabase({
   onUpdate = () => {},
   onInsert = () => {},
   onUpsert = () => {},
+  onRange = () => {},
   updateResults = [],
   insertResults = [],
   upsertResults = [],
+  rangeResults = [],
 } = {}) {
   let updateCount = 0;
   let insertCount = 0;
   let upsertCount = 0;
+  let rangeCount = 0;
 
   return {
     from(tableName) {
@@ -43,28 +48,68 @@ function createFakeSupabase({
       return {
         select() {
           const filters = {};
-
-          return {
-            eq(column, value) {
-              filters[column] = value;
-
-              if (column === "id") {
-                return {
-                  async maybeSingle() {
-                    return {
-                      data: rows.find((row) => row.id === value && (!filters.company_id || row.company_id === filters.company_id)) || null,
-                      error: null,
-                    };
-                  },
-                };
+          const applyFilters = () =>
+            rows.filter((row) => {
+              if (filters.company_id && row.company_id !== filters.company_id) {
+                return false;
               }
 
+              if (filters.id && row.id !== filters.id) {
+                return false;
+              }
+
+              if (filters["proposal_data->>id"] && row.proposal_data?.id !== filters["proposal_data->>id"]) {
+                return false;
+              }
+
+              return true;
+            });
+          const builder = {
+            eq(column, value) {
+              filters[column] = value;
+              return builder;
+            },
+            filter(column, operator, value) {
+              assert.equal(operator, "eq");
+              filters[column] = value;
+              return builder;
+            },
+            limit() {
+              return builder;
+            },
+            maybeSingle() {
               return Promise.resolve({
-                data: rows.filter((row) => !filters.company_id || row.company_id === filters.company_id),
+                data: applyFilters()[0] || null,
                 error: null,
               });
             },
+            order(column, options) {
+              assert.equal(column, "updated_at");
+              assert.deepEqual(options, { ascending: false });
+              return builder;
+            },
+            range(start, end) {
+              onRange(start, end);
+              const result = rangeResults[rangeCount++];
+
+              if (result) {
+                return Promise.resolve(result);
+              }
+
+              return Promise.resolve({
+                data: applyFilters().slice(start, end + 1),
+                error: null,
+              });
+            },
+            then(resolve, reject) {
+              return Promise.resolve({
+                data: applyFilters(),
+                error: null,
+              }).then(resolve, reject);
+            },
           };
+
+          return builder;
         },
         update(payload) {
           onUpdate(payload);
@@ -95,6 +140,92 @@ const cloudDeps = {
   normalizeProposalForCollection: (proposal) => ({ ...proposal }),
   getProposalTimestamp: (proposal) => Date.parse(proposal.updatedAt || proposal.createdAt || "") || 0,
 };
+
+test("fetchCloudProposals loads proposal collections with paginated range queries", async () => {
+  const ranges = [];
+  const rows = [
+    createProposalRow({ id: "proposal-1", proposalNumber: "LYC-1" }),
+    createProposalRow({ id: "proposal-2", proposalNumber: "LYC-2" }, { id: "row-2" }),
+    createProposalRow({ id: "proposal-3", proposalNumber: "LYC-3" }, { id: "row-3" }),
+  ].map((row) => ({ ...row, company_id: "company-1" }));
+
+  const proposals = await fetchCloudProposals("company-1", {
+    ...cloudDeps,
+    cloudProposalPageSize: 2,
+    supabaseClient: createFakeSupabase({
+      rows,
+      onRange(start, end) {
+        ranges.push([start, end]);
+      },
+    }),
+  });
+
+  assert.deepEqual(ranges, [
+    [0, 1],
+    [2, 3],
+  ]);
+  assert.equal(proposals.length, 3);
+  assert.equal(proposals[0].proposalNumber, "LYC-1");
+});
+
+test("fetchCloudProposals retries statement timeout with a smaller page size", async () => {
+  const ranges = [];
+  const rows = [
+    createProposalRow({ id: "proposal-1" }),
+    createProposalRow({ id: "proposal-2" }, { id: "row-2" }),
+  ].map((row) => ({ ...row, company_id: "company-1" }));
+
+  const proposals = await fetchCloudProposals("company-1", {
+    ...cloudDeps,
+    cloudProposalPageSize: 2,
+    cloudProposalRetryPageSize: 1,
+    supabaseClient: createFakeSupabase({
+      rows,
+      onRange(start, end) {
+        ranges.push([start, end]);
+      },
+      rangeResults: [
+        { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } },
+        null,
+        null,
+        null,
+      ],
+    }),
+  });
+
+  assert.deepEqual(ranges, [
+    [0, 1],
+    [0, 0],
+    [1, 1],
+    [2, 2],
+  ]);
+  assert.equal(proposals.length, 2);
+});
+
+test("fetchCloudProposals returns partial results if a later page times out after retry", async () => {
+  const rows = [
+    createProposalRow({ id: "proposal-1" }),
+    createProposalRow({ id: "proposal-2" }, { id: "row-2" }),
+    createProposalRow({ id: "proposal-3" }, { id: "row-3" }),
+  ].map((row) => ({ ...row, company_id: "company-1" }));
+
+  const proposals = await fetchCloudProposals("company-1", {
+    ...cloudDeps,
+    cloudProposalPageSize: 2,
+    cloudProposalRetryPageSize: 1,
+    supabaseClient: createFakeSupabase({
+      rows,
+      rangeResults: [
+        { data: rows.slice(0, 2), error: null },
+        { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } },
+        { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } },
+      ],
+    }),
+  });
+
+  assert.equal(proposals.length, 2);
+  assert.match(getCloudProposalLoadWarning(proposals), /Cloud proposal load timed out after 2 proposals/);
+});
 
 test("cloud save merge preserves newer public customer selection from portal writes", () => {
   const merged = mergeCloudPortalFieldsForSave(
@@ -285,6 +416,8 @@ test("saveCloudProposal does not wipe portal fields while persisting residential
   assert.equal(savedProposal.pricing.optionalAddOns[0].images[0].storagePath, "option-photos/walls.jpg");
   assert.equal(savedProposal.residentialLegalPapers.termsAndConditions.status, "provided_separately");
   assert.equal(updatePayload.proposal_data.customerSelection.status, "submitted");
+  assert.equal(updatePayload.proposal_data.proposalListSummary.proposalMode, "residential");
+  assert.equal(updatePayload.proposal_data.proposalListSummary.projectName || "", "");
   assert.equal(updatePayload.status, "draft");
   assert.ok(updatePayload.updated_at);
 });
@@ -404,6 +537,14 @@ test("formatCloudProposalSaveError returns safe actionable reasons", () => {
   assert.equal(
     formatCloudProposalSaveError({ message: "No API key found in request", code: "401" }).reason,
     "missing-env-config",
+  );
+  assert.deepEqual(
+    formatCloudProposalSaveError({ message: "canceling statement due to statement timeout", code: "57014" }),
+    {
+      code: "57014",
+      message: "Cloud proposal load timed out. Try loading fewer proposals or contact support.",
+      reason: "statement-timeout",
+    },
   );
   assert.equal(
     formatCloudProposalSaveError({ message: "Could not find the 'proposal_type' column of 'proposals' in the schema cache", code: "PGRST204" }).reason,

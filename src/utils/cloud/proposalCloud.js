@@ -37,6 +37,8 @@ const cloudProposalRowStatusByWorkflowStatus = {
   customer_selection_submitted: "sent",
   selection_reviewed: "sent",
 };
+const defaultCloudProposalPageSize = 25;
+const retryCloudProposalPageSize = 10;
 
 function normalizeProposalForCloud(proposal = {}, deps = {}, options = {}) {
   const lightweightNormalizer = options.forCollection ? deps.normalizeProposalForCollection : null;
@@ -71,13 +73,17 @@ function getProposalTimestamp(proposal = {}, deps = {}) {
 
 export async function loadOrMergeCloudProposals(companyId, localProposals = [], deps = {}, labels = {}) {
   const cloudProposals = await fetchCloudProposals(companyId, deps);
+  const cloudLoadWarning = getCloudProposalLoadWarning(cloudProposals);
   const normalizedLocalProposals = localProposals.filter(isPlainObject).map((proposal) => normalizeProposalForCloud(proposal, deps, { forCollection: true }));
   const syncedLabel = labels.syncedLabel || "Synced";
   const needsSyncLabel = labels.needsSyncLabel || "Needs sync";
 
   if (cloudProposals.length === 0 && normalizedLocalProposals.length > 0) {
     return {
-      message: `Cloud has no proposals yet. Use Push Local Proposals to upload ${normalizedLocalProposals.length} local proposal${normalizedLocalProposals.length === 1 ? "" : "s"}.`,
+      message: withCloudProposalLoadWarning(
+        `Cloud has no proposals yet. Use Push Local Proposals to upload ${normalizedLocalProposals.length} local proposal${normalizedLocalProposals.length === 1 ? "" : "s"}.`,
+        cloudLoadWarning,
+      ),
       proposals: normalizedLocalProposals,
       status: needsSyncLabel,
     };
@@ -85,9 +91,9 @@ export async function loadOrMergeCloudProposals(companyId, localProposals = [], 
 
   if (cloudProposals.length > 0 && normalizedLocalProposals.length === 0) {
     return {
-      message: `Loaded ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"}.`,
+      message: withCloudProposalLoadWarning(`Loaded ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"}.`, cloudLoadWarning),
       proposals: cloudProposals,
-      status: syncedLabel,
+      status: cloudLoadWarning ? needsSyncLabel : syncedLabel,
     };
   }
 
@@ -95,9 +101,12 @@ export async function loadOrMergeCloudProposals(companyId, localProposals = [], 
     const mergeResult = mergeProposalCollections(normalizedLocalProposals, cloudProposals, deps);
 
     return {
-      message: mergeResult.warning || `Merged ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"} with local proposals.`,
+      message: withCloudProposalLoadWarning(
+        mergeResult.warning || `Merged ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"} with local proposals.`,
+        cloudLoadWarning,
+      ),
       proposals: mergeResult.proposals,
-      status: mergeResult.needsSync ? needsSyncLabel : syncedLabel,
+      status: mergeResult.needsSync || cloudLoadWarning ? needsSyncLabel : syncedLabel,
     };
   }
 
@@ -110,19 +119,51 @@ export async function loadOrMergeCloudProposals(companyId, localProposals = [], 
 
 export async function fetchCloudProposals(companyId, deps = {}) {
   const client = getSupabaseClient(deps);
-  const { data, error } = await client
-    .from("proposals")
-    .select("id,proposal_data,created_at,updated_at")
-    .eq("company_id", companyId)
-    .order("updated_at", { ascending: false });
+  const proposals = [];
+  let start = 0;
+  let pageSize = normalizeCloudProposalPageSize(deps.cloudProposalPageSize, defaultCloudProposalPageSize);
+  const smallerPageSize = normalizeCloudProposalPageSize(deps.cloudProposalRetryPageSize, retryCloudProposalPageSize);
+  let retriedAfterTimeout = false;
 
-  if (error) {
-    throw error;
+  while (true) {
+    let rows;
+
+    try {
+      rows = await fetchCloudProposalPage(client, companyId, start, pageSize);
+    } catch (error) {
+      if (isStatementTimeoutError(error) && !retriedAfterTimeout && smallerPageSize < pageSize) {
+        pageSize = smallerPageSize;
+        retriedAfterTimeout = true;
+        continue;
+      }
+
+      if (isStatementTimeoutError(error) && proposals.length > 0) {
+        return attachCloudProposalLoadWarning(
+          proposals,
+          `Cloud proposal load timed out after ${proposals.length} proposal${proposals.length === 1 ? "" : "s"}. Showing partial cloud results; try again later or contact support.`,
+        );
+      }
+
+      if (isStatementTimeoutError(error)) {
+        throw createCloudProposalStatementTimeoutError(error);
+      }
+
+      throw error;
+    }
+
+    rows
+      .map((row) => safelyNormalizeCloudProposalRow(row, deps, { forCollection: true }))
+      .filter(Boolean)
+      .forEach((proposal) => proposals.push(proposal));
+
+    if (rows.length < pageSize) {
+      break;
+    }
+
+    start += rows.length;
   }
 
-  return (data || [])
-    .map((row) => safelyNormalizeCloudProposalRow(row, deps, { forCollection: true }))
-    .filter(Boolean);
+  return proposals;
 }
 
 export async function fetchCloudProposalByShareToken(shareToken, deps = {}) {
@@ -259,23 +300,29 @@ async function findCloudProposalRow(companyId, proposalId, client = getSupabaseC
   const { data, error } = await client
     .from("proposals")
     .select("id,proposal_data,created_at,updated_at")
-    .eq("company_id", companyId);
+    .eq("company_id", companyId)
+    .filter("proposal_data->>id", "eq", normalizedProposalId)
+    .limit(1)
+    .maybeSingle();
 
   if (error) {
     throw error;
   }
 
-  const match = (data || []).find((row) => row.proposal_data?.id === proposalId);
-  return match || null;
+  return data || null;
 }
 
 function createCloudProposalRow(companyId, proposal, deps = {}) {
   const normalizedProposal = normalizeProposalForCloud(proposal, deps);
+  const proposalData = {
+    ...normalizedProposal,
+    proposalListSummary: createCloudProposalListSummary(normalizedProposal),
+  };
   const row = {
     company_id: companyId,
     contact_id: isUuid(normalizedProposal.contactId) ? normalizedProposal.contactId : null,
     packet_mode: normalizedProposal.packetMode || "summary",
-    proposal_data: normalizedProposal,
+    proposal_data: proposalData,
     proposal_number: normalizedProposal.proposalNumber || "",
     proposal_type: normalizedProposal.proposalType || normalizedProposal.type || "",
     status: getCloudProposalRowStatus(normalizedProposal.status),
@@ -328,6 +375,14 @@ export function formatCloudProposalSaveError(error = {}) {
   let reason = "cloud-save-failed";
   let label = "Cloud save failed";
 
+  if (/statement timeout|canceling statement due to statement timeout|57014/.test(lowerCombined)) {
+    return {
+      code,
+      message: "Cloud proposal load timed out. Try loading fewer proposals or contact support.",
+      reason: "statement-timeout",
+    };
+  }
+
   if (/supabase is not configured|missing.*supabase|no api key|apikey/.test(lowerCombined)) {
     reason = "missing-env-config";
     label = "Missing Supabase configuration";
@@ -358,6 +413,107 @@ export function formatCloudProposalSaveError(error = {}) {
     message: safeDetail ? `${label}: ${safeDetail}` : label,
     reason,
   };
+}
+
+async function fetchCloudProposalPage(client, companyId, start, pageSize) {
+  const end = start + pageSize - 1;
+  const { data, error } = await client
+    .from("proposals")
+    .select("id,proposal_data,created_at,updated_at")
+    .eq("company_id", companyId)
+    .order("updated_at", { ascending: false })
+    .range(start, end);
+
+  if (error) {
+    throw error;
+  }
+
+  return Array.isArray(data) ? data : [];
+}
+
+function normalizeCloudProposalPageSize(value, fallback) {
+  const pageSize = Number.parseInt(value, 10);
+  return Number.isFinite(pageSize) && pageSize > 0 ? Math.min(pageSize, 100) : fallback;
+}
+
+function isStatementTimeoutError(error = {}) {
+  return /statement timeout|canceling statement due to statement timeout|57014/i.test(getCloudErrorText(error));
+}
+
+function createCloudProposalStatementTimeoutError(error = {}) {
+  const timeoutError = new Error("Cloud proposal load timed out. Try loading fewer proposals or contact support.");
+  timeoutError.code = error?.code || error?.status || "";
+  timeoutError.reason = "statement-timeout";
+  timeoutError.originalMessage = getCloudErrorMessage(error);
+  return timeoutError;
+}
+
+function attachCloudProposalLoadWarning(proposals = [], warning = "") {
+  Object.defineProperty(proposals, "cloudLoadWarning", {
+    configurable: true,
+    enumerable: false,
+    value: warning,
+  });
+
+  return proposals;
+}
+
+export function getCloudProposalLoadWarning(proposals = []) {
+  return Array.isArray(proposals) ? proposals.cloudLoadWarning || "" : "";
+}
+
+function withCloudProposalLoadWarning(message = "", warning = "") {
+  return warning ? `${warning} ${message}` : message;
+}
+
+function createCloudProposalListSummary(proposal = {}) {
+  return removeEmptyCloudSummaryFields({
+    id: proposal.id || "",
+    proposalNumber: proposal.proposalNumber || "",
+    clientName: proposal.client?.companyName || proposal.client?.contactName || "",
+    contactName: proposal.client?.contactName || "",
+    projectName: proposal.project?.name || "",
+    proposalMode: proposal.proposalMode || "",
+    proposalType: proposal.proposalType || proposal.type || "",
+    packetMode: proposal.packetMode || "",
+    status: proposal.status || "draft",
+    total: getCloudProposalSummaryTotal(proposal),
+    updatedAt: proposal.updatedAt || proposal.createdAt || "",
+    createdAt: proposal.createdAt || "",
+    customerShareEnabled: proposal.customerShareEnabled === true,
+  });
+}
+
+function removeEmptyCloudSummaryFields(summary = {}) {
+  return Object.fromEntries(Object.entries(summary).filter(([, value]) => value !== "" && value !== undefined && value !== null));
+}
+
+function getCloudProposalSummaryTotal(proposal = {}) {
+  const explicitTotal = toCloudSummaryNumber(proposal.revisedTotal ?? proposal.totalAmount ?? proposal.totalProposal);
+
+  if (explicitTotal > 0) {
+    return explicitTotal;
+  }
+
+  const pricing = isPlainObject(proposal.pricing) ? proposal.pricing : {};
+  const pricingTotal = toCloudSummaryNumber(pricing.totalProposal ?? pricing.total ?? pricing.baseBid);
+
+  if (pricingTotal > 0) {
+    return pricingTotal;
+  }
+
+  return (Array.isArray(proposal.lineItems) ? proposal.lineItems : []).reduce((sum, item) => {
+    const amount = toCloudSummaryNumber(item?.amount ?? item?.total);
+    const quantity = toCloudSummaryNumber(item?.quantity ?? item?.qty) || 1;
+    const unitPrice = toCloudSummaryNumber(item?.unitPrice ?? item?.price ?? item?.rate);
+
+    return sum + (amount || quantity * unitPrice);
+  }, 0);
+}
+
+function toCloudSummaryNumber(value) {
+  const numericValue = typeof value === "number" ? value : Number.parseFloat(String(value ?? "").replace(/[$,%\s,]/g, ""));
+  return Number.isFinite(numericValue) ? numericValue : 0;
 }
 
 function getCloudErrorMessage(error = {}) {

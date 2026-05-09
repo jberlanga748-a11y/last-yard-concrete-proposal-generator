@@ -53,6 +53,7 @@ import {
   fetchCloudProposalById,
   fetchCloudProposalByShareToken,
   fetchCloudProposals,
+  getCloudProposalLoadWarning,
   formatCloudProposalSaveError,
   loadOrMergeCloudProposals,
   mergeProposalCollections,
@@ -2320,6 +2321,7 @@ export default function App() {
         () => fetchCloudProposals(companyRecord.id, proposalCloudDeps),
         { action: "pull" },
       );
+      const cloudLoadWarning = getCloudProposalLoadWarning(cloudProposals);
       const mergeResult = mergeProposalCollections(savedProposals, cloudProposals, proposalCloudDeps);
       const syncedAt = new Date().toISOString();
 
@@ -2332,8 +2334,11 @@ export default function App() {
         lastError: "",
         lastSyncedAt: syncedAt,
         loading: false,
-        message: mergeResult.warning || `Pulled ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"}.`,
-        proposalStatus: mergeResult.needsSync ? cloudNeedsSyncLabel : cloudSyncedLabel,
+        message:
+          `${cloudLoadWarning ? `${cloudLoadWarning} ` : ""}${
+            mergeResult.warning || `Pulled ${cloudProposals.length} cloud proposal${cloudProposals.length === 1 ? "" : "s"}.`
+          }`.trim(),
+        proposalStatus: mergeResult.needsSync || cloudLoadWarning ? cloudNeedsSyncLabel : cloudSyncedLabel,
       }));
     } catch (error) {
       setCloudSync((currentSync) => ({
@@ -2374,6 +2379,7 @@ export default function App() {
         () => fetchCloudProposals(companyRecord.id, proposalCloudDeps),
         { action: "sync" },
       );
+      const cloudLoadWarning = getCloudProposalLoadWarning(cloudProposals);
       const mergeResult = mergeProposalCollections(savedProposals, cloudProposals, proposalCloudDeps);
 
       const cloudSavedProposals = await saveCloudProposals(companyRecord.id, mergeResult.proposals, proposalCloudDeps);
@@ -2388,8 +2394,11 @@ export default function App() {
         lastError: "",
         lastSyncedAt: new Date().toISOString(),
         loading: false,
-        message: `${mergeResult.warning || "Cloud and local proposals are synced."} Legacy data URL images may still make cloud sync slower until they are replaced.`,
-        proposalStatus: cloudSyncedLabel,
+        message:
+          `${cloudLoadWarning ? `${cloudLoadWarning} ` : ""}${
+            mergeResult.warning || "Cloud and local proposals are synced."
+          } Legacy data URL images may still make cloud sync slower until they are replaced.`.trim(),
+        proposalStatus: cloudLoadWarning ? cloudNeedsSyncLabel : cloudSyncedLabel,
       }));
       lastProposalSyncErrorRef.current = "";
     } catch (error) {
