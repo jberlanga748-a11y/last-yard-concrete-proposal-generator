@@ -57,6 +57,7 @@ import {
   getCloudProposalSaveWarning,
   formatCloudProposalSaveError,
   loadOrMergeCloudProposals,
+  mergeLocalImageSourcesIntoCloudSyncedProposal,
   mergeProposalCollections,
   saveCloudProposal,
   saveCloudProposals,
@@ -1210,7 +1211,7 @@ export default function App() {
         );
 
         if (cloudProposal) {
-          proposal = createEditableProposal(cloudProposal);
+          proposal = createEditableProposal(mergeLocalImageSourcesIntoCloudSyncedProposal(proposal, cloudProposal));
           setSavedProposals((currentProposals) => upsertProposal(currentProposals, proposal));
           setCloudSync((currentSync) => ({
             ...currentSync,
@@ -2166,7 +2167,10 @@ export default function App() {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
       const cloudSavedProposal = await saveCloudProposal(companyRecord.id, proposal, getProposalCloudSaveDeps());
       const cloudSaveWarning = getCloudProposalSaveWarning(cloudSavedProposal);
-      const syncedProposal = cloudSavedProposal ? createEditableProposal(cloudSavedProposal) : proposal;
+      const mergedCloudSavedProposal = cloudSavedProposal
+        ? mergeLocalImageSourcesIntoCloudSyncedProposal(proposal, cloudSavedProposal)
+        : proposal;
+      const syncedProposal = mergedCloudSavedProposal ? createEditableProposal(mergedCloudSavedProposal) : proposal;
 
       setSavedProposals((currentProposals) => upsertProposal(currentProposals, syncedProposal));
 
@@ -2245,7 +2249,13 @@ export default function App() {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
       const cloudSavedProposals = await saveCloudProposals(companyRecord.id, proposals, getProposalCloudSaveDeps());
       const cloudSaveWarnings = cloudSavedProposals.map(getCloudProposalSaveWarning).filter(Boolean);
-      const syncedProposals = cloudSavedProposals.length > 0 ? cloudSavedProposals.map((proposal) => createEditableProposal(proposal)) : proposals;
+      const syncedProposals =
+        cloudSavedProposals.length > 0
+          ? cloudSavedProposals.map((cloudProposal) => {
+              const localProposal = proposals.find((proposal) => proposal?.id === cloudProposal?.id) || {};
+              return createEditableProposal(mergeLocalImageSourcesIntoCloudSyncedProposal(localProposal, cloudProposal));
+            })
+          : proposals;
 
       if (cloudSavedProposals.length > 0) {
         setSavedProposals(syncedProposals);
@@ -2412,7 +2422,13 @@ export default function App() {
 
       const cloudSavedProposals = await saveCloudProposals(companyRecord.id, mergeResult.proposals, getProposalCloudSaveDeps());
       const cloudSaveWarnings = cloudSavedProposals.map(getCloudProposalSaveWarning).filter(Boolean);
-      const syncedProposals = cloudSavedProposals.length > 0 ? cloudSavedProposals.map((proposal) => createEditableProposal(proposal)) : mergeResult.proposals;
+      const syncedProposals =
+        cloudSavedProposals.length > 0
+          ? cloudSavedProposals.map((cloudProposal) => {
+              const localProposal = mergeResult.proposals.find((proposal) => proposal?.id === cloudProposal?.id) || {};
+              return createEditableProposal(mergeLocalImageSourcesIntoCloudSyncedProposal(localProposal, cloudProposal));
+            })
+          : mergeResult.proposals;
 
       setSavedProposals(syncedProposals);
       syncDraftAfterProposalRestore(syncedProposals);
@@ -16876,11 +16892,12 @@ function ResidentialOptionPhotosEditor({ images = [], itemLabel = "Pricing optio
         <div className="residential-option-photo-list">
           {normalizedImages.map((image, imageIndex) => {
             const source = getImageAssetSource(image);
+            const emptyPhotoLabel = image.uploadRequired === true ? image.label || "Upload reminder" : "Photo not synced";
 
             return (
               <div className="residential-option-photo-editor-card" key={image.id || `${itemLabel}-${imageIndex}`}>
                 <div className="residential-option-photo-preview">
-                  {source ? <img src={source} alt={image.caption || image.label || itemLabel} loading="lazy" /> : <span>{image.label || "Photo reminder"}</span>}
+                  {source ? <img src={source} alt={image.caption || image.label || itemLabel} loading="lazy" /> : <span>{emptyPhotoLabel}</span>}
                 </div>
                 <div className="residential-option-photo-fields">
                   <span className="asset-source-badge">{source ? getImageAssetLabel(image) : "Upload reminder"}</span>

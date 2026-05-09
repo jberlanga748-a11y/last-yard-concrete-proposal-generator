@@ -10,7 +10,9 @@ import {
   getCloudProposalLoadWarning,
   getCloudProposalSaveWarning,
   isCloudProposalListSummaryOnly,
+  mergeLocalImageSourcesIntoCloudSyncedProposal,
   mergeCloudPortalFieldsForSave,
+  mergeProposalCollections,
   saveCloudProposals,
   sanitizeProposalDataForCloudSave,
   saveCloudProposal,
@@ -743,6 +745,176 @@ test("uploadLocalProposalImagesToStorage keeps local draft safe and warns when u
   assert.equal(result.proposal.projectPhotos[0].dataUrl, embeddedImage);
   assert.equal(JSON.stringify(sanitized.proposalData).includes("data:image/"), false);
   assert.equal(sanitized.proposalData.projectPhotos[0].localOnly, true);
+});
+
+test("mergeLocalImageSourcesIntoCloudSyncedProposal keeps option photo previews when cloud row is local-only metadata", () => {
+  const embeddedImage = `data:image/jpeg;base64,${"p".repeat(120)}`;
+  const localProposal = {
+    id: "proposal-photo-preview",
+    projectPhotos: [{ id: "project-photo-1", dataUrl: embeddedImage, src: embeddedImage, fileName: "existing.jpg" }],
+    pricing: {
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1",
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "broom walkway",
+              dataUrl: embeddedImage,
+              fileName: "broom walkway.jpg",
+              src: embeddedImage,
+              uploadRequired: false,
+            },
+          ],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "addon-1",
+          name: "Cantilever",
+          images: [{ id: "addon-photo-1", dataUrl: embeddedImage, fileName: "cantilever.jpg", src: embeddedImage }],
+        },
+      ],
+    },
+    pricingOptions: [
+      {
+        id: "option-1",
+        name: "Proposal 1",
+        images: [{ id: "option-photo-1", dataUrl: embeddedImage, fileName: "broom walkway.jpg", src: embeddedImage }],
+      },
+    ],
+    optionalAddOns: [
+      {
+        id: "addon-1",
+        name: "Cantilever",
+        images: [{ id: "addon-photo-1", dataUrl: embeddedImage, fileName: "cantilever.jpg", src: embeddedImage }],
+      },
+    ],
+  };
+  const cloudProposal = {
+    id: "proposal-photo-preview",
+    projectPhotos: [{ id: "project-photo-1", caption: "Existing", fileName: "existing.jpg", localOnly: true, uploadRequired: false }],
+    pricing: {
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1",
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "broom walkway",
+              fileName: "broom walkway.jpg",
+              fileSize: 528179,
+              localOnly: true,
+              uploadRequired: true,
+            },
+          ],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "addon-1",
+          name: "Cantilever",
+          images: [{ id: "addon-photo-1", caption: "Cantilever", fileName: "cantilever.jpg", localOnly: true }],
+        },
+      ],
+    },
+    pricingOptions: [
+      {
+        id: "option-1",
+        name: "Proposal 1",
+        images: [{ id: "option-photo-1", caption: "broom walkway", fileName: "broom walkway.jpg", localOnly: true, uploadRequired: true }],
+      },
+    ],
+    optionalAddOns: [
+      {
+        id: "addon-1",
+        name: "Cantilever",
+        images: [{ id: "addon-photo-1", caption: "Cantilever", fileName: "cantilever.jpg", localOnly: true }],
+      },
+    ],
+  };
+
+  const merged = mergeLocalImageSourcesIntoCloudSyncedProposal(localProposal, cloudProposal);
+
+  assert.equal(merged.projectPhotos[0].dataUrl, embeddedImage);
+  assert.equal(merged.projectPhotos[0].src, embeddedImage);
+  assert.equal(merged.pricing.pricingOptions[0].images[0].dataUrl, embeddedImage);
+  assert.equal(merged.pricing.pricingOptions[0].images[0].src, embeddedImage);
+  assert.equal(merged.pricing.pricingOptions[0].images[0].uploadRequired, false);
+  assert.equal(merged.pricing.pricingOptions[0].images[0].cloudSynced, false);
+  assert.equal(merged.pricing.pricingOptions[0].images[0].localOnly, true);
+  assert.equal(merged.pricing.optionalAddOns[0].images[0].dataUrl, embeddedImage);
+  assert.equal(merged.pricingOptions[0].images[0].dataUrl, embeddedImage);
+  assert.equal(merged.optionalAddOns[0].images[0].dataUrl, embeddedImage);
+
+  const cloudPayload = sanitizeProposalDataForCloudSave(merged);
+  assert.equal(JSON.stringify(cloudPayload.proposalData).includes("data:image/"), false);
+});
+
+test("mergeLocalImageSourcesIntoCloudSyncedProposal keeps cloud storage source when upload succeeded", () => {
+  const embeddedImage = `data:image/jpeg;base64,${"q".repeat(120)}`;
+  const merged = mergeLocalImageSourcesIntoCloudSyncedProposal(
+    {
+      pricingOptions: [{ id: "option-1", images: [{ id: "option-photo-1", dataUrl: embeddedImage, src: embeddedImage }] }],
+    },
+    {
+      pricingOptions: [
+        {
+          id: "option-1",
+          images: [
+            {
+              id: "option-photo-1",
+              publicUrl: "https://cdn.example/option-photo-1.jpg",
+              storagePath: "company/demo/proposals/proposal-1/option-photos/option-photo-1.jpg",
+              uploadRequired: true,
+            },
+          ],
+        },
+      ],
+    },
+  );
+
+  assert.equal(merged.pricingOptions[0].images[0].dataUrl, undefined);
+  assert.equal(merged.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.jpg");
+  assert.equal(merged.pricingOptions[0].images[0].uploadRequired, false);
+});
+
+test("mergeProposalCollections preserves local-only image previews when cloud proposal is newer sanitized metadata", () => {
+  const embeddedImage = `data:image/jpeg;base64,${"r".repeat(120)}`;
+  const mergeResult = mergeProposalCollections(
+    [
+      {
+        id: "proposal-merge-photo",
+        updatedAt: "2026-05-08T10:00:00.000Z",
+        pricingOptions: [
+          {
+            id: "option-1",
+            images: [{ id: "option-photo-1", dataUrl: embeddedImage, src: embeddedImage, fileName: "broom walkway.jpg" }],
+          },
+        ],
+      },
+    ],
+    [
+      {
+        id: "proposal-merge-photo",
+        updatedAt: "2026-05-08T10:05:00.000Z",
+        pricingOptions: [
+          {
+            id: "option-1",
+            images: [{ id: "option-photo-1", fileName: "broom walkway.jpg", localOnly: true }],
+          },
+        ],
+      },
+    ],
+  );
+
+  assert.equal(mergeResult.proposals.length, 1);
+  assert.equal(mergeResult.proposals[0].pricingOptions[0].images[0].dataUrl, embeddedImage);
+  assert.equal(mergeResult.proposals[0].pricingOptions[0].images[0].src, embeddedImage);
 });
 
 test("saveCloudProposal upserts sanitized image metadata instead of raw base64 image data", async () => {

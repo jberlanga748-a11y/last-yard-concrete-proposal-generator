@@ -53,11 +53,31 @@ if (missingFiles.length > 0) {
   process.exit(1);
 }
 
+const maxSyntaxCheckAttempts = process.platform === "win32" ? 3 : 1;
+
+function runSyntaxCheck(file) {
+  let result;
+
+  for (let attempt = 1; attempt <= maxSyntaxCheckAttempts; attempt += 1) {
+    result = spawnSync(process.execPath, ["--check", file], {
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+
+    if (result.status === 0 || !isRetryableSyntaxCheckCrash(result) || attempt === maxSyntaxCheckAttempts) {
+      return result;
+    }
+  }
+
+  return result;
+}
+
+function isRetryableSyntaxCheckCrash(result = {}) {
+  return process.platform === "win32" && result.status !== 0 && !result.signal && !result.stdout && !result.stderr;
+}
+
 for (const file of filesToCheck) {
-  const result = spawnSync(process.execPath, ["--check", file], {
-    encoding: "utf8",
-    stdio: "pipe",
-  });
+  const result = runSyntaxCheck(file);
 
   if (result.status !== 0) {
     console.error(`Syntax check failed: ${file}`);

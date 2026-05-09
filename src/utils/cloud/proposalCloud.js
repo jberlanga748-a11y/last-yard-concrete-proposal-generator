@@ -297,6 +297,14 @@ export async function saveCloudProposals(companyId, proposals = [], deps = {}) {
   return savedProposals;
 }
 
+export function mergeLocalImageSourcesIntoCloudSyncedProposal(localProposal = {}, cloudProposal = {}) {
+  if (!isPlainObject(localProposal) || !isPlainObject(cloudProposal)) {
+    return cloudProposal;
+  }
+
+  return mergeLocalImageSourcesInValue(localProposal, cloudProposal);
+}
+
 export async function saveCloudProposal(companyId, proposal, deps = {}) {
   const client = getSupabaseClient(deps);
   const sourceUpdatedAt = getProposalTimestamp(proposal, deps);
@@ -854,6 +862,99 @@ function hasCloudImageSource(image = {}) {
   });
 }
 
+function hasAnyImageSource(image = {}) {
+  return ["dataUrl", "src", "imageSrc", "url", "publicUrl", "signedUrl", "thumbnailUrl", "storagePath"].some((key) =>
+    String(image?.[key] || "").trim(),
+  );
+}
+
+function getEmbeddedLocalImageSource(image = {}) {
+  return ["dataUrl", "src", "imageSrc", "url"]
+    .map((key) => String(image?.[key] || "").trim())
+    .find(isEmbeddedImageReference) || "";
+}
+
+function mergeLocalImageSourcesInValue(localValue, cloudValue) {
+  if (Array.isArray(cloudValue)) {
+    const localArray = Array.isArray(localValue) ? localValue : [];
+
+    return cloudValue.map((cloudItem, index) => {
+      const localItem = findMatchingLocalImageItem(localArray, cloudItem, index);
+      return mergeLocalImageSourcesInValue(localItem, cloudItem);
+    });
+  }
+
+  if (!isPlainObject(cloudValue)) {
+    return cloudValue;
+  }
+
+  const localObject = isPlainObject(localValue) ? localValue : {};
+
+  if (looksLikeImageMetadataObject(cloudValue) || looksLikeImageMetadataObject(localObject)) {
+    return mergeLocalImageSourceIntoCloudImage(localObject, cloudValue);
+  }
+
+  return Object.fromEntries(
+    Object.entries(cloudValue).map(([key, value]) => [key, mergeLocalImageSourcesInValue(localObject[key], value)]),
+  );
+}
+
+function findMatchingLocalImageItem(localArray = [], cloudItem = {}, index = 0) {
+  if (!isPlainObject(cloudItem)) {
+    return localArray[index];
+  }
+
+  const cloudKeys = getImageMergeKeys(cloudItem);
+
+  if (cloudKeys.length > 0) {
+    const matchingLocal = localArray.find((localItem) => {
+      if (!isPlainObject(localItem)) {
+        return false;
+      }
+
+      const localKeys = new Set(getImageMergeKeys(localItem));
+      return cloudKeys.some((key) => localKeys.has(key));
+    });
+
+    if (matchingLocal) {
+      return matchingLocal;
+    }
+  }
+
+  return localArray[index];
+}
+
+function getImageMergeKeys(image = {}) {
+  return ["id", "storagePath", "publicUrl", "signedUrl", "fileName", "originalFileName", "caption", "label"]
+    .map((key) => String(image?.[key] || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function mergeLocalImageSourceIntoCloudImage(localImage = {}, cloudImage = {}) {
+  const localSource = getEmbeddedLocalImageSource(localImage);
+  const cloudHasSource = hasAnyImageSource(cloudImage);
+  const cloudHasCustomerVisibleSource = hasCloudImageSource(cloudImage);
+
+  if (!localSource || cloudHasCustomerVisibleSource) {
+    return cloudHasSource
+      ? {
+          ...cloudImage,
+          uploadRequired: false,
+        }
+      : cloudImage;
+  }
+
+  return {
+    ...cloudImage,
+    dataUrl: localImage.dataUrl || localSource,
+    imageSrc: isEmbeddedImageReference(localImage.imageSrc) ? localImage.imageSrc : cloudImage.imageSrc || "",
+    localOnly: true,
+    src: isEmbeddedImageReference(localImage.src) ? localImage.src : localSource,
+    uploadRequired: false,
+    cloudSynced: false,
+  };
+}
+
 function isEmbeddedImageReference(value = "") {
   const normalizedValue = String(value || "").trim().toLowerCase();
   return normalizedValue.startsWith("data:image/") || normalizedValue.startsWith("blob:");
@@ -1317,7 +1418,7 @@ export function mergeProposalCollections(localProposals = [], cloudProposals = [
     }
 
     if (comparison < 0 || proposalsAreEquivalent(localProposal, cloudProposal, deps)) {
-      mergedById.set(cloudProposal.id, cloudProposal);
+      mergedById.set(cloudProposal.id, mergeLocalImageSourcesIntoCloudSyncedProposal(localProposal, cloudProposal));
       return;
     }
 

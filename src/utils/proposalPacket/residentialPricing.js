@@ -279,7 +279,7 @@ export function normalizeResidentialOptionImages(images = []) {
       );
       const label = cleanResidentialText(image.label || image.name || (source ? `Option photo ${index + 1}` : ""));
       const caption = cleanResidentialText(image.caption || image.description || image.notes);
-      const uploadRequired = Boolean(image.uploadRequired);
+      const uploadRequired = Boolean(image.uploadRequired) && !source;
 
       if (!source && !label && !caption && !uploadRequired) {
         return null;

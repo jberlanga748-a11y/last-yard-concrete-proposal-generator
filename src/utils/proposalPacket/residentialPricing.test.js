@@ -232,6 +232,24 @@ test("residential option image metadata preserves cloud and local portability fl
   assert.equal(images[1].dataUrl, "data:image/jpeg;base64,abc123");
 });
 
+test("uploaded residential option images do not remain upload reminders when a source exists", () => {
+  const images = normalizeResidentialOptionImages([
+    {
+      id: "option-photo-1",
+      label: "UPLOAD REMINDER",
+      caption: "broom walkway",
+      dataUrl: "data:image/jpeg;base64,preview",
+      fileName: "broom walkway.jpg",
+      uploadRequired: true,
+    },
+  ]);
+
+  assert.equal(images.length, 1);
+  assert.equal(images[0].dataUrl, "data:image/jpeg;base64,preview");
+  assert.equal(images[0].uploadRequired, false);
+  assert.equal(getPrintableResidentialOptionImages(images).length, 1);
+});
+
 test("generic optional add-ons apply to selected options without becoming main choices", () => {
   const proposal = {
     pricingMode: "choose_one_option",
