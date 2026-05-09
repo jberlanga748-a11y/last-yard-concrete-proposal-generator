@@ -101,6 +101,19 @@ test("proposal PDF style classes control readability and pricing emphasis", () =
   assert.match(residentialFriendly, /background:\s*#fffaf0/);
 });
 
+test("editor preview and residential terms controls use compact non-print cards", () => {
+  const previewCard = getCssBlock(".proposal-preview-card");
+  const previewActions = getCssBlock(".proposal-preview-actions");
+  const termsModeControls = getCssBlock(".residential-terms-mode-controls");
+  const warning = getCssBlock(".smart-paste-warning");
+
+  assert.match(previewCard, /display:\s*grid/);
+  assert.match(styles, /\.proposal-preview-card,[\s\S]*?\.proposal-preview-toolbar\s*\{[\s\S]*?background:\s*white/);
+  assert.match(previewActions, /flex-wrap:\s*wrap/);
+  assert.match(termsModeControls, /flex-wrap:\s*wrap/);
+  assert.match(warning, /background:\s*#fff7df/);
+});
+
 test("residential option SOV tables use compact readable spacing without page breaks between standard options", () => {
   const breakdowns = getCssBlock(".residential-option-breakdowns");
   const heading = getCssBlock(".residential-option-breakdown-heading");

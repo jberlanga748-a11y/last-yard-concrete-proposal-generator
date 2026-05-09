@@ -10,8 +10,6 @@ export const RESIDENTIAL_TERMS_TEMPLATE_LABEL = "Last Yard Standard Residential 
 export const RESIDENTIAL_TERMS_TEMPLATE_OPTIONS = [RESIDENTIAL_TERMS_TEMPLATE_ID];
 
 export function getDefaultResidentialLegalPapers(options = {}) {
-  const includeTermsByDefault = options.includeTermsByDefault === true;
-
   return {
     informationNoticeToOwner: {
       status: "needs_review",
@@ -25,16 +23,18 @@ export function getDefaultResidentialLegalPapers(options = {}) {
       status: "needs_review",
       notes: "Verify whether cancellation notice applies.",
     },
-    termsAndConditions: getDefaultResidentialTermsAndConditions({ includeInPdf: includeTermsByDefault }),
+    termsAndConditions: getDefaultResidentialTermsAndConditions(options),
     legalAttachments: [],
   };
 }
 
 export function getDefaultResidentialTermsAndConditions(options = {}) {
+  const includedInPdf = options.includedInPdf === true || options.includeInPdf === true;
+
   return {
-    status: "needs_review",
+    status: options.status || (includedInPdf ? "included" : "provided_separately"),
     template: RESIDENTIAL_TERMS_TEMPLATE_ID,
-    includedInPdf: options.includeInPdf === true,
+    includedInPdf,
     customerAcknowledged: false,
     customerAcknowledgedDate: "",
     acknowledgementRequired: true,
@@ -211,7 +211,7 @@ export function buildResidentialTermsAndConditionsSections(proposal = {}, compan
 }
 
 export function shouldDefaultIncludeResidentialTerms(proposal = {}) {
-  return getResidentialAcceptedEstimateTotal(proposal) > 2000;
+  return false;
 }
 
 export function getResidentialLegalStatusLabel(status = "") {

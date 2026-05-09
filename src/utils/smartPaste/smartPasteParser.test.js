@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { calculateProposalTotals, SEED_PROPOSAL, validateProposalCompleteness } from "../../proposalData.js";
+import { normalizeResidentialLegalPapers } from "../proposalPacket/residentialLegalPapers.js";
 import { SMART_PASTE_JSON_MARKER, isSmartPasteJsonImportNotes } from "./smartPasteNormalizer.js";
 import { parseSmartPasteNotes } from "./smartPasteParser.js";
 
@@ -1033,6 +1034,9 @@ ${JSON.stringify(
   assert.equal(result.proposal.optionalAddOns[0].selected, true);
   assert.equal(result.proposal.pricingSections[0].included, true);
   assert.equal(result.proposal.pricingSections[1].included, false);
+  const legalPapers = normalizeResidentialLegalPapers(result.proposal.residentialLegalPapers);
+  assert.equal(legalPapers.termsAndConditions.status, "provided_separately");
+  assert.equal(legalPapers.termsAndConditions.includedInPdf, false);
   assert.equal(totals.total, 47000);
   assert.equal(result.summary.hideTotalIfAllAccepted, true);
   assert.ok(!result.summary.fields.includes("alternates / allowances"));
@@ -1240,6 +1244,7 @@ ${JSON.stringify(
   assert.ok(result.summary.applyTargets.includes("Residential Legal Papers"));
   assert.match(warningText(result), /Residential pricing options detected/);
   assert.match(warningText(result), /Image placeholders detected/);
+  assert.match(warningText(result), /Full Residential Terms are included/);
 });
 
 test("infers residential choose-one pricing from rough option notes", () => {

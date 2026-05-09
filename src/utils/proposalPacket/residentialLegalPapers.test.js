@@ -10,6 +10,7 @@ import {
   RESIDENTIAL_TERMS_TEMPLATE_ID,
   RESIDENTIAL_TERMS_TEMPLATE_LABEL,
   normalizeResidentialLegalPapers,
+  shouldDefaultIncludeResidentialTerms,
   shouldPrintResidentialTermsAndConditions,
 } from "./residentialLegalPapers.js";
 
@@ -38,15 +39,40 @@ test("residential terms template exists with reusable standard sections", () => 
   assert.ok(titles.includes("Signature / Acceptance Area"));
 });
 
-test("residential terms default safely and can be default-included for larger residential work", () => {
+test("residential terms default to legal summary only unless explicitly included", () => {
   const defaultPapers = normalizeResidentialLegalPapers();
   const largerJobPapers = normalizeResidentialLegalPapers(undefined, { includeTermsByDefault: true });
 
-  assert.equal(defaultPapers.termsAndConditions.status, "needs_review");
+  assert.equal(defaultPapers.termsAndConditions.status, "provided_separately");
   assert.equal(defaultPapers.termsAndConditions.template, RESIDENTIAL_TERMS_TEMPLATE_ID);
   assert.equal(defaultPapers.termsAndConditions.includedInPdf, false);
-  assert.equal(largerJobPapers.termsAndConditions.status, "needs_review");
-  assert.equal(largerJobPapers.termsAndConditions.includedInPdf, true);
+  assert.equal(largerJobPapers.termsAndConditions.status, "provided_separately");
+  assert.equal(largerJobPapers.termsAndConditions.includedInPdf, false);
+  assert.equal(shouldDefaultIncludeResidentialTerms({ lineItems: [{ quantity: 1, unitPrice: 40000 }] }), false);
+});
+
+test("residential simple estimate prints full terms only when includedInPdf is explicit", () => {
+  const simpleEstimate = {
+    proposalMode: "residential",
+    residentialPdfLayout: "simple_estimate",
+    pricingMode: "base_plus_addons",
+    lineItems: [{ description: "Base package", quantity: 1, unitPrice: 40000 }],
+  };
+
+  assert.equal(shouldPrintResidentialTermsAndConditions(simpleEstimate), false);
+  assert.equal(
+    shouldPrintResidentialTermsAndConditions({
+      ...simpleEstimate,
+      residentialLegalPapers: {
+        termsAndConditions: {
+          status: "included",
+          template: RESIDENTIAL_TERMS_TEMPLATE_ID,
+          includedInPdf: true,
+        },
+      },
+    }),
+    true,
+  );
 });
 
 test("residential legal summary renders homeowner legal term sections", () => {

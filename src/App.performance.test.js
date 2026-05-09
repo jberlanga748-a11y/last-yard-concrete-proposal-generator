@@ -38,11 +38,16 @@ test("saved proposal opening hydrates details lazily with a loading message", ()
   assert.match(openProposalSource, /Could not open this proposal because its saved data needs review/);
 });
 
-test("proposal preview is delayed until the editor is ready", () => {
+test("proposal preview is collapsed and lazy-rendered until the user opens it", () => {
   assert.match(appSource, /const \[proposalPreviewReady, setProposalPreviewReady\]/);
+  assert.match(appSource, /const \[proposalPreviewOpen, setProposalPreviewOpen\]/);
   assert.match(appSource, /requestIdleCallback/);
-  assert.match(appSource, /Loading proposal preview/);
+  assert.match(appSource, /Open Preview/);
+  assert.match(appSource, /Collapse Preview/);
+  assert.match(appSource, /Generating proposal preview/);
+  assert.match(appSource, /PDF preview is collapsed until you open it/);
   assert.match(appSource, /function PerformanceMeasuredProposalPreview/);
+  assert.match(appSource, /function ProposalPreviewPanel/);
 });
 
 test("development performance logging is guarded from production console noise", () => {

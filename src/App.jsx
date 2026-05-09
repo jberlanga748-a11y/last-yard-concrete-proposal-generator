@@ -504,6 +504,7 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [proposalOpenMessage, setProposalOpenMessage] = useState("");
   const [proposalPreviewReady, setProposalPreviewReady] = useState(false);
+  const [proposalPreviewOpen, setProposalPreviewOpen] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [validationNotice, setValidationNotice] = useState("");
   const [smartPasteNotes, setSmartPasteNotes] = useState("");
@@ -549,7 +550,7 @@ export default function App() {
   const proposalValidation = getProposalValidationWithPacketPdfWarnings(proposalDraft);
 
   useEffect(() => {
-    if (!isProposalDraftView || isPrintView) {
+    if (!isProposalDraftView || isPrintView || !proposalPreviewOpen) {
       setProposalPreviewReady(false);
       return undefined;
     }
@@ -569,7 +570,13 @@ export default function App() {
     const handle = schedulePreview(() => setProposalPreviewReady(true));
 
     return () => cancelPreview(handle);
-  }, [isPrintView, isProposalDraftView, proposalDraft.id, route.path]);
+  }, [isPrintView, isProposalDraftView, proposalDraft.id, proposalPreviewOpen, route.path]);
+
+  useEffect(() => {
+    if (!isPrintView) {
+      setProposalPreviewOpen(false);
+    }
+  }, [isPrintView, proposalDraft.id, route.path]);
 
   useEffect(() => {
     saveStoredProposals(savedProposals);
@@ -5600,7 +5607,9 @@ export default function App() {
     setProposalDirty(true);
     setProposalDraft(cleanedProposal);
     setValidationNotice(nextValidation.errors.length === 0 ? "" : "Review required fields before save/print.");
-    setSaveMessage("Smart Paste applied. Review fields before saving.");
+    setProposalPreviewOpen(false);
+    setProposalPreviewReady(false);
+    setSaveMessage("Smart Paste applied. Review fields before saving. PDF preview is collapsed until you open it.");
     setSmartPasteResult((currentResult) =>
       currentResult
         ? {
@@ -6395,14 +6404,23 @@ export default function App() {
               />
             )}
             <div className="preview-pane">
-              {isPrintView || proposalPreviewReady ? (
+              {isPrintView ? (
                 <PerformanceMeasuredProposalPreview
                   companySettings={companySettings}
                   helpers={proposalPacketHelpers}
                   proposal={proposalDraft}
                 />
               ) : (
-                <p className="empty-list-message">Loading proposal preview...</p>
+                <ProposalPreviewPanel
+                  companySettings={companySettings}
+                  helpers={proposalPacketHelpers}
+                  isOpen={proposalPreviewOpen}
+                  isReady={proposalPreviewReady}
+                  onClose={() => setProposalPreviewOpen(false)}
+                  onOpen={() => setProposalPreviewOpen(true)}
+                  onOpenPrint={openPrintView}
+                  proposal={proposalDraft}
+                />
               )}
             </div>
           </div>
@@ -6410,6 +6428,55 @@ export default function App() {
       )}
       </div>
     </main>
+  );
+}
+
+function ProposalPreviewPanel({ companySettings, helpers, isOpen, isReady, onClose, onOpen, onOpenPrint, proposal }) {
+  if (!isOpen) {
+    return (
+      <section className="proposal-preview-card no-print" aria-label="Collapsed PDF preview">
+        <div>
+          <p className="list-kicker">PDF preview</p>
+          <h3>Preview is collapsed</h3>
+          <p>
+            Open the preview when you are ready to review the print/PDF packet. Smart Paste can stay focused on the editor instead of
+            rendering the full proposal below it.
+          </p>
+        </div>
+        <div className="proposal-preview-actions">
+          <button className="editor-add-button" type="button" onClick={onOpen}>
+            Open Preview
+          </button>
+          <button className="editor-secondary-button" type="button" onClick={onOpenPrint}>
+            Open Print/PDF
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <>
+      <div className="proposal-preview-toolbar no-print">
+        <div>
+          <strong>PDF Preview</strong>
+          <span>Generated only while this panel is open.</span>
+        </div>
+        <div className="proposal-preview-actions">
+          <button className="editor-secondary-button" type="button" onClick={onOpenPrint}>
+            Open Print/PDF
+          </button>
+          <button className="editor-secondary-button" type="button" onClick={onClose}>
+            Collapse Preview
+          </button>
+        </div>
+      </div>
+      {isReady ? (
+        <PerformanceMeasuredProposalPreview companySettings={companySettings} helpers={helpers} proposal={proposal} />
+      ) : (
+        <p className="empty-list-message">Generating proposal preview...</p>
+      )}
+    </>
   );
 }
 
@@ -11267,6 +11334,25 @@ function ResidentialLegalPapersEditor({ message = "", papers = {}, proposal = {}
   const ownerNotice = normalizedPapers.informationNoticeToOwner;
   const cancellationNotice = normalizedPapers.rightToCancelNotice;
   const termsAndConditions = normalizedPapers.termsAndConditions;
+  const fullTermsIncluded = Boolean(termsAndConditions.includedInPdf);
+  const termsStatus = termsAndConditions.status;
+
+  function applyTermsDisplayMode(mode) {
+    if (mode === "include_full") {
+      onChange("residentialLegalPapers.termsAndConditions.includedInPdf", true);
+      onChange("residentialLegalPapers.termsAndConditions.status", "included");
+      return;
+    }
+
+    if (mode === "needs_review") {
+      onChange("residentialLegalPapers.termsAndConditions.includedInPdf", false);
+      onChange("residentialLegalPapers.termsAndConditions.status", "needs_review");
+      return;
+    }
+
+    onChange("residentialLegalPapers.termsAndConditions.includedInPdf", false);
+    onChange("residentialLegalPapers.termsAndConditions.status", "provided_separately");
+  }
 
   return (
     <div className="residential-legal-papers-editor">
@@ -11352,14 +11438,60 @@ function ResidentialLegalPapersEditor({ message = "", papers = {}, proposal = {}
             <strong>Residential Terms & Conditions</strong>
             <span>{getResidentialLegalStatusLabel(termsAndConditions.status)}</span>
           </div>
+          <div className="residential-terms-mode-controls" aria-label="Residential terms PDF behavior">
+            <button
+              className="editor-secondary-button"
+              type="button"
+              aria-pressed={!fullTermsIncluded && termsStatus !== "needs_review"}
+              onClick={() => applyTermsDisplayMode("legal_summary_only")}
+            >
+              Legal Summary Only
+            </button>
+            <button
+              className="editor-secondary-button"
+              type="button"
+              aria-pressed={fullTermsIncluded}
+              onClick={() => applyTermsDisplayMode("include_full")}
+            >
+              Include Full Terms in PDF
+            </button>
+            <button
+              className="editor-secondary-button"
+              type="button"
+              aria-pressed={!fullTermsIncluded && termsStatus === "provided_separately"}
+              onClick={() => applyTermsDisplayMode("provided_separately")}
+            >
+              Provided Separately
+            </button>
+            <button
+              className="editor-secondary-button"
+              type="button"
+              aria-pressed={!fullTermsIncluded && termsStatus === "needs_review"}
+              onClick={() => applyTermsDisplayMode("needs_review")}
+            >
+              Needs Review
+            </button>
+          </div>
           <label className="editor-check">
             <input
-              checked={Boolean(termsAndConditions.includedInPdf)}
+              checked={fullTermsIncluded}
               type="checkbox"
-              onChange={(event) => onChange("residentialLegalPapers.termsAndConditions.includedInPdf", event.target.checked)}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                onChange("residentialLegalPapers.termsAndConditions.includedInPdf", checked);
+                onChange("residentialLegalPapers.termsAndConditions.status", checked ? "included" : "provided_separately");
+              }}
             />
             <span>Include Residential Terms & Conditions in PDF</span>
           </label>
+          {fullTermsIncluded ? (
+            <p className="smart-paste-warning">Full Residential Terms are included. This will add multiple pages to the PDF.</p>
+          ) : (
+            <p className="smart-paste-help">
+              Legal Summary Only keeps residential simple estimates short. Full terms can still be included when the customer packet needs
+              them.
+            </p>
+          )}
           <EditorField
             label="Terms Template"
             path="residentialLegalPapers.termsAndConditions.template"

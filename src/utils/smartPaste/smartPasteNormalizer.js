@@ -317,6 +317,9 @@ function normalizeJsonResidentialLegalPapers(source = {}, normalized) {
   }
 
   normalized.residentialLegalPapers = normalizeResidentialLegalPapers(legalPaperSource);
+  if (normalized.residentialLegalPapers.termsAndConditions?.includedInPdf === true) {
+    normalized.warnings.push("Full Residential Terms are included. This will add multiple pages to the PDF.");
+  }
   capture(normalized, "residentialLegalPapers");
 }
 
