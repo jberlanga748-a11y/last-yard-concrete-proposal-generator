@@ -252,6 +252,76 @@ test("customer proposal API valid token lookup returns customer-safe payload", a
   assert.equal(updatePayload.proposal_data.customerShareLastViewedAt.length > 0, true);
 });
 
+test("customer proposal API returns cloud-visible option and add-on photos from nested pricing data", async () => {
+  const response = createMockResponse();
+  const row = createEnabledProposal({
+    pricingMode: "choose_one_option",
+    pricingOptions: [
+      {
+        id: "option-1",
+        name: "Proposal 1 - Broom",
+        price: 40000,
+        images: [],
+      },
+    ],
+    optionalAddOns: [{ id: "walls", name: "Walls", amount: 10000, images: [] }],
+    pricing: {
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1 - Broom",
+          price: 40000,
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "broom walkway",
+              publicUrl: "https://cdn.example/broom.jpg",
+              storagePath: "company/demo/proposals/proposal-1/option-photos/broom.jpg",
+            },
+          ],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "walls",
+          name: "Walls",
+          amount: 10000,
+          images: [
+            {
+              id: "walls-photo-1",
+              caption: "Walls example",
+              storagePath: "company/demo/proposals/proposal-1/option-photos/walls.jpg",
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  await handleCustomerProposalRequest(
+    {
+      method: "GET",
+      query: { shareToken: "lyp_public" },
+      url: "/api/customer-proposal?shareToken=lyp_public",
+      headers: {},
+    },
+    response,
+    {
+      env: { SUPABASE_URL: "https://project.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "server-service-role" },
+      createClientImpl: createClientFactory(createMockSupabase({ row })),
+      logger: { error() {} },
+    },
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.proposal.pricingOptions[0].images[0].publicUrl, "https://cdn.example/broom.jpg");
+  assert.equal(response.body.proposal.pricing.pricingOptions[0].images[0].publicUrl, "https://cdn.example/broom.jpg");
+  assert.equal(response.body.proposal.optionalAddOns[0].images[0].storagePath, "company/demo/proposals/proposal-1/option-photos/walls.jpg");
+  assert.equal(response.body.proposal.optionalAddOns[0].images[0].src, undefined);
+});
+
 test("customer proposal API uses customer_share_token column when available", async () => {
   const response = createMockResponse();
   const filterColumns = [];

@@ -57,6 +57,7 @@ test("editor cloud save accepts merged portal fields returned from cloud persist
 
 test("editable proposals mirror residential pricing into nested pricing payload for cloud save", () => {
   assert.match(appSource, /const sourcePricing = isPlainObject\(proposal\.pricing\) \? proposal\.pricing : \{\}/);
+  assert.match(appSource, /function mergeResidentialPricingCollectionSources/);
   assert.match(appSource, /const normalizedResidentialPricing = normalizeResidentialPricingPayload/);
   assert.match(appSource, /pricing: normalizedResidentialPricing/);
   assert.match(appSource, /pricingOptions: normalizedPricingOptions/);
@@ -65,6 +66,8 @@ test("editable proposals mirror residential pricing into nested pricing payload 
 
 test("local-only image uploads warn that images are not cloud portable", () => {
   assert.match(storageCloudSource, /Local image only - sign in\/save to cloud for access on other devices/);
+  assert.match(appSource, /function isEditorOnlyCustomerHiddenImage/);
+  assert.match(appSource, /This photo is visible in the editor only\. Save\/sync photo to cloud before sharing with customer/);
 });
 
 test("proposal photo uploads attach local previews before cloud sync", () => {

@@ -723,6 +723,69 @@ test("saveCloudProposal uploads local images before upserting cloud-safe proposa
   assert.equal(getCloudProposalSaveWarning(savedProposal), "");
 });
 
+test("saveCloudProposal keeps customer-visible photos in root and nested residential pricing structures", async () => {
+  const embeddedImage = `data:image/png;base64,${"f".repeat(1400)}`;
+  let insertPayload = null;
+
+  const savedProposal = await saveCloudProposal(
+    "company-1",
+    {
+      id: "proposal-root-nested-images",
+      status: "draft",
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1",
+          price: 40000,
+          images: [{ id: "option-photo-1", caption: "broom walkway", dataUrl: embeddedImage, fileName: "broom.png" }],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "walls",
+          name: "Walls",
+          amount: 10000,
+          images: [{ id: "walls-photo-1", caption: "Walls", dataUrl: embeddedImage, fileName: "walls.png" }],
+        },
+      ],
+      pricing: {
+        pricingMode: "choose_one_option",
+        pricingOptions: [{ id: "option-1", name: "Proposal 1", price: 40000, images: [] }],
+        optionalAddOns: [{ id: "walls", name: "Walls", amount: 10000, images: [] }],
+      },
+      updatedAt: "2026-05-08T12:00:00.000Z",
+    },
+    {
+      ...cloudDeps,
+      supabaseClient: createFakeSupabase({
+        onInsert(payload) {
+          insertPayload = payload;
+        },
+      }),
+      uploadLocalProposalImageToStorage: async (image, context) => ({
+        cloudSynced: true,
+        fileName: image.fileName,
+        fileType: "image/png",
+        publicUrl: `https://cdn.example/${image.id}.png`,
+        src: `https://cdn.example/${image.id}.png`,
+        storagePath: `company/company-1/proposals/proposal-root-nested-images/${context.area}/${image.id}.png`,
+        uploadedAt: "2026-05-09T12:00:00.000Z",
+      }),
+    },
+  );
+
+  const proposalJson = JSON.stringify(insertPayload.proposal_data);
+
+  assert.equal(proposalJson.includes("data:image/"), false);
+  assert.equal(savedProposal.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.png");
+  assert.equal(savedProposal.pricing.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.png");
+  assert.equal(insertPayload.proposal_data.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.png");
+  assert.equal(insertPayload.proposal_data.pricing.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.png");
+  assert.equal(insertPayload.proposal_data.optionalAddOns[0].images[0].storagePath.includes("/option-photos/walls-photo-1.png"), true);
+  assert.equal(insertPayload.proposal_data.pricing.optionalAddOns[0].images[0].storagePath.includes("/option-photos/walls-photo-1.png"), true);
+});
+
 test("uploadLocalProposalImagesToStorage keeps local draft safe and warns when upload fails", async () => {
   const embeddedImage = `data:image/png;base64,${"e".repeat(900)}`;
   const result = await uploadLocalProposalImagesToStorage(

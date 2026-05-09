@@ -180,6 +180,76 @@ test("customer-safe proposal payload preserves residential cloud fields and stri
   assert.equal("fileName" in payload.pricing.pricingOptions[0].images[0], false);
 });
 
+test("customer-safe payload merges root and nested option photos before returning portal data", () => {
+  const payload = createCustomerSafeProposalPayload({
+    id: "proposal-photo-merge",
+    customerShareEnabled: true,
+    customerShareToken: "lyp_public",
+    proposalMode: "residential",
+    pricingMode: "choose_one_option",
+    pricingOptions: [
+      {
+        id: "option-1",
+        name: "Proposal 1 - Broom",
+        price: 40000,
+        images: [],
+      },
+      {
+        id: "option-2",
+        name: "Proposal 2 - Stamped",
+        price: 50000,
+        images: [{ localOnly: true, dataUrl: "data:image/jpeg;base64,local", caption: "Local only", uploadRequired: true }],
+      },
+    ],
+    optionalAddOns: [{ id: "walls", name: "Walls", amount: 10000, images: [] }],
+    pricing: {
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1 - Broom",
+          price: 40000,
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "broom walkway",
+              publicUrl: "https://cdn.example/broom.jpg",
+              storagePath: "company/demo/proposals/proposal-photo-merge/option-photos/broom.jpg",
+              cloudSynced: true,
+              localOnly: false,
+            },
+          ],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "walls",
+          name: "Walls",
+          amount: 10000,
+          images: [
+            {
+              id: "walls-photo-1",
+              caption: "Wall example",
+              storagePath: "company/demo/proposals/proposal-photo-merge/option-photos/walls.jpg",
+              cloudSynced: true,
+              localOnly: false,
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  assert.equal(payload.pricingOptions[0].images.length, 1);
+  assert.equal(payload.pricingOptions[0].images[0].publicUrl, "https://cdn.example/broom.jpg");
+  assert.equal(payload.pricing.pricingOptions[0].images[0].publicUrl, "https://cdn.example/broom.jpg");
+  assert.equal(payload.pricingOptions[1].images.length, 0);
+  assert.equal(payload.optionalAddOns[0].images.length, 1);
+  assert.equal(payload.optionalAddOns[0].images[0].storagePath, "company/demo/proposals/proposal-photo-merge/option-photos/walls.jpg");
+  assert.equal(payload.optionalAddOns[0].images[0].src, undefined);
+  assert.equal(payload.pricing.optionalAddOns[0].images[0].storagePath, "company/demo/proposals/proposal-photo-merge/option-photos/walls.jpg");
+});
+
 test("base-plus-addons customer selection calculates selected total without changing pricing", () => {
   const proposal = {
     pricingMode: "base_plus_addons",

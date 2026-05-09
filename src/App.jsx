@@ -12065,6 +12065,11 @@ function ProjectPhotoEditor({ message = "", photos, onPhotoChange, onPhotoUpload
               {photo.fileName} {photo.fileSize ? `| ${formatAssetFileSize(photo.fileSize)}` : ""}
             </span>
           ) : null}
+          {isEditorOnlyCustomerHiddenImage(photo) ? (
+            <span className="asset-upload-detail">
+              This photo is visible in the editor only. Save/sync photo to cloud before sharing with customer.
+            </span>
+          ) : null}
           <PhotoCaptionField
             label={`Photo ${index + 1} Caption`}
             value={photo.label}
@@ -13359,6 +13364,13 @@ function withImageSafetyMetadata(asset = {}, originalFile = {}, preparedImage = 
     originalFileName: originalFile.name || asset.originalFileName || asset.fileName || "",
     originalFileSize: originalFile.size || asset.originalFileSize || asset.fileSize || 0,
   };
+}
+
+function isEditorOnlyCustomerHiddenImage(asset = {}) {
+  const hasLocalPreview = hasTextValue(asset.dataUrl) || isDataUrl(asset.src) || isDataUrl(asset.imageSrc);
+  const hasCloudVisibleSource = hasTextValue(asset.publicUrl) || hasTextValue(asset.signedUrl) || hasTextValue(asset.storagePath);
+
+  return Boolean((asset.localOnly === true || hasLocalPreview) && !hasCloudVisibleSource);
 }
 
   function attachResidentialOptionImageToProposal(proposal = {}, collectionKey, itemIndex, asset = {}, uploadedBy = "") {
@@ -16906,6 +16918,11 @@ function ResidentialOptionPhotosEditor({ images = [], itemLabel = "Pricing optio
                       {image.fileName} {image.fileSize ? `| ${formatAssetFileSize(image.fileSize)}` : ""}
                     </span>
                   ) : null}
+                  {isEditorOnlyCustomerHiddenImage(image) ? (
+                    <span className="asset-upload-detail">
+                      This photo is visible in the editor only. Save/sync photo to cloud before sharing with customer.
+                    </span>
+                  ) : null}
                   <PhotoCaptionField
                     label="Caption"
                     value={image.caption}
@@ -17076,19 +17093,122 @@ function normalizeResidentialPricingExamples(rows = []) {
 }
 
 function getResidentialPricingCollectionSource(primaryCollection, nestedCollection) {
-  if (Array.isArray(primaryCollection) && primaryCollection.length > 0) {
-    return primaryCollection;
+  const primaryRows = Array.isArray(primaryCollection) ? primaryCollection : [];
+  const nestedRows = Array.isArray(nestedCollection) ? nestedCollection : [];
+
+  if (primaryRows.length > 0 && nestedRows.length > 0) {
+    return mergeResidentialPricingCollectionSources(primaryRows, nestedRows);
   }
 
-  if (Array.isArray(nestedCollection) && nestedCollection.length > 0) {
-    return nestedCollection;
+  if (primaryRows.length > 0) {
+    return primaryRows;
   }
 
-  if (Array.isArray(primaryCollection)) {
-    return primaryCollection;
+  if (nestedRows.length > 0) {
+    return nestedRows;
   }
 
-  return Array.isArray(nestedCollection) ? nestedCollection : [];
+  return Array.isArray(primaryCollection) ? primaryRows : nestedRows;
+}
+
+function mergeResidentialPricingCollectionSources(primaryRows = [], nestedRows = []) {
+  const usedNestedIndexes = new Set();
+  const mergedRows = primaryRows.map((row, index) => {
+    const nestedIndex = findMatchingResidentialPricingRowIndex(nestedRows, row, index, usedNestedIndexes);
+
+    if (nestedIndex < 0) {
+      return row;
+    }
+
+    usedNestedIndexes.add(nestedIndex);
+    return mergeResidentialPricingRowSources(row, nestedRows[nestedIndex]);
+  });
+
+  nestedRows.forEach((row, index) => {
+    if (!usedNestedIndexes.has(index)) {
+      mergedRows.push(row);
+    }
+  });
+
+  return mergedRows;
+}
+
+function findMatchingResidentialPricingRowIndex(rows = [], row = {}, preferredIndex = 0, usedIndexes = new Set()) {
+  const rowKeys = getResidentialPricingRowMergeKeys(row);
+
+  if (rowKeys.length > 0) {
+    const matchingIndex = rows.findIndex((candidate, index) => {
+      if (usedIndexes.has(index)) {
+        return false;
+      }
+
+      const candidateKeys = new Set(getResidentialPricingRowMergeKeys(candidate));
+      return rowKeys.some((key) => candidateKeys.has(key));
+    });
+
+    if (matchingIndex >= 0) {
+      return matchingIndex;
+    }
+  }
+
+  return usedIndexes.has(preferredIndex) || preferredIndex >= rows.length ? -1 : preferredIndex;
+}
+
+function getResidentialPricingRowMergeKeys(row = {}) {
+  return [row?.id, row?.optionId, row?.addOnId, row?.name, row?.label]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function mergeResidentialPricingRowSources(primaryRow = {}, nestedRow = {}) {
+  if (!isPlainObject(primaryRow) || !isPlainObject(nestedRow)) {
+    return primaryRow;
+  }
+
+  const mergedRow = {
+    ...nestedRow,
+    ...primaryRow,
+  };
+
+  [
+    "images",
+    "optionPhotos",
+    "photos",
+    "lineItems",
+    "items",
+    "scheduleOfValues",
+    "sov",
+    "breakdown",
+    "optionBreakdown",
+    "includedScope",
+    "excludedScope",
+    "inclusions",
+    "exclusions",
+    "notes",
+    "optionNotes",
+    "addOnNotes",
+    "appliesTo",
+    "optionTotals",
+  ].forEach((key) => {
+    mergedRow[key] = mergeResidentialPricingArraySource(primaryRow[key], nestedRow[key]);
+  });
+
+  return mergedRow;
+}
+
+function mergeResidentialPricingArraySource(primaryValue, nestedValue) {
+  const primaryRows = Array.isArray(primaryValue) ? primaryValue : [];
+  const nestedRows = Array.isArray(nestedValue) ? nestedValue : [];
+
+  if (primaryRows.length === 0) {
+    return nestedRows;
+  }
+
+  if (nestedRows.length === 0) {
+    return primaryRows;
+  }
+
+  return primaryRows;
 }
 
 function normalizeResidentialPricingPayload(proposal = {}, normalizedCollections = {}) {

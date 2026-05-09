@@ -323,7 +323,8 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
         sourceUpdatedAt,
       })
     : normalizedProposal;
-  const imageUploadResult = await uploadLocalProposalImagesToStorage(companyId, proposalToSave, deps);
+  const imageReadyProposal = syncCloudResidentialPricingImageCollections(proposalToSave);
+  const imageUploadResult = await uploadLocalProposalImagesToStorage(companyId, imageReadyProposal, deps);
   const cloudSaveSanitization = sanitizeProposalDataForCloudSave(imageUploadResult.proposal);
   const row = createCloudProposalRow(companyId, cloudSaveSanitization.proposalData, deps);
   assertCloudProposalPayloadSize(row.proposal_data, deps);
@@ -340,6 +341,168 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
   }
 
   return attachCloudProposalSaveWarning(imageUploadResult.proposal, [imageUploadResult.warning, cloudSaveSanitization.warning].filter(Boolean).join(" "));
+}
+
+function syncCloudResidentialPricingImageCollections(proposal = {}) {
+  if (!isPlainObject(proposal)) {
+    return proposal;
+  }
+
+  const pricing = isPlainObject(proposal.pricing) ? proposal.pricing : {};
+  const nextPricing = { ...pricing };
+  const nextProposal = {
+    ...proposal,
+    pricing: nextPricing,
+  };
+
+  syncCloudResidentialPricingCollection(nextProposal, nextPricing, "pricingOptions");
+  syncCloudResidentialPricingCollection(nextProposal, nextPricing, "optionalAddOns");
+
+  return nextProposal;
+}
+
+function syncCloudResidentialPricingCollection(nextProposal, nextPricing, collectionKey) {
+  const rootRows = Array.isArray(nextProposal[collectionKey]) ? nextProposal[collectionKey] : [];
+  const nestedRows = Array.isArray(nextPricing[collectionKey]) ? nextPricing[collectionKey] : [];
+
+  if (rootRows.length === 0 && nestedRows.length === 0) {
+    return;
+  }
+
+  const mergedRows = mergeCloudResidentialPricingRows(rootRows, nestedRows);
+  nextProposal[collectionKey] = mergedRows;
+  nextPricing[collectionKey] = mergedRows.map((row) => ({ ...row }));
+}
+
+function mergeCloudResidentialPricingRows(primaryRows = [], fallbackRows = []) {
+  if (primaryRows.length === 0) {
+    return fallbackRows;
+  }
+
+  if (fallbackRows.length === 0) {
+    return primaryRows;
+  }
+
+  const usedFallbackIndexes = new Set();
+  const mergedRows = primaryRows.map((row, index) => {
+    const fallbackIndex = findMatchingCloudPricingRowIndex(fallbackRows, row, index, usedFallbackIndexes);
+
+    if (fallbackIndex < 0) {
+      return row;
+    }
+
+    usedFallbackIndexes.add(fallbackIndex);
+    return mergeCloudResidentialPricingRow(row, fallbackRows[fallbackIndex]);
+  });
+
+  fallbackRows.forEach((row, index) => {
+    if (!usedFallbackIndexes.has(index)) {
+      mergedRows.push(row);
+    }
+  });
+
+  return mergedRows;
+}
+
+function findMatchingCloudPricingRowIndex(rows = [], row = {}, preferredIndex = 0, usedIndexes = new Set()) {
+  const rowKeys = getCloudPricingRowMergeKeys(row);
+
+  if (rowKeys.length > 0) {
+    const matchingIndex = rows.findIndex((candidate, index) => {
+      if (usedIndexes.has(index)) {
+        return false;
+      }
+
+      const candidateKeys = new Set(getCloudPricingRowMergeKeys(candidate));
+      return rowKeys.some((key) => candidateKeys.has(key));
+    });
+
+    if (matchingIndex >= 0) {
+      return matchingIndex;
+    }
+  }
+
+  return usedIndexes.has(preferredIndex) || preferredIndex >= rows.length ? -1 : preferredIndex;
+}
+
+function getCloudPricingRowMergeKeys(row = {}) {
+  return [row?.id, row?.optionId, row?.addOnId, row?.name, row?.label]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function mergeCloudResidentialPricingRow(primaryRow = {}, fallbackRow = {}) {
+  if (!isPlainObject(primaryRow) || !isPlainObject(fallbackRow)) {
+    return primaryRow;
+  }
+
+  return {
+    ...fallbackRow,
+    ...primaryRow,
+    images: mergeCloudImageRows(primaryRow.images, fallbackRow.images),
+  };
+}
+
+function mergeCloudImageRows(primaryImages = [], fallbackImages = []) {
+  const primaryRows = Array.isArray(primaryImages) ? primaryImages : [];
+  const fallbackRows = Array.isArray(fallbackImages) ? fallbackImages : [];
+
+  if (primaryRows.length === 0) {
+    return fallbackRows;
+  }
+
+  if (fallbackRows.length === 0) {
+    return primaryRows;
+  }
+
+  const usedFallbackIndexes = new Set();
+  const mergedRows = primaryRows.map((image, index) => {
+    const fallbackIndex = findMatchingCloudImageIndex(fallbackRows, image, index, usedFallbackIndexes);
+
+    if (fallbackIndex < 0) {
+      return image;
+    }
+
+    usedFallbackIndexes.add(fallbackIndex);
+    const fallbackImage = fallbackRows[fallbackIndex];
+    const primaryHasSource = hasAnyImageSource(image);
+    const fallbackHasSource = hasAnyImageSource(fallbackImage);
+
+    return {
+      ...fallbackImage,
+      ...image,
+      ...(primaryHasSource ? {} : fallbackHasSource ? fallbackImage : {}),
+    };
+  });
+
+  fallbackRows.forEach((image, index) => {
+    if (!usedFallbackIndexes.has(index)) {
+      mergedRows.push(image);
+    }
+  });
+
+  return mergedRows;
+}
+
+function findMatchingCloudImageIndex(rows = [], image = {}, preferredIndex = 0, usedIndexes = new Set()) {
+  const imageKeys = getImageMergeKeys(image);
+
+  if (imageKeys.length > 0) {
+    const matchingIndex = rows.findIndex((candidate, index) => {
+      if (usedIndexes.has(index)) {
+        return false;
+      }
+
+      const candidateKeys = new Set(getImageMergeKeys(candidate));
+      return imageKeys.some((key) => candidateKeys.has(key));
+    });
+
+    if (matchingIndex >= 0) {
+      return matchingIndex;
+    }
+  }
+
+  return usedIndexes.has(preferredIndex) || preferredIndex >= rows.length ? -1 : preferredIndex;
 }
 
 async function writeCloudProposalRow(client, row, targetRowId = "") {
