@@ -1,5 +1,9 @@
 import { getCustomerShareFields } from "../customerPortal.js";
-import { BASE_PLUS_ADDONS_PRICING_MODE, CHOOSE_ONE_PRICING_MODE } from "../proposalPacket/residentialPricing.js";
+import {
+  BASE_PLUS_ADDONS_PRICING_MODE,
+  getResidentialAddOnAmountForOption,
+  isResidentialChooseOnePricingMode,
+} from "../proposalPacket/residentialPricing.js";
 import { inferProposalModeFromProposal, isGcPrimePacketMode, isResidentialProposalMode } from "./proposalModes.js";
 
 export function buildProposalListSummaries(proposals = [], contacts = []) {
@@ -86,13 +90,13 @@ export function getLightweightProposalTotal(proposal = {}) {
   const pricing = isSummaryObject(proposal.pricing) ? proposal.pricing : {};
   const pricingMode = cleanSummaryText(proposal.pricingMode || pricing.pricingMode);
 
-  if (pricingMode === CHOOSE_ONE_PRICING_MODE) {
+  if (isResidentialChooseOnePricingMode(pricingMode)) {
     const options = selectSummaryArray(proposal.pricingOptions, pricing.pricingOptions);
     const selectedOption = options.find((option) => option?.selected || option?.included) || options[0] || {};
     const addOns = selectSummaryArray(proposal.optionalAddOns, pricing.optionalAddOns);
     const selectedAddOnsTotal = addOns
       .filter((addOn) => addOn?.selected || addOn?.included)
-      .reduce((sum, addOn) => sum + toSummaryNumber(addOn.amount ?? addOn.price ?? addOn.total), 0);
+      .reduce((sum, addOn) => sum + getResidentialAddOnAmountForOption(addOn, selectedOption), 0);
 
     return toSummaryNumber(selectedOption.price ?? selectedOption.amount ?? selectedOption.total) + selectedAddOnsTotal;
   }

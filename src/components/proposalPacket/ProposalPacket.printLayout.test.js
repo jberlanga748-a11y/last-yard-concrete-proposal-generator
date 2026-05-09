@@ -16,12 +16,13 @@ test("residential pricing option cards are rendered from paginated print chunks"
   assert.match(source, /residentialPricingItems/);
 });
 
-test("residential pricing option cards render generic option details and add-on totals", () => {
+test("residential pricing option cards render base option details without generic add-on totals", () => {
   assert.match(source, /option\.finishType/);
   assert.match(source, /option\.includedScope/);
   assert.match(source, /option\.excludedScope/);
-  assert.match(source, /option\.addOnComparisons/);
-  assert.match(source, /With \{addOnLabel\}/);
+  assert.match(source, /Optional Add-Ons:[\s\S]*Selected separately below/);
+  assert.match(source, /formatResidentialAddOnSummaryLabel\(addOn, optionRows\)/);
+  assert.doesNotMatch(source, /With Optional Add-On|With optional add-on|With selected add-on/);
 });
 
 test("residential option SOV pages use weighted pagination instead of a hard two-option split", () => {

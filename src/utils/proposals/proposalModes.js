@@ -205,7 +205,7 @@ function looksClearlyResidential(proposal = {}) {
     return true;
   }
 
-  if ((proposal.pricingMode || proposal.pricing?.pricingMode) === "choose_one_option" && hasArrayItems(proposal.pricingOptions || proposal.pricing?.pricingOptions)) {
+  if (isChooseOneResidentialPricingMode(proposal.pricingMode || proposal.pricing?.pricingMode) && hasArrayItems(proposal.pricingOptions || proposal.pricing?.pricingOptions)) {
     return true;
   }
 
@@ -221,13 +221,17 @@ function looksClearlyResidential(proposal = {}) {
 }
 
 function looksLikeResidentialSmartPaste(normalized = {}, normalizedText = "") {
-  if ((normalized.pricing?.pricingMode || "") === "choose_one_option" || hasArrayItems(normalized.pricing?.pricingOptions)) {
+  if (isChooseOneResidentialPricingMode(normalized.pricing?.pricingMode) || hasArrayItems(normalized.pricing?.pricingOptions)) {
     return true;
   }
 
   return /(residential|homeowner|customer chooses one|choose one option|pricing options|option 1|option 2|option 3|driveway|patio|walkway|residential steps|finish options?)/i.test(
     normalizedText,
   );
+}
+
+function isChooseOneResidentialPricingMode(pricingMode = "") {
+  return pricingMode === "choose_one_option" || pricingMode === "choose_one_option_with_addons";
 }
 
 function looksLikeFullPacketSmartPaste(normalized = {}, normalizedText = "") {

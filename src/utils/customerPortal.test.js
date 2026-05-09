@@ -267,6 +267,7 @@ test("customer selection normalization is safe for old proposals", () => {
     selectedOptionName: "",
     selectedAddOnIds: ["walls", "lighting"],
     selectedAddOnNames: [],
+    selectedAddOnAmounts: [],
     selectedTotal: 50000,
     selectedDownPayment: 0,
     selectedFinalPayment: 0,
@@ -275,6 +276,61 @@ test("customer selection normalization is safe for old proposals", () => {
     customerPhone: "",
     customerNotes: "",
   });
+});
+
+test("choose-one with add-ons uses option-specific add-on amounts", () => {
+  const proposal = {
+    pricingMode: "choose_one_option_with_addons",
+    pricingOptions: [
+      { id: "proposal-1", name: "Proposal 1 - Broom Finish Package", price: 40000 },
+      { id: "proposal-2", name: "Proposal 2 - Exposed Finish Package", price: 50000 },
+      { id: "proposal-3", name: "Proposal 3 - Stamped Finish Package", price: 60000 },
+    ],
+    optionalAddOns: [
+      {
+        id: "walls",
+        name: "Walls",
+        optionAmounts: [
+          { optionId: "proposal-1", amount: 10000 },
+          { optionId: "proposal-2", amount: 15000 },
+          { optionId: "proposal-3", amount: 20000 },
+        ],
+      },
+      { id: "lighting", name: "Lighting", amount: 7000 },
+      {
+        id: "cantilever",
+        name: "Cantilever-Style Stair Upgrade",
+        optionAmounts: [
+          { optionName: "Proposal 1 - Broom Finish Package", amount: 10000 },
+          { optionName: "Proposal 2 - Exposed Finish Package", amount: 15000 },
+          { optionName: "Proposal 3 - Stamped Finish Package", amount: 20000 },
+        ],
+      },
+    ],
+  };
+  const totalFor = (selectedOptionId, selectedAddOnIds) =>
+    calculateCustomerSelectionSummary(proposal, {
+      selectedAddOnIds,
+      selectedOptionId,
+      selectedPricingMode: "choose_one_option_with_addons",
+    });
+
+  assert.equal(totalFor("proposal-1", ["walls"]).selectedTotal, 50000);
+  assert.equal(totalFor("proposal-1", ["lighting"]).selectedTotal, 47000);
+  assert.equal(totalFor("proposal-1", ["cantilever"]).selectedTotal, 50000);
+  assert.equal(totalFor("proposal-1", ["walls", "lighting", "cantilever"]).selectedTotal, 67000);
+  assert.equal(totalFor("proposal-2", ["walls", "lighting", "cantilever"]).selectedTotal, 87000);
+  const proposal3Summary = totalFor("proposal-3", ["walls", "lighting", "cantilever"]);
+
+  assert.equal(proposal3Summary.selectedTotal, 107000);
+  assert.deepEqual(
+    proposal3Summary.selectedAddOnAmounts.map((row) => [row.name, row.amount]),
+    [
+      ["Walls", 20000],
+      ["Lighting", 7000],
+      ["Cantilever-Style Stair Upgrade", 20000],
+    ],
+  );
 });
 
 test("reviewing a customer selection does not change proposal pricing", () => {
@@ -370,6 +426,47 @@ test("applying choose-one customer selection selects one option without deleting
   assert.equal(result.proposal.pricingOptions[1].selected, true);
   assert.equal(result.proposal.optionalAddOns[0].selected, true);
   assert.equal(getAppliedCustomerSelectionSummary(result.proposal).selectedTotal, 106000);
+});
+
+test("applying choose-one with add-ons preserves original add-ons and stores selected amounts", () => {
+  const sourceProposal = {
+    pricingMode: "choose_one_option_with_addons",
+    pricingOptions: [
+      { id: "proposal-1", name: "Proposal 1 - Broom Finish Package", price: 40000 },
+      { id: "proposal-2", name: "Proposal 2 - Exposed Finish Package", price: 50000 },
+      { id: "proposal-3", name: "Proposal 3 - Stamped Finish Package", price: 60000 },
+    ],
+    optionalAddOns: [
+      { id: "walls", name: "Walls", optionAmounts: [{ optionId: "proposal-2", amount: 15000 }] },
+      { id: "lighting", name: "Lighting", amount: 7000 },
+      { id: "cantilever", name: "Cantilever-Style Stair Upgrade", optionAmounts: [{ optionId: "proposal-2", amount: 15000 }] },
+    ],
+  };
+  const proposal = {
+    ...sourceProposal,
+    customerSelection: buildSubmittedCustomerSelection(sourceProposal, {
+      selectedAddOnIds: ["walls", "lighting", "cantilever"],
+      selectedOptionId: "proposal-2",
+      selectedPricingMode: "choose_one_option_with_addons",
+    }),
+  };
+  const result = applyCustomerSelectionToProposal(proposal);
+
+  assert.equal(result.applied, true);
+  assert.equal(result.proposal.totalProposal, 87000);
+  assert.equal(result.proposal.pricingOptions.length, 3);
+  assert.equal(result.proposal.optionalAddOns[0].amount, undefined);
+  assert.equal(result.proposal.optionalAddOns[0].selectedAmount, 15000);
+  assert.equal(result.proposal.optionalAddOns[1].amount, 7000);
+  assert.equal(result.proposal.optionalAddOns[1].selectedAmount, 7000);
+  assert.deepEqual(
+    result.proposal.customerSelection.selectedAddOnAmounts.map((row) => [row.id, row.amount]),
+    [
+      ["walls", 15000],
+      ["lighting", 7000],
+      ["cantilever", 15000],
+    ],
+  );
 });
 
 test("customer approval requires an applied selection and stores signature snapshot", () => {

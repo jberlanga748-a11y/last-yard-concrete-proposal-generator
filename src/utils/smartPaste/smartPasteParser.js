@@ -9,8 +9,8 @@ import {
 import { isSmartPasteJsonImportNotes, normalizeSmartPasteNotes } from "./smartPasteNormalizer.js";
 import {
   BASE_PLUS_ADDONS_PRICING_MODE,
-  CHOOSE_ONE_PRICING_MODE,
   countResidentialOptionImagePlaceholders,
+  isResidentialChooseOnePricingMode,
   normalizeResidentialOptionImages,
   normalizeResidentialPdfLayout,
   normalizeResidentialScheduleOfValues,
@@ -208,7 +208,7 @@ function createSmartPasteSummary(parsedNotes = {}, explicitLineItemCount) {
     pricingMode: values.pricingMode || "",
     pricingOptions: values.pricingOptions || [],
     optionalAddOns: values.optionalAddOns || [],
-    hideTotalIfAllAccepted: values.pricingMode === CHOOSE_ONE_PRICING_MODE || values.pricingMode === BASE_PLUS_ADDONS_PRICING_MODE,
+    hideTotalIfAllAccepted: isResidentialChooseOnePricingMode(values.pricingMode) || values.pricingMode === BASE_PLUS_ADDONS_PRICING_MODE,
     planSheetCount: parsedNotes.planSheetCount || 0,
     gcPacketTableCount: parsedNotes.gcPacketTableCount || 0,
     sectionsCaptured: parsedNotes.sectionsCaptured || [],
@@ -317,7 +317,7 @@ function getSmartPasteReviewWarnings(proposal = {}, parsedNotes = {}) {
   const totalRows = values.pricingTotalRows || [];
   const lineItemTotal = getSmartPasteLineItemTotal(proposal.lineItems || []);
   const optionalScopeDetected = getSmartPasteOptionalScopeDetected(values);
-  const chooseOnePricing = values.pricingMode === "choose_one_option" || proposal.pricingMode === "choose_one_option";
+  const chooseOnePricing = isResidentialChooseOnePricingMode(values.pricingMode) || isResidentialChooseOnePricingMode(proposal.pricingMode);
 
   if (!hasTextValue(project.name)) {
     warnings.push("Smart Paste did not find a project name.");
@@ -383,7 +383,7 @@ function getSmartPasteOptionalScopeDetected(values = {}) {
 }
 
 function hasParsedOptionalOrAlternatePricing(values = {}) {
-  if (values.pricingMode === "choose_one_option" || (values.pricingOptions || []).length > 0 || (values.optionalAddOns || []).length > 0) {
+  if (isResidentialChooseOnePricingMode(values.pricingMode) || (values.pricingOptions || []).length > 0 || (values.optionalAddOns || []).length > 0) {
     return true;
   }
 
@@ -1056,7 +1056,7 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
 
   if (pricing.pricingMode) {
     values.pricingMode = pricing.pricingMode;
-    fields.push(pricing.pricingMode === "choose_one_option" ? "pricing options" : "pricing mode");
+    fields.push(isResidentialChooseOnePricingMode(pricing.pricingMode) ? "pricing options" : "pricing mode");
   }
 
   if (pricing.pricingOptions?.length > 0) {
@@ -1089,12 +1089,13 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
       description: addOn.description || "",
       amount: toEditableNumber(addOn.amount),
       appliesTo: Array.isArray(addOn.appliesTo) ? addOn.appliesTo : [],
+      optionAmounts: Array.isArray(addOn.optionAmounts) ? addOn.optionAmounts : [],
       optionTotals: Array.isArray(addOn.optionTotals) ? addOn.optionTotals : [],
       notes: Array.isArray(addOn.notes) ? addOn.notes : [],
       included: addOn.included === true || addOn.selected === true,
       selected: addOn.selected === true || addOn.included === true,
       images: normalizeResidentialOptionImages(addOn.images),
-    })).filter((addOn) => addOn.amount > 0);
+    })).filter((addOn) => addOn.amount > 0 || addOn.optionAmounts.length > 0 || addOn.optionTotals.length > 0);
     fields.push("optional add-ons");
   }
 
@@ -1110,7 +1111,7 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
     delete values.baseBidLineItem;
     fields.push("line items");
     recordSmartPasteSection(sections, "lineItems");
-  } else if (pricing.pricingMode === "choose_one_option" && values.pricingOptions?.length > 0 && !values.baseBidLineItem) {
+  } else if (isResidentialChooseOnePricingMode(pricing.pricingMode) && values.pricingOptions?.length > 0 && !values.baseBidLineItem) {
     const selectedOption = getSelectedSmartPastePricingOption(values.pricingOptions);
     values.baseBidLineItem = {
       itemNumber: "1",
@@ -1134,7 +1135,7 @@ function mergeNormalizedSmartPasteIntoParseState(normalized = {}, state = {}) {
   }
 
   const mirrorAddOnsToPricingSections =
-    pricing.pricingMode !== CHOOSE_ONE_PRICING_MODE && pricing.pricingMode !== BASE_PLUS_ADDONS_PRICING_MODE;
+    !isResidentialChooseOnePricingMode(pricing.pricingMode) && pricing.pricingMode !== BASE_PLUS_ADDONS_PRICING_MODE;
   const normalizedPricingSections = [
     ...(pricing.allowances || []).map((row) => ({
       id: createProposalId(),

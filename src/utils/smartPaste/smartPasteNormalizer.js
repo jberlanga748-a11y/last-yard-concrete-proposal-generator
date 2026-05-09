@@ -1,5 +1,6 @@
 import {
   mergeResidentialOptionBreakdowns,
+  isResidentialChooseOnePricingMode,
   normalizeResidentialPdfLayout,
   normalizeResidentialOptionalAddOns,
   normalizeResidentialPricingOptions,
@@ -396,7 +397,7 @@ function normalizeJsonPricing(pricing = {}, root = {}, normalized) {
     normalized.pricing.totalProposal <= 0 &&
     lineItemTotal > 0 &&
     normalized.pricing.alternates.length === 0 &&
-    normalized.pricing.pricingMode !== "choose_one_option"
+    !isResidentialChooseOnePricingMode(normalized.pricing.pricingMode)
   ) {
     normalized.pricing.totalProposal = lineItemTotal;
   }
@@ -555,7 +556,7 @@ function normalizeChooseOnePricing(pricing) {
     pricing.pricingMode = "choose_one_option";
   }
 
-  if (pricing.pricingMode !== "choose_one_option") {
+  if (!isResidentialChooseOnePricingMode(pricing.pricingMode)) {
     return;
   }
 
@@ -959,7 +960,7 @@ function parsePricing(lines, normalized) {
     normalized.pricing.totalProposal > 0 &&
     normalized.pricing.baseBid <= 0 &&
     normalized.pricing.alternates.length === 0 &&
-    normalized.pricing.pricingMode !== "choose_one_option"
+    !isResidentialChooseOnePricingMode(normalized.pricing.pricingMode)
   ) {
     normalized.pricing.baseBid = normalized.pricing.totalProposal;
     normalized.pricing.lineItems.push({
@@ -973,7 +974,7 @@ function parsePricing(lines, normalized) {
     });
   }
 
-  if (normalized.pricing.baseBid > 0 && normalized.pricing.lineItems.length === 0 && normalized.pricing.pricingMode !== "choose_one_option") {
+  if (normalized.pricing.baseBid > 0 && normalized.pricing.lineItems.length === 0 && !isResidentialChooseOnePricingMode(normalized.pricing.pricingMode)) {
     normalized.pricing.lineItems.push({
       itemNumber: "1",
       description: "Base Bid",
@@ -1779,7 +1780,7 @@ function finalizeNormalizedSmartPaste(normalized) {
     normalized.pricing.totalProposal > 0 &&
     normalized.pricing.baseBid > 0 &&
     normalized.pricing.alternates.length === 0 &&
-    normalized.pricing.pricingMode !== "choose_one_option"
+    !isResidentialChooseOnePricingMode(normalized.pricing.pricingMode)
   ) {
     const totalDifference = Math.abs(normalized.pricing.totalProposal - normalized.pricing.baseBid);
 
@@ -1788,7 +1789,7 @@ function finalizeNormalizedSmartPaste(normalized) {
     }
   }
 
-  if (normalized.pricing.pricingMode === "choose_one_option") {
+  if (isResidentialChooseOnePricingMode(normalized.pricing.pricingMode)) {
     normalized.warnings.push("Residential pricing options detected. Confirm which option the customer accepted before sending.");
   } else if (normalized.pricing.alternates.length > 0 || JSON.stringify(normalized).toLowerCase().includes("optional support")) {
     normalized.warnings.push("Optional or alternate scope detected. Confirm whether it is included before sending.");

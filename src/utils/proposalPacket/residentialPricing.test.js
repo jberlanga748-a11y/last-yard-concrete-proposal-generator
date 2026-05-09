@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   BASE_PLUS_ADDONS_PRICING_MODE,
+  CHOOSE_ONE_WITH_ADDONS_PRICING_MODE,
   RESIDENTIAL_DETAILED_BACKUP_LAYOUT,
   RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT,
   RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT,
@@ -18,6 +19,7 @@ import {
   countResidentialOptionImagePlaceholders,
   formatResidentialCurrency,
   formatResidentialMoneyText,
+  getResidentialAddOnAmountForOption,
   getPrintableResidentialOptionImages,
   getResidentialOptionLineItemTotal,
   getResidentialOptionTotalWarning,
@@ -254,6 +256,59 @@ test("generic optional add-ons apply to selected options without becoming main c
   assert.equal(rows[1].addOnComparisons[0].total, 100900);
 });
 
+test("option-specific residential add-on amounts calculate customer-choice totals", () => {
+  const proposal = {
+    pricingMode: CHOOSE_ONE_WITH_ADDONS_PRICING_MODE,
+    pricingOptions: [
+      { id: "proposal-1", name: "Proposal 1 - Broom Finish Package", price: 40000, finishType: "Broom" },
+      { id: "proposal-2", name: "Proposal 2 - Exposed Finish Package", price: 50000, finishType: "Exposed" },
+      { id: "proposal-3", name: "Proposal 3 - Stamped Finish Package", price: 60000, finishType: "Stamped" },
+    ],
+    optionalAddOns: [
+      {
+        id: "walls",
+        name: "Walls",
+        optionAmounts: [
+          { optionId: "proposal-1", amount: 10000 },
+          { optionId: "proposal-2", amount: 15000 },
+          { optionId: "proposal-3", amount: 20000 },
+        ],
+      },
+      { id: "lighting", name: "Lighting", amount: 7000 },
+      {
+        id: "cantilever",
+        name: "Cantilever-Style Stair Upgrade",
+        optionAmounts: {
+          "Proposal 1 - Broom Finish Package": 10000,
+          "Proposal 2 - Exposed Finish Package": 15000,
+          "Proposal 3 - Stamped Finish Package": 20000,
+        },
+      },
+    ],
+  };
+  const options = getResidentialPricingOptions(proposal);
+  const addOns = getResidentialOptionalAddOns(proposal);
+  const [broom, exposed, stamped] = options;
+  const [walls, lighting, cantilever] = addOns;
+
+  assert.equal(hasResidentialChooseOnePricing(proposal), true);
+  assert.equal(getResidentialAddOnAmountForOption(lighting, broom), 7000);
+  assert.equal(getResidentialAddOnAmountForOption(lighting, exposed), 7000);
+  assert.equal(getResidentialAddOnAmountForOption(lighting, stamped), 7000);
+  assert.equal(getResidentialAddOnAmountForOption(walls, broom), 10000);
+  assert.equal(getResidentialAddOnAmountForOption(walls, exposed), 15000);
+  assert.equal(getResidentialAddOnAmountForOption(walls, stamped), 20000);
+  assert.equal(getResidentialAddOnAmountForOption(cantilever, broom), 10000);
+  assert.equal(getResidentialAddOnAmountForOption(cantilever, exposed), 15000);
+  assert.equal(getResidentialAddOnAmountForOption(cantilever, stamped), 20000);
+  assert.equal(broom.price + getResidentialAddOnAmountForOption(walls, broom), 50000);
+  assert.equal(broom.price + getResidentialAddOnAmountForOption(lighting, broom), 47000);
+  assert.equal(broom.price + getResidentialAddOnAmountForOption(cantilever, broom), 50000);
+  assert.equal(broom.price + addOns.reduce((sum, addOn) => sum + getResidentialAddOnAmountForOption(addOn, broom), 0), 67000);
+  assert.equal(exposed.price + addOns.reduce((sum, addOn) => sum + getResidentialAddOnAmountForOption(addOn, exposed), 0), 87000);
+  assert.equal(stamped.price + addOns.reduce((sum, addOn) => sum + getResidentialAddOnAmountForOption(addOn, stamped), 0), 107000);
+});
+
 test("prints uploaded option images but hides placeholder-only images", () => {
   const options = normalizeResidentialPricingOptions(residentialProposal.pricingOptions);
 
@@ -422,7 +477,7 @@ test("residential pricing rows show base and with-cantilever totals for every op
     rows.map((row) => row.withAddOnFinalPayment),
     [45500, 53000, 49250],
   );
-  assert.ok(rows.every((row) => row.comparisonAddOn.name === "Cantilever-Style Stair Upgrade"));
+  assert.ok(rows.every((row) => row.addOnComparisons[0].addOn.name === "Cantilever-Style Stair Upgrade"));
 });
 
 test("residential pricing option print pages keep option cards complete", () => {
@@ -562,9 +617,7 @@ test("residential pricing copy avoids GC-style alternate totals", () => {
       `Base Price: ${formatResidentialCurrency(row.basePrice)}`,
       `50% Down: ${formatResidentialCurrency(row.downPayment)}`,
       `Final Payment: ${formatResidentialCurrency(row.finalPayment)}`,
-      `With Cantilever Upgrade: ${formatResidentialCurrency(row.withAddOnTotal)}`,
-      `With Cantilever Down: ${formatResidentialCurrency(row.withAddOnDownPayment)}`,
-      `With Cantilever Final: ${formatResidentialCurrency(row.withAddOnFinalPayment)}`,
+      "Optional add-ons are selected below and added only if chosen.",
     ]),
     `Optional Add-On: ${residentialProposal.optionalAddOns[0].name} ${formatResidentialCurrency(residentialProposal.optionalAddOns[0].amount, { plus: true })}`,
   ].join("\n");
@@ -572,9 +625,7 @@ test("residential pricing copy avoids GC-style alternate totals", () => {
   assert.match(printablePricingCopy, /Option 1 - Full Scope With Broom Finish/);
   assert.match(printablePricingCopy, /Option 2 - Full Scope With Stamped Finish/);
   assert.match(printablePricingCopy, /Option 3 - Full Scope With Sand Finish/);
-  assert.match(printablePricingCopy, /With Cantilever Upgrade: \$91,000/);
-  assert.match(printablePricingCopy, /With Cantilever Upgrade: \$106,000/);
-  assert.match(printablePricingCopy, /With Cantilever Upgrade: \$98,500/);
+  assert.doesNotMatch(printablePricingCopy, /With optional add-on|With selected add-on|With add-on|With Cantilever Upgrade/i);
   assert.match(printablePricingCopy, /Optional Add-On: Cantilever-Style Stair Upgrade \+\$8,500/);
   assert.doesNotMatch(printablePricingCopy, /Total if All Alternates Accepted|Add Alternate|Alternate accepted total/i);
 });

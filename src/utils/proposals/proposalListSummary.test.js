@@ -58,6 +58,30 @@ test("proposal list summary supports base-plus-addons totals and share status", 
   assert.equal(summary.customerShareEnabled, true);
 });
 
+test("proposal list summary uses option-specific add-on amounts for selected residential option", () => {
+  const total = getLightweightProposalTotal({
+    pricingMode: "choose_one_option_with_addons",
+    pricingOptions: [
+      { id: "proposal-1", name: "Proposal 1", price: 40000, selected: false },
+      { id: "proposal-2", name: "Proposal 2", price: 50000, selected: true },
+    ],
+    optionalAddOns: [
+      {
+        id: "walls",
+        name: "Walls",
+        selected: true,
+        optionAmounts: [
+          { optionId: "proposal-1", amount: 10000 },
+          { optionId: "proposal-2", amount: 15000 },
+        ],
+      },
+      { id: "lighting", name: "Lighting", amount: 7000, selected: true },
+    ],
+  });
+
+  assert.equal(total, 72000);
+});
+
 test("proposal list summary keeps commercial and GC totals lightweight", () => {
   assert.equal(
     getLightweightProposalTotal({
