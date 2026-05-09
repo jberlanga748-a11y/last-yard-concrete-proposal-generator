@@ -314,12 +314,57 @@
 
 .customer-portal-addons,
 .customer-portal-addon-photos,
+.customer-portal-approval-actions,
+.customer-portal-approval-checks,
+.customer-portal-approval-panel,
+.customer-portal-final-selection,
 .customer-portal-legal-notices,
 .customer-portal-selection-submit,
 .customer-portal-selection-form,
 .customer-portal-selection-fields {
   display: grid;
   gap: 10px;
+}
+
+.customer-portal-final-selection {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.customer-portal-final-selection > div,
+.customer-portal-approval-checks label {
+  border: 1px solid rgba(22, 32, 42, 0.12);
+  border-radius: 8px;
+  background: #f8fafb;
+  padding: 12px;
+}
+
+.customer-portal-final-selection span {
+  display: block;
+  color: #5f6973;
+  font-size: 0.8rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.customer-portal-approval-checks label {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  font-weight: 800;
+}
+
+.customer-portal-approval-checks input {
+  height: 20px;
+  width: 20px;
+}
+
+.customer-portal-approval-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.customer-portal-selection-form .customer-portal-secondary-button {
+  background: #f8f6ef;
+  color: #16202a;
 }
 
 .customer-portal-selection-total,
@@ -495,6 +540,35 @@
   white-space: pre-wrap;
 }
 
+.residential-approval-record {
+  border: 1px solid rgba(22, 32, 42, 0.14);
+  border-radius: 8px;
+  background: #f8fafb;
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 12px;
+}
+
+.residential-approval-record h4,
+.residential-approval-record p {
+  margin: 0;
+}
+
+.residential-approval-record > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.residential-approval-record span {
+  display: block;
+  color: #5f6973;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 @media (max-width: 768px) {
   .customer-portal-page {
     width: min(100vw - 16px, 1080px);
@@ -534,6 +608,7 @@
   }
 
   .customer-portal-summary-grid,
+  .customer-portal-approval-actions,
   .customer-portal-table-row,
   .customer-portal-addon-row,
   .customer-portal-notice-row,

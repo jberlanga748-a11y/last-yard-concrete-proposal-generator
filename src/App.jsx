@@ -172,19 +172,37 @@ import {
 } from "./utils/activityLog.js";
 import { getAuthGateState, getLogoutCleanupState } from "./utils/authSession.js";
 import {
+  applyCustomerSelectionToProposal,
+  buildCustomerApprovalRecord,
+  buildCustomerChangeRequestRecord,
+  buildCustomerSelectionReview,
   buildSubmittedCustomerSelection,
   calculateCustomerSelectionSummary,
+  canCustomerApproveProposal,
+  CUSTOMER_APPROVAL_STATUS_APPROVED_SIGNED,
+  CUSTOMER_APPROVAL_STATUS_CHANGE_REQUESTED,
+  CUSTOMER_SELECTION_STATUS_APPLIED,
+  CUSTOMER_SELECTION_STATUS_APPROVAL_SENT,
+  CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED,
+  CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED,
+  CUSTOMER_SELECTION_STATUS_NONE,
+  CUSTOMER_SELECTION_STATUS_REVIEWED,
+  CUSTOMER_SELECTION_STATUS_SUBMITTED,
   createCustomerPortalSelectionDraft,
   createCustomerShareToken,
   fetchCustomerPortalProposalByToken,
   findCustomerProposalByShareToken,
+  getAppliedCustomerSelectionSummary,
   getCustomerSelectionItemId,
   getCustomerPortalLink,
   getCustomerPortalUnavailableMessage,
   getCustomerSafeImageCaption,
   getCustomerShareFields,
+  normalizeCustomerApproval,
   normalizeCustomerSelection,
   normalizeCustomerShareToken,
+  submitCustomerPortalApprovalByToken,
+  submitCustomerPortalChangeRequestByToken,
   submitCustomerPortalSelectionByToken,
 } from "./utils/customerPortal.js";
 import {
@@ -1132,6 +1150,7 @@ export default function App() {
     const nextProposal = createEditableProposal({
       ...localResult.proposal,
       customerSelection,
+      status: localResult.proposal.status === "accepted_deposit_due" ? localResult.proposal.status : "customer_selection_submitted",
     });
 
     setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
@@ -1145,6 +1164,151 @@ export default function App() {
     return {
       available: true,
       customerSelection,
+      ok: true,
+      proposal: nextProposal,
+      reason: "available",
+    };
+  }
+
+  async function submitCustomerPortalApproval(approvalDraft) {
+    const token = route.shareToken;
+
+    if (
+      !String(approvalDraft?.customerName || "").trim() ||
+      !String(approvalDraft?.typedSignature || "").trim() ||
+      approvalDraft?.acknowledgedPaymentTerms !== true ||
+      approvalDraft?.acknowledgedScope !== true ||
+      approvalDraft?.acknowledgedLegalTerms !== true ||
+      approvalDraft?.acknowledgedNotices !== true
+    ) {
+      return {
+        available: true,
+        ok: false,
+        reason: "approval-incomplete",
+      };
+    }
+
+    const apiResult = await submitCustomerPortalApprovalByToken(token, approvalDraft);
+
+    if (apiResult.ok && apiResult.available) {
+      const nextProposal = createEditableProposal(apiResult.proposal || {
+        ...customerPortalState.proposal,
+        customerApproval: apiResult.customerApproval,
+        customerSelection: apiResult.customerSelection,
+      });
+
+      setCustomerPortalState({
+        loading: false,
+        message: "",
+        proposal: nextProposal,
+        reason: "available",
+      });
+
+      return apiResult;
+    }
+
+    if (!["api-unavailable", "unconfigured", "load-error"].includes(apiResult.reason)) {
+      return apiResult;
+    }
+
+    const localResult = findCustomerProposalByShareToken(savedProposals, token);
+
+    if (!localResult.available || !canCustomerApproveProposal(localResult.proposal)) {
+      return {
+        ...apiResult,
+        reason: localResult.reason || "approval-not-ready",
+      };
+    }
+
+    const customerApproval = buildCustomerApprovalRecord(localResult.proposal, approvalDraft);
+    const currentSelection = normalizeCustomerSelection(localResult.proposal.customerSelection);
+    const nextProposal = createEditableProposal({
+      ...localResult.proposal,
+      customerApproval,
+      customerSelection: {
+        ...currentSelection,
+        status: CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED,
+      },
+      status: "accepted_deposit_due",
+      updatedAt: customerApproval.approvedAt,
+    });
+
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
+    setCustomerPortalState({
+      loading: false,
+      message: "",
+      proposal: nextProposal,
+      reason: "available",
+    });
+
+    return {
+      available: true,
+      customerApproval,
+      customerSelection: nextProposal.customerSelection,
+      ok: true,
+      proposal: nextProposal,
+      reason: "available",
+    };
+  }
+
+  async function submitCustomerPortalChangeRequest(changeRequestDraft) {
+    const token = route.shareToken;
+    const apiResult = await submitCustomerPortalChangeRequestByToken(token, changeRequestDraft);
+
+    if (apiResult.ok && apiResult.available) {
+      const nextProposal = createEditableProposal(apiResult.proposal || {
+        ...customerPortalState.proposal,
+        customerApproval: apiResult.customerApproval,
+        customerSelection: apiResult.customerSelection,
+      });
+
+      setCustomerPortalState({
+        loading: false,
+        message: "",
+        proposal: nextProposal,
+        reason: "available",
+      });
+
+      return apiResult;
+    }
+
+    if (!["api-unavailable", "unconfigured", "load-error"].includes(apiResult.reason)) {
+      return apiResult;
+    }
+
+    const localResult = findCustomerProposalByShareToken(savedProposals, token);
+
+    if (!localResult.available || !canCustomerApproveProposal(localResult.proposal)) {
+      return {
+        ...apiResult,
+        reason: localResult.reason || "approval-not-ready",
+      };
+    }
+
+    const customerApproval = buildCustomerChangeRequestRecord(localResult.proposal, changeRequestDraft);
+    const currentSelection = normalizeCustomerSelection(localResult.proposal.customerSelection);
+    const nextProposal = createEditableProposal({
+      ...localResult.proposal,
+      customerApproval,
+      customerSelection: {
+        ...currentSelection,
+        status: CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED,
+      },
+      updatedAt: customerApproval.approvedAt,
+    });
+
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
+    setCustomerPortalState({
+      loading: false,
+      message: "",
+      proposal: nextProposal,
+      reason: "available",
+    });
+
+    return {
+      available: true,
+      customerApproval,
+      customerSelection: nextProposal.customerSelection,
       ok: true,
       proposal: nextProposal,
       reason: "available",
@@ -2898,38 +3062,161 @@ export default function App() {
     }
   }
 
-  async function markCustomerSelectionReviewed() {
+  async function persistCustomerSelectionWorkflowProposal(proposalToSave, { localMessage, cloudMessage, activityAction, activityNotes } = {}) {
+    const normalizedProposal = createEditableProposal(proposalToSave);
+
+    setSavedProposals((currentProposals) => upsertProposal(currentProposals, normalizedProposal));
+    setProposalDraft(normalizedProposal);
+    setProposalDirty(false);
+    setSaveMessage(getCloudReadyMessage(authUser, localMessage, cloudMessage || localMessage));
+
+    if (activityAction) {
+      recordActivity({
+        action: activityAction,
+        entityType: "proposal",
+        entityId: normalizedProposal.id,
+        entityLabel: formatProposalNumberWithRevision(normalizedProposal),
+        notes: activityNotes,
+      });
+    }
+
+    if (canUseCloudSync(authUser)) {
+      await syncSingleProposalToCloud(normalizedProposal, cloudMessage || localMessage);
+    } else {
+      markProposalsNeedCloudSync(`${localMessage} Sync proposals to update Supabase.`);
+    }
+  }
+
+  async function markCustomerSelectionReviewed(reviewNotes = "") {
     if (!canPerform("editProposal")) {
       return;
     }
 
     const currentSelection = normalizeCustomerSelection(proposalDraft.customerSelection);
 
-    if (currentSelection.status !== "submitted") {
+    if (currentSelection.status !== CUSTOMER_SELECTION_STATUS_SUBMITTED) {
       setSaveMessage("No submitted customer selection is waiting for review.");
       return;
     }
 
     const reviewedAt = new Date().toISOString();
-    const proposalToSave = createEditableProposal({
+    const reviewedBy = authUser?.email || "Last Yard";
+    const proposalToSave = {
+      ...proposalDraft,
+      customerSelection: buildCustomerSelectionReview(currentSelection, reviewedBy, reviewedAt, reviewNotes),
+      status: proposalDraft.status === "accepted_deposit_due" ? proposalDraft.status : "selection_reviewed",
+      updatedAt: reviewedAt,
+    };
+
+    await persistCustomerSelectionWorkflowProposal(proposalToSave, {
+      activityAction: "Customer selection reviewed",
+      activityNotes: currentSelection.selectedOptionName || currentSelection.selectedAddOnNames.join(", ") || "Selection reviewed",
+      cloudMessage: "Customer selection marked reviewed and synced.",
+      localMessage: "Customer selection marked reviewed locally. Syncing to cloud...",
+    });
+  }
+
+  async function applyReviewedCustomerSelection({ markReviewed = false } = {}) {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    const currentSelection = normalizeCustomerSelection(proposalDraft.customerSelection);
+
+    if (![CUSTOMER_SELECTION_STATUS_SUBMITTED, CUSTOMER_SELECTION_STATUS_REVIEWED].includes(currentSelection.status)) {
+      setSaveMessage("No submitted or reviewed customer selection is ready to apply.");
+      return;
+    }
+
+    const appliedAt = new Date().toISOString();
+    const appliedBy = authUser?.email || "Last Yard";
+    const applyResult = applyCustomerSelectionToProposal(proposalDraft, {
+      appliedAt,
+      appliedBy,
+      status: CUSTOMER_SELECTION_STATUS_APPLIED,
+    });
+
+    if (!applyResult.applied) {
+      setSaveMessage("Could not apply the customer selection. Review the selected option/add-ons first.");
+      return;
+    }
+
+    const proposalToSave = {
+      ...applyResult.proposal,
+      status: "awaiting_customer_approval",
+      updatedAt: appliedAt,
+    };
+
+    await persistCustomerSelectionWorkflowProposal(proposalToSave, {
+      activityAction: markReviewed ? "Customer selection reviewed and applied" : "Customer selection applied",
+      activityNotes: `Applied total ${formatResidentialCurrency(applyResult.summary.selectedTotal)}`,
+      cloudMessage: "Customer selection applied and synced.",
+      localMessage: "Customer selection applied locally. Syncing to cloud...",
+    });
+  }
+
+  async function sendCustomerSelectionForApproval() {
+    if (!canPerform("editProposal")) {
+      return;
+    }
+
+    const currentSelection = normalizeCustomerSelection(proposalDraft.customerSelection);
+
+    if (currentSelection.status !== CUSTOMER_SELECTION_STATUS_APPLIED) {
+      setSaveMessage("Apply the customer selection before sending it for approval.");
+      return;
+    }
+
+    const sentAt = new Date().toISOString();
+    const proposalToSave = {
       ...proposalDraft,
       customerSelection: {
         ...currentSelection,
-        status: "reviewed",
+        status: CUSTOMER_SELECTION_STATUS_APPROVAL_SENT,
       },
-      updatedAt: reviewedAt,
+      status: "awaiting_customer_approval",
+      updatedAt: sentAt,
+    };
+
+    await persistCustomerSelectionWorkflowProposal(proposalToSave, {
+      activityAction: "Customer approval enabled",
+      activityNotes: "Customer portal approval view enabled.",
+      cloudMessage: "Customer approval view enabled and synced.",
+      localMessage: "Customer approval view enabled locally. Syncing to cloud...",
     });
+  }
 
-    setSavedProposals((currentProposals) => upsertProposal(currentProposals, proposalToSave));
-    setProposalDraft(proposalToSave);
-    setProposalDirty(false);
-    setSaveMessage(getCloudReadyMessage(authUser, "Customer selection marked reviewed locally. Syncing to cloud...", "Customer selection marked reviewed."));
-
-    if (canUseCloudSync(authUser)) {
-      await syncSingleProposalToCloud(proposalToSave, "Customer selection marked reviewed and synced.");
-    } else {
-      markProposalsNeedCloudSync("Customer selection marked reviewed locally. Sync proposals to update Supabase.");
+  async function requestCustomerSelectionChanges(reviewNotes = "") {
+    if (!canPerform("editProposal")) {
+      return;
     }
+
+    const currentSelection = normalizeCustomerSelection(proposalDraft.customerSelection);
+
+    if (![CUSTOMER_SELECTION_STATUS_SUBMITTED, CUSTOMER_SELECTION_STATUS_REVIEWED].includes(currentSelection.status)) {
+      setSaveMessage("No submitted customer selection is waiting for a change request.");
+      return;
+    }
+
+    const requestedAt = new Date().toISOString();
+    const proposalToSave = {
+      ...proposalDraft,
+      customerSelection: {
+        ...currentSelection,
+        status: CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED,
+        reviewedAt: currentSelection.reviewedAt || requestedAt,
+        reviewedBy: currentSelection.reviewedBy || authUser?.email || "Last Yard",
+        reviewNotes: reviewNotes || currentSelection.reviewNotes,
+      },
+      updatedAt: requestedAt,
+    };
+
+    await persistCustomerSelectionWorkflowProposal(proposalToSave, {
+      activityAction: "Customer selection changes requested",
+      activityNotes: reviewNotes || "Selection not applied.",
+      cloudMessage: "Customer selection change request saved and synced.",
+      localMessage: "Customer selection change request saved locally. Syncing to cloud...",
+    });
   }
 
   async function saveSubmittedPacketRecord() {
@@ -5725,6 +6012,8 @@ export default function App() {
           reason={customerPortalState.reason}
           loading={customerPortalState.loading}
           onPrint={() => window.print()}
+          onRequestChanges={submitCustomerPortalChangeRequest}
+          onSubmitApproval={submitCustomerPortalApproval}
           onSubmitSelection={submitCustomerPortalSelection}
         />
       </main>
@@ -6099,7 +6388,10 @@ export default function App() {
                 onCustomerShareEnableChange={updateCustomerShareEnabled}
                 onCustomerShareExpirationChange={updateCustomerShareExpiration}
                 onCustomerShareRegenerate={regenerateCustomerShareToken}
+                onCustomerSelectionApply={applyReviewedCustomerSelection}
+                onCustomerSelectionChangeRequest={requestCustomerSelectionChanges}
                 onCustomerSelectionReviewed={markCustomerSelectionReviewed}
+                onCustomerSelectionSendApproval={sendCustomerSelectionForApproval}
               />
             )}
             <div className="preview-pane">
@@ -6145,16 +6437,50 @@ function AuthLoadingScreen() {
   );
 }
 
-function CustomerProposalPortalView({ companySettings = {}, helpers = {}, loading = false, message = "", proposal = null, onPrint, onSubmitSelection }) {
+function createCustomerApprovalDraft(proposal = {}) {
+  const selection = normalizeCustomerSelection(proposal.customerSelection);
+  const approval = normalizeCustomerApproval(proposal.customerApproval);
+  const client = proposal.client || {};
+
+  return {
+    acknowledgedLegalTerms: approval.acknowledgedLegalTerms,
+    acknowledgedNotices: approval.acknowledgedNotices,
+    acknowledgedPaymentTerms: approval.acknowledgedPaymentTerms,
+    acknowledgedScope: approval.acknowledgedScope,
+    customerEmail: approval.customerEmail || selection.customerEmail || client.email || "",
+    customerName: approval.customerName || selection.customerName || client.contactName || client.companyName || "",
+    customerNotes: approval.customerNotes || "",
+    customerPhone: approval.customerPhone || selection.customerPhone || client.phone || "",
+    typedSignature: approval.typedSignature || "",
+  };
+}
+
+function CustomerProposalPortalView({
+  companySettings = {},
+  helpers = {},
+  loading = false,
+  message = "",
+  proposal = null,
+  onPrint,
+  onRequestChanges,
+  onSubmitApproval,
+  onSubmitSelection,
+}) {
   const [selectionDraft, setSelectionDraft] = useState(() => createCustomerPortalSelectionDraft(proposal || {}));
+  const [approvalDraft, setApprovalDraft] = useState(() => createCustomerApprovalDraft(proposal || {}));
+  const [approvalMessage, setApprovalMessage] = useState("");
+  const [approvalSubmitting, setApprovalSubmitting] = useState(false);
   const [selectionMessage, setSelectionMessage] = useState("");
   const [selectionSubmitting, setSelectionSubmitting] = useState(false);
 
   useEffect(() => {
     setSelectionDraft(createCustomerPortalSelectionDraft(proposal || {}));
+    setApprovalDraft(createCustomerApprovalDraft(proposal || {}));
+    setApprovalMessage("");
+    setApprovalSubmitting(false);
     setSelectionMessage("");
     setSelectionSubmitting(false);
-  }, [proposal?.id, proposal?.customerSelection?.submittedAt]);
+  }, [proposal?.id, proposal?.customerSelection?.submittedAt, proposal?.customerSelection?.status, proposal?.customerApproval?.approvedAt]);
 
   if (loading) {
     return (
@@ -6179,7 +6505,13 @@ function CustomerProposalPortalView({ companySettings = {}, helpers = {}, loadin
   const company = getCustomerPortalCompany(proposal, companySettings);
   const projectAddress = proposal.project?.address || proposal.project?.location || proposal.client?.projectAddress || "";
   const isResidential = isResidentialProposalMode(inferProposalModeFromProposal(proposal));
+  const customerSelection = normalizeCustomerSelection(proposal.customerSelection);
+  const customerApproval = normalizeCustomerApproval(proposal.customerApproval);
+  const approvalReady = isResidential && canCustomerApproveProposal(proposal);
+  const approvalSigned = customerApproval.status === CUSTOMER_APPROVAL_STATUS_APPROVED_SIGNED || customerSelection.status === CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED;
+  const changeRequested = customerApproval.status === CUSTOMER_APPROVAL_STATUS_CHANGE_REQUESTED || customerSelection.status === CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED;
   const selectionSummary = calculateCustomerSelectionSummary(proposal, selectionDraft);
+  const finalSelectionSummary = getAppliedCustomerSelectionSummary(proposal);
 
   async function handleSubmitSelection(event) {
     event.preventDefault();
@@ -6202,6 +6534,48 @@ function CustomerProposalPortalView({ companySettings = {}, helpers = {}, loadin
     setSelectionSubmitting(false);
   }
 
+  async function handleSubmitApproval(event) {
+    event.preventDefault();
+
+    if (typeof onSubmitApproval !== "function") {
+      setApprovalMessage("Customer approval is not available for this proposal link. Please contact Last Yard Concrete.");
+      return;
+    }
+
+    setApprovalSubmitting(true);
+    setApprovalMessage("Submitting your approval...");
+    const result = await onSubmitApproval(approvalDraft);
+
+    if (result?.ok && result?.available) {
+      setApprovalMessage("Your approval has been submitted. Last Yard Concrete will confirm the next steps.");
+    } else {
+      setApprovalMessage(getCustomerPortalUnavailableMessage(result?.reason || "approval-incomplete"));
+    }
+
+    setApprovalSubmitting(false);
+  }
+
+  async function handleRequestChanges(event) {
+    event.preventDefault();
+
+    if (typeof onRequestChanges !== "function") {
+      setApprovalMessage("Change requests are not available for this proposal link. Please contact Last Yard Concrete.");
+      return;
+    }
+
+    setApprovalSubmitting(true);
+    setApprovalMessage("Submitting your change request...");
+    const result = await onRequestChanges(approvalDraft);
+
+    if (result?.ok && result?.available) {
+      setApprovalMessage("Your change request has been submitted. Last Yard Concrete will review it.");
+    } else {
+      setApprovalMessage(getCustomerPortalUnavailableMessage(result?.reason || "approval-not-ready"));
+    }
+
+    setApprovalSubmitting(false);
+  }
+
   return (
     <div className="customer-portal-page">
       <header className="customer-portal-toolbar no-print">
@@ -6216,11 +6590,35 @@ function CustomerProposalPortalView({ companySettings = {}, helpers = {}, loadin
 
       <article className="customer-portal-document">
         <CustomerPortalHero company={company} proposal={proposal} projectAddress={projectAddress} />
-        <CustomerPortalPricing proposal={proposal} selectionDraft={selectionDraft} onSelectionChange={setSelectionDraft} />
+        <CustomerPortalPricing
+          proposal={proposal}
+          readOnly={approvalReady || approvalSigned || changeRequested}
+          selectionDraft={selectionDraft}
+          onSelectionChange={setSelectionDraft}
+        />
         <CustomerPortalProjectPhotos proposal={proposal} />
         <CustomerPortalScope proposal={proposal} />
         <CustomerPortalPaymentAndLegal company={company} proposal={proposal} />
-        {isResidential ? (
+        {approvalSigned || changeRequested ? (
+          <CustomerPortalApprovalStatusPanel
+            approval={customerApproval}
+            selection={customerSelection}
+            selectionSummary={finalSelectionSummary}
+          />
+        ) : null}
+        {approvalReady && !approvalSigned && !changeRequested ? (
+          <CustomerPortalApprovalPanel
+            approvalDraft={approvalDraft}
+            message={approvalMessage}
+            selection={customerSelection}
+            selectionSummary={finalSelectionSummary}
+            submitting={approvalSubmitting}
+            onChange={setApprovalDraft}
+            onRequestChanges={handleRequestChanges}
+            onSubmit={handleSubmitApproval}
+          />
+        ) : null}
+        {isResidential && !approvalReady && !approvalSigned && !changeRequested ? (
           <CustomerPortalSelectionSubmitPanel
             message={selectionMessage}
             proposal={proposal}
@@ -6281,13 +6679,13 @@ function CustomerPortalHero({ company = {}, projectAddress = "", proposal = {} }
   );
 }
 
-function CustomerPortalPricing({ proposal = {}, selectionDraft = {}, onSelectionChange }) {
+function CustomerPortalPricing({ proposal = {}, readOnly = false, selectionDraft = {}, onSelectionChange }) {
   if (hasResidentialChooseOnePricing(proposal)) {
-    return <CustomerPortalChooseOnePricing proposal={proposal} selectionDraft={selectionDraft} onSelectionChange={onSelectionChange} />;
+    return <CustomerPortalChooseOnePricing proposal={proposal} readOnly={readOnly} selectionDraft={selectionDraft} onSelectionChange={onSelectionChange} />;
   }
 
   if (hasResidentialBasePlusAddOnsPricing(proposal)) {
-    return <CustomerPortalSimpleEstimatePricing proposal={proposal} selectionDraft={selectionDraft} onSelectionChange={onSelectionChange} />;
+    return <CustomerPortalSimpleEstimatePricing proposal={proposal} readOnly={readOnly} selectionDraft={selectionDraft} onSelectionChange={onSelectionChange} />;
   }
 
   const totals = calculateProposalTotals(proposal);
@@ -6316,7 +6714,7 @@ function CustomerPortalPricing({ proposal = {}, selectionDraft = {}, onSelection
   );
 }
 
-function CustomerPortalSimpleEstimatePricing({ proposal = {}, selectionDraft = {}, onSelectionChange }) {
+function CustomerPortalSimpleEstimatePricing({ proposal = {}, readOnly = false, selectionDraft = {}, onSelectionChange }) {
   const totals = calculateResidentialSimpleEstimateTotals(proposal);
   const selectionSummary = calculateCustomerSelectionSummary(proposal, selectionDraft);
   const selectedAddOnIds = new Set(selectionSummary.selectedAddOnIds);
@@ -6353,6 +6751,7 @@ function CustomerPortalSimpleEstimatePricing({ proposal = {}, selectionDraft = {
             <label className="customer-portal-selection-control">
               <input
                 checked={selectedAddOnIds.has(getCustomerSelectionItemId(addOn, index, "addon"))}
+                disabled={readOnly}
                 type="checkbox"
                 onChange={(event) => toggleAddOn(getCustomerSelectionItemId(addOn, index, "addon"), event.target.checked)}
               />
@@ -6372,7 +6771,7 @@ function CustomerPortalSimpleEstimatePricing({ proposal = {}, selectionDraft = {
   );
 }
 
-function CustomerPortalChooseOnePricing({ proposal = {}, selectionDraft = {}, onSelectionChange }) {
+function CustomerPortalChooseOnePricing({ proposal = {}, readOnly = false, selectionDraft = {}, onSelectionChange }) {
   const optionRows = buildResidentialPricingOptionRows(proposal);
   const optionalAddOns = getResidentialOptionalAddOns(proposal);
   const selectionSummary = calculateCustomerSelectionSummary(proposal, selectionDraft);
@@ -6413,6 +6812,7 @@ function CustomerPortalChooseOnePricing({ proposal = {}, selectionDraft = {}, on
               <label className="customer-portal-selection-control customer-portal-option-select">
                 <input
                   checked={selectionSummary.selectedOptionId === getCustomerSelectionItemId(option, index, "option")}
+                  disabled={readOnly}
                   name="customer-pricing-option"
                   type="radio"
                   onChange={() => selectOption(getCustomerSelectionItemId(option, index, "option"))}
@@ -6449,6 +6849,7 @@ function CustomerPortalChooseOnePricing({ proposal = {}, selectionDraft = {}, on
                 <label className="customer-portal-selection-control">
                   <input
                     checked={selectedAddOnIds.has(getCustomerSelectionItemId(addOn, index, "addon"))}
+                    disabled={readOnly}
                     type="checkbox"
                     onChange={(event) => toggleAddOn(getCustomerSelectionItemId(addOn, index, "addon"), event.target.checked)}
                   />
@@ -6541,6 +6942,191 @@ function CustomerPortalSelectionSubmitPanel({
           This is a selection request only. It is not final approval, e-signature, or payment.
         </p>
       </form>
+    </section>
+  );
+}
+
+function CustomerPortalApprovalPanel({
+  approvalDraft = {},
+  message = "",
+  selection = {},
+  selectionSummary = {},
+  submitting = false,
+  onChange,
+  onRequestChanges,
+  onSubmit,
+}) {
+  const selectedLabel = selection.selectedOptionName || "Base package";
+  const addOnLabel = selection.selectedAddOnNames.length > 0 ? selection.selectedAddOnNames.join(", ") : "No optional add-ons selected";
+
+  function updateApprovalDraft(patch) {
+    onChange?.({
+      ...approvalDraft,
+      ...patch,
+    });
+  }
+
+  return (
+    <section className="customer-portal-section customer-portal-approval-panel">
+      <div className="customer-portal-section-heading">
+        <span>Final Selection for Approval</span>
+        <strong>{formatResidentialCurrency(selectionSummary.selectedTotal)}</strong>
+      </div>
+      <div className="customer-portal-final-selection">
+        <div>
+          <span>Selected Scope</span>
+          <strong>{selectedLabel}</strong>
+        </div>
+        <div>
+          <span>Selected Add-Ons</span>
+          <strong>{addOnLabel}</strong>
+        </div>
+        <div>
+          <span>50% Down Payment</span>
+          <strong>{formatResidentialCurrency(selectionSummary.selectedDownPayment)}</strong>
+        </div>
+        <div>
+          <span>Final Payment</span>
+          <strong>{formatResidentialCurrency(selectionSummary.selectedFinalPayment)}</strong>
+        </div>
+      </div>
+      <form className="customer-portal-selection-form" onSubmit={onSubmit}>
+        <div className="customer-portal-selection-fields">
+          <label>
+            <span>Name</span>
+            <input
+              required
+              value={approvalDraft.customerName || ""}
+              onChange={(event) => updateApprovalDraft({ customerName: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Email</span>
+            <input
+              type="email"
+              value={approvalDraft.customerEmail || ""}
+              onChange={(event) => updateApprovalDraft({ customerEmail: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Phone</span>
+            <input
+              value={approvalDraft.customerPhone || ""}
+              onChange={(event) => updateApprovalDraft({ customerPhone: event.target.value })}
+            />
+          </label>
+          <label>
+            <span>Typed Signature</span>
+            <input
+              required
+              value={approvalDraft.typedSignature || ""}
+              onChange={(event) => updateApprovalDraft({ typedSignature: event.target.value })}
+            />
+          </label>
+          <label className="customer-portal-selection-notes">
+            <span>Notes or Change Request</span>
+            <textarea
+              rows={3}
+              value={approvalDraft.customerNotes || ""}
+              onChange={(event) => updateApprovalDraft({ customerNotes: event.target.value })}
+            />
+          </label>
+        </div>
+        <div className="customer-portal-approval-checks">
+          <label>
+            <input
+              required
+              checked={approvalDraft.acknowledgedPaymentTerms === true}
+              type="checkbox"
+              onChange={(event) => updateApprovalDraft({ acknowledgedPaymentTerms: event.target.checked })}
+            />
+            <span>I acknowledge the payment terms.</span>
+          </label>
+          <label>
+            <input
+              required
+              checked={approvalDraft.acknowledgedScope === true}
+              type="checkbox"
+              onChange={(event) => updateApprovalDraft({ acknowledgedScope: event.target.checked })}
+            />
+            <span>I acknowledge the selected scope and add-ons.</span>
+          </label>
+          <label>
+            <input
+              required
+              checked={approvalDraft.acknowledgedLegalTerms === true}
+              type="checkbox"
+              onChange={(event) => updateApprovalDraft({ acknowledgedLegalTerms: event.target.checked })}
+            />
+            <span>I acknowledge the legal/customer terms.</span>
+          </label>
+          <label>
+            <input
+              required
+              checked={approvalDraft.acknowledgedNotices === true}
+              type="checkbox"
+              onChange={(event) => updateApprovalDraft({ acknowledgedNotices: event.target.checked })}
+            />
+            <span>I acknowledge required notices and legal paper status.</span>
+          </label>
+        </div>
+        <div className="customer-portal-approval-actions">
+          <button type="submit" disabled={submitting}>
+            {submitting ? "Submitting..." : "Approve and Sign"}
+          </button>
+          <button type="button" className="customer-portal-secondary-button" disabled={submitting} onClick={onRequestChanges}>
+            Request Changes
+          </button>
+        </div>
+        {message ? <p className="customer-portal-selection-message">{message}</p> : null}
+        <p className="customer-portal-contact-note">
+          Approval confirms the reviewed selection only. No payment is processed through this link.
+        </p>
+      </form>
+    </section>
+  );
+}
+
+function CustomerPortalApprovalStatusPanel({ approval = {}, selection = {}, selectionSummary = {} }) {
+  const isApproved = approval.status === CUSTOMER_APPROVAL_STATUS_APPROVED_SIGNED || selection.status === CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED;
+  const isChangeRequest = approval.status === CUSTOMER_APPROVAL_STATUS_CHANGE_REQUESTED || selection.status === CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED;
+
+  return (
+    <section className="customer-portal-section customer-portal-approval-panel">
+      <div className="customer-portal-section-heading">
+        <span>{isApproved ? "Approval Submitted" : "Change Request Submitted"}</span>
+        <strong>{formatResidentialCurrency(approval.acceptedTotal || selectionSummary.selectedTotal)}</strong>
+      </div>
+      {isApproved ? (
+        <>
+          <p>
+            Thank you. Your approval and typed signature have been submitted to Last Yard Concrete.
+          </p>
+          <div className="customer-portal-final-selection">
+            <div>
+              <span>Signed By</span>
+              <strong>{approval.typedSignature || approval.customerName || "Customer"}</strong>
+            </div>
+            <div>
+              <span>Approved</span>
+              <strong>{approval.approvedAt ? formatCloudSyncTime(approval.approvedAt) : "Submitted"}</strong>
+            </div>
+            <div>
+              <span>50% Down Payment</span>
+              <strong>{formatResidentialCurrency(approval.acceptedDownPayment || selectionSummary.selectedDownPayment)}</strong>
+            </div>
+            <div>
+              <span>Final Payment</span>
+              <strong>{formatResidentialCurrency(approval.acceptedFinalPayment || selectionSummary.selectedFinalPayment)}</strong>
+            </div>
+          </div>
+        </>
+      ) : null}
+      {isChangeRequest ? (
+        <p>
+          Your change request has been submitted. Last Yard Concrete will review it and follow up with next steps.
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -9386,9 +9972,21 @@ function CustomerPortalLinkEditor({
   );
 }
 
-function CustomerPortalSelectionEditor({ proposal = {}, onMarkReviewed }) {
+function CustomerPortalSelectionEditor({
+  proposal = {},
+  onApplySelection,
+  onMarkReviewed,
+  onRequestChanges,
+  onSendApproval,
+}) {
   const selection = normalizeCustomerSelection(proposal.customerSelection);
-  const hasSelection = selection.status === "submitted" || selection.status === "reviewed";
+  const approval = normalizeCustomerApproval(proposal.customerApproval);
+  const hasSelection = selection.status !== CUSTOMER_SELECTION_STATUS_NONE;
+  const appliedSummary = getAppliedCustomerSelectionSummary(proposal);
+  const canReview = selection.status === CUSTOMER_SELECTION_STATUS_SUBMITTED;
+  const canApply = [CUSTOMER_SELECTION_STATUS_SUBMITTED, CUSTOMER_SELECTION_STATUS_REVIEWED].includes(selection.status);
+  const canSendApproval = selection.status === CUSTOMER_SELECTION_STATUS_APPLIED;
+  const hasApproval = selection.status === CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED || approval.status !== "none";
 
   return (
     <EditorSection id="customer-selection-section" title="Customer Portal Selection">
@@ -9413,17 +10011,29 @@ function CustomerPortalSelectionEditor({ proposal = {}, onMarkReviewed }) {
             <strong>{selection.selectedAddOnNames.length > 0 ? selection.selectedAddOnNames.join(", ") : "None selected"}</strong>
           </div>
           <div>
-            <span>Selected Total</span>
-            <strong>{formatResidentialCurrency(selection.selectedTotal)}</strong>
+            <span>{selection.appliedProposalTotal > 0 ? "Applied Total" : "Selected Total"}</span>
+            <strong>{formatResidentialCurrency(selection.appliedProposalTotal || selection.selectedTotal)}</strong>
           </div>
           <div>
             <span>50% Down</span>
-            <strong>{formatResidentialCurrency(selection.selectedDownPayment)}</strong>
+            <strong>{formatResidentialCurrency(selection.appliedDownPayment || selection.selectedDownPayment)}</strong>
           </div>
           <div>
             <span>Final Payment</span>
-            <strong>{formatResidentialCurrency(selection.selectedFinalPayment)}</strong>
+            <strong>{formatResidentialCurrency(selection.appliedFinalPayment || selection.selectedFinalPayment)}</strong>
           </div>
+          {selection.reviewedAt ? (
+            <div>
+              <span>Reviewed</span>
+              <strong>{formatCloudSyncTime(selection.reviewedAt)}</strong>
+            </div>
+          ) : null}
+          {selection.appliedAt ? (
+            <div>
+              <span>Applied</span>
+              <strong>{formatCloudSyncTime(selection.appliedAt)}</strong>
+            </div>
+          ) : null}
           <div>
             <span>Customer</span>
             <strong>{[selection.customerName, selection.customerEmail, selection.customerPhone].filter(Boolean).join(" | ") || "Not provided"}</strong>
@@ -9435,11 +10045,48 @@ function CustomerPortalSelectionEditor({ proposal = {}, onMarkReviewed }) {
             </div>
           ) : null}
           <p className="smart-paste-help">
-            Customer selections are pending review only. They do not mark the proposal accepted or change proposal pricing.
+            Customer selections stay pending until Last Yard reviews and applies them. Approval/signature is customer-facing only after the selection is applied.
           </p>
-          <button type="button" onClick={onMarkReviewed} disabled={selection.status !== "submitted"}>
-            Mark Reviewed
-          </button>
+          {hasApproval ? (
+            <div className="customer-selection-review-notes">
+              <span>Approval / Signature Record</span>
+              <p>
+                Status: {formatOptionLabel(approval.status)} | Approved: {approval.approvedAt ? formatCloudSyncTime(approval.approvedAt) : "Not recorded"} | Total:{" "}
+                {formatResidentialCurrency(approval.acceptedTotal || appliedSummary.selectedTotal)}
+              </p>
+              <p>Signed by: {approval.typedSignature || approval.customerName || "Not provided"}</p>
+            </div>
+          ) : null}
+          <div className="editor-section-actions">
+            {canReview ? (
+              <>
+                <button type="button" onClick={() => onMarkReviewed?.()}>
+                  Mark Reviewed
+                </button>
+                <button type="button" onClick={() => onApplySelection?.({ markReviewed: true })}>
+                  Mark Reviewed & Apply Selection
+                </button>
+              </>
+            ) : null}
+            {canApply && !canReview ? (
+              <button type="button" onClick={() => onApplySelection?.()}>
+                Apply Selection to Proposal
+              </button>
+            ) : null}
+            {canReview || selection.status === CUSTOMER_SELECTION_STATUS_REVIEWED ? (
+              <button type="button" className="editor-secondary-button" onClick={() => onRequestChanges?.()}>
+                Request Changes / Do Not Apply
+              </button>
+            ) : null}
+            {canSendApproval ? (
+              <button type="button" onClick={() => onSendApproval?.()}>
+                Send for Customer Approval
+              </button>
+            ) : null}
+            {selection.status === CUSTOMER_SELECTION_STATUS_APPROVAL_SENT ? (
+              <Badge className="packet-record-generated">Customer approval view is enabled</Badge>
+            ) : null}
+          </div>
         </div>
       ) : (
         <p className="smart-paste-help">
@@ -9543,7 +10190,10 @@ function ProposalEditor({
   onCustomerShareEnableChange,
   onCustomerShareExpirationChange,
   onCustomerShareRegenerate,
+  onCustomerSelectionApply,
+  onCustomerSelectionChangeRequest,
   onCustomerSelectionReviewed,
+  onCustomerSelectionSendApproval,
 }) {
   const proposalTotals = calculateProposalTotals(proposal);
   const proposalMode = inferProposalModeFromProposal(proposal);
@@ -9691,7 +10341,10 @@ function ProposalEditor({
 
       <CustomerPortalSelectionEditor
         proposal={proposal}
+        onApplySelection={onCustomerSelectionApply}
         onMarkReviewed={onCustomerSelectionReviewed}
+        onRequestChanges={onCustomerSelectionChangeRequest}
+        onSendApproval={onCustomerSelectionSendApproval}
       />
 
       <EditorSection id="client-contact-section" title="Client / Prepared For">
@@ -15906,6 +16559,7 @@ function createEditableProposal(seedProposal) {
     customerShareExpiresAt: proposal.customerShareExpiresAt || "",
     customerShareLastViewedAt: proposal.customerShareLastViewedAt || "",
     customerSelection: normalizeCustomerSelection(proposal.customerSelection),
+    customerApproval: normalizeCustomerApproval(proposal.customerApproval),
     ...getDefaultTrackingFields(),
     sentDate: proposal.sentDate || "",
     sentToName: proposal.sentToName || "",

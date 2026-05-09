@@ -102,15 +102,36 @@ test("customer portal supports read-only customer selection requests", () => {
   assert.match(appSource, /Customer Portal Selection/);
 });
 
-test("customer portal selection API validates token and writes only customer selection state", () => {
+test("signed-in editor can review, apply, and send customer selection for approval", () => {
+  assert.match(appSource, /Mark Reviewed & Apply Selection/);
+  assert.match(appSource, /Apply Selection to Proposal/);
+  assert.match(appSource, /Send for Customer Approval/);
+  assert.match(appSource, /Request Changes \/ Do Not Apply/);
+  assert.match(appSource, /applyCustomerSelectionToProposal\(proposalDraft/);
+  assert.match(appSource, /status: "awaiting_customer_approval"/);
+});
+
+test("customer portal supports final approval without exposing editor controls", () => {
+  assert.match(appSource, /Final Selection for Approval/);
+  assert.match(appSource, /Approve and Sign/);
+  assert.match(appSource, /Typed Signature/);
+  assert.match(appSource, /approval confirms the reviewed selection only/i);
+  assert.match(appSource, /submitCustomerPortalApprovalByToken\(token, approvalDraft\)/);
+  assert.doesNotMatch(appSource.match(/function CustomerProposalPortalView[\s\S]*?function CustomerPortalHero/)?.[0] || "", /ProposalEditor|BackupRestorePanel|TeamAccessPanel/);
+});
+
+test("customer portal selection API validates token and writes only requested public action state", () => {
   assert.match(customerPortalApiSource, /request\.method === "POST"/);
   assert.match(customerPortalApiSource, /getCustomerShareStatus\(proposal, shareToken\)/);
   assert.match(customerPortalApiSource, /buildSubmittedCustomerSelection\(proposal, body\.selection/);
-  assert.match(customerPortalApiSource, /customerSelection,\s*\n\s*\}/);
+  assert.match(customerPortalApiSource, /const proposalWithSelection = \{[\s\S]*?customerSelection,[\s\S]*?\};/);
   assert.match(customerPortalApiSource, /updateCustomerProposalData\(supabase, data\.id, proposalWithSelection, \{ required: true \}\)/);
-  assert.match(customerPortalApiSource, /customerSelection/);
-  assert.doesNotMatch(customerPortalApiSource, /status:\s*"approved"/);
-  assert.doesNotMatch(customerPortalApiSource, /accepted/i);
+  assert.match(customerPortalApiSource, /action === "approve"/);
+  assert.match(customerPortalApiSource, /buildCustomerApprovalRecord\(proposal/);
+  assert.match(customerPortalApiSource, /status: "accepted_deposit_due"/);
+  assert.match(customerPortalApiSource, /action === "request_changes"/);
+  assert.doesNotMatch(customerPortalApiSource, /body\.pricing/);
+  assert.doesNotMatch(customerPortalApiSource, /body\.scopeSections/);
 });
 
 test("customer portal selection mobile controls are tap-friendly", () => {

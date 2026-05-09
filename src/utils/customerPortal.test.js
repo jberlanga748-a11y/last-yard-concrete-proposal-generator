@@ -2,21 +2,31 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyCustomerSelectionToProposal,
+  buildCustomerApprovalRecord,
+  buildCustomerSelectionReview,
   buildSubmittedCustomerSelection,
   calculateCustomerSelectionSummary,
+  canCustomerApproveProposal,
   createCustomerSafeProposalPayload,
   createCustomerShareToken,
   createCustomerPortalSelectionDraft,
+  CUSTOMER_SELECTION_STATUS_APPLIED,
+  CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED,
+  CUSTOMER_SELECTION_STATUS_REVIEWED,
   fetchCustomerPortalProposalByToken,
   findCustomerProposalByShareToken,
+  getAppliedCustomerSelectionSummary,
   getCustomerPortalLink,
   getCustomerPortalUnavailableMessage,
   getCustomerSafeImageCaption,
   getCustomerShareFields,
   getCustomerShareStatus,
   isCustomerPortalRoute,
+  normalizeCustomerApproval,
   normalizeCustomerSelection,
   normalizeCustomerShareToken,
+  submitCustomerPortalApprovalByToken,
   submitCustomerPortalSelectionByToken,
 } from "./customerPortal.js";
 
@@ -243,6 +253,15 @@ test("customer selection normalization is safe for old proposals", () => {
   assert.deepEqual(normalizeCustomerSelection({ selectedAddOnIds: "walls\nlighting", selectedTotal: "$50,000" }), {
     status: "none",
     submittedAt: "",
+    reviewedAt: "",
+    reviewedBy: "",
+    appliedAt: "",
+    appliedBy: "",
+    appliedSnapshot: {},
+    appliedProposalTotal: 0,
+    appliedDownPayment: 0,
+    appliedFinalPayment: 0,
+    reviewNotes: "",
     selectedPricingMode: "",
     selectedOptionId: "",
     selectedOptionName: "",
@@ -256,6 +275,142 @@ test("customer selection normalization is safe for old proposals", () => {
     customerPhone: "",
     customerNotes: "",
   });
+});
+
+test("reviewing a customer selection does not change proposal pricing", () => {
+  const proposal = {
+    pricingMode: "base_plus_addons",
+    pricing: {
+      pricingMode: "base_plus_addons",
+      basePackage: { name: "Base package", price: 40000 },
+      optionalAddOns: [{ id: "walls", name: "Walls", amount: 10000 }],
+    },
+    customerSelection: buildSubmittedCustomerSelection({
+      pricingMode: "base_plus_addons",
+      pricing: {
+        pricingMode: "base_plus_addons",
+        basePackage: { name: "Base package", price: 40000 },
+        optionalAddOns: [{ id: "walls", name: "Walls", amount: 10000 }],
+      },
+    }, { selectedAddOnIds: ["walls"] }, "2026-05-09T12:00:00.000Z"),
+  };
+  const reviewed = buildCustomerSelectionReview(proposal.customerSelection, "Estimator", "2026-05-09T12:05:00.000Z");
+
+  assert.equal(reviewed.status, CUSTOMER_SELECTION_STATUS_REVIEWED);
+  assert.equal(reviewed.selectedTotal, 50000);
+  assert.equal(proposal.pricing.optionalAddOns[0].selected, undefined);
+  assert.equal(proposal.pricing.basePackage.price, 40000);
+});
+
+test("applying base-plus-addons customer selection updates selected total and preserves add-ons", () => {
+  const proposal = {
+    pricingMode: "base_plus_addons",
+    pricing: {
+      pricingMode: "base_plus_addons",
+      basePackage: { id: "base", name: "Base package", price: 40000 },
+      optionalAddOns: [
+        { id: "walls", name: "Walls", amount: 10000 },
+        { id: "lighting", name: "Lighting", amount: 7000 },
+      ],
+    },
+    customerSelection: buildSubmittedCustomerSelection({
+      pricingMode: "base_plus_addons",
+      pricing: {
+        pricingMode: "base_plus_addons",
+        basePackage: { id: "base", name: "Base package", price: 40000 },
+        optionalAddOns: [
+          { id: "walls", name: "Walls", amount: 10000 },
+          { id: "lighting", name: "Lighting", amount: 7000 },
+        ],
+      },
+    }, { selectedAddOnIds: ["walls"] }, "2026-05-09T12:00:00.000Z"),
+  };
+  const result = applyCustomerSelectionToProposal(proposal, {
+    appliedAt: "2026-05-09T12:10:00.000Z",
+    appliedBy: "Estimator",
+  });
+
+  assert.equal(result.applied, true);
+  assert.equal(result.proposal.customerSelection.status, CUSTOMER_SELECTION_STATUS_APPLIED);
+  assert.equal(result.proposal.pricing.totalProposal, 50000);
+  assert.equal(result.proposal.pricing.selectedDownPayment, 25000);
+  assert.equal(result.proposal.pricing.optionalAddOns.length, 2);
+  assert.equal(result.proposal.pricing.optionalAddOns[0].selected, true);
+  assert.equal(result.proposal.pricing.optionalAddOns[1].selected, false);
+  assert.equal(result.proposal.customerSelection.appliedSnapshot.selectedAddOnNames[0], "Walls");
+});
+
+test("applying choose-one customer selection selects one option without deleting history", () => {
+  const proposal = {
+    pricingMode: "choose_one_option",
+    pricingOptions: [
+      { id: "broom", name: "Broom Finish", price: 82500 },
+      { id: "stamped", name: "Stamped Finish", price: 97500 },
+    ],
+    optionalAddOns: [{ id: "cantilever", name: "Cantilever", amount: 8500 }],
+    customerSelection: buildSubmittedCustomerSelection({
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        { id: "broom", name: "Broom Finish", price: 82500 },
+        { id: "stamped", name: "Stamped Finish", price: 97500 },
+      ],
+      optionalAddOns: [{ id: "cantilever", name: "Cantilever", amount: 8500 }],
+    }, {
+      selectedAddOnIds: ["cantilever"],
+      selectedOptionId: "stamped",
+      selectedPricingMode: "choose_one_option",
+    }, "2026-05-09T12:00:00.000Z"),
+  };
+  const result = applyCustomerSelectionToProposal(proposal);
+
+  assert.equal(result.applied, true);
+  assert.equal(result.proposal.totalProposal, 106000);
+  assert.equal(result.proposal.pricingOptions.length, 2);
+  assert.equal(result.proposal.pricingOptions[0].selected, false);
+  assert.equal(result.proposal.pricingOptions[1].selected, true);
+  assert.equal(result.proposal.optionalAddOns[0].selected, true);
+  assert.equal(getAppliedCustomerSelectionSummary(result.proposal).selectedTotal, 106000);
+});
+
+test("customer approval requires an applied selection and stores signature snapshot", () => {
+  const submittedProposal = {
+    pricingMode: "base_plus_addons",
+    pricing: {
+      pricingMode: "base_plus_addons",
+      basePackage: { name: "Base package", price: 40000 },
+      optionalAddOns: [{ id: "walls", name: "Walls", amount: 10000 }],
+    },
+    customerSelection: buildSubmittedCustomerSelection({
+      pricingMode: "base_plus_addons",
+      pricing: {
+        pricingMode: "base_plus_addons",
+        basePackage: { name: "Base package", price: 40000 },
+        optionalAddOns: [{ id: "walls", name: "Walls", amount: 10000 }],
+      },
+    }, { customerName: "Homeowner", selectedAddOnIds: ["walls"] }),
+  };
+  const applied = applyCustomerSelectionToProposal(submittedProposal).proposal;
+  const approval = buildCustomerApprovalRecord(applied, {
+    acknowledgedLegalTerms: true,
+    acknowledgedNotices: true,
+    acknowledgedPaymentTerms: true,
+    acknowledgedScope: true,
+    typedSignature: "Homeowner",
+  }, {
+    approvedAt: "2026-05-09T13:00:00.000Z",
+    ipAddress: "203.0.113.10",
+    userAgent: "node-test",
+  });
+
+  assert.equal(canCustomerApproveProposal(submittedProposal), false);
+  assert.equal(canCustomerApproveProposal(applied), true);
+  assert.equal(approval.status, "approved_signed");
+  assert.equal(approval.acceptedTotal, 50000);
+  assert.equal(approval.acceptedDownPayment, 25000);
+  assert.equal(approval.typedSignature, "Homeowner");
+  assert.equal(approval.ipAddress, "203.0.113.10");
+  assert.equal(approval.acceptedSelectionSnapshot.selectedAddOnNames[0], "Walls");
+  assert.equal(normalizeCustomerApproval({ status: "bogus" }).status, "none");
 });
 
 test("customer portal API helper loads public proposal payload without signed-in local state", async () => {
@@ -374,4 +529,52 @@ test("customer portal submit helper posts selection and handles rejected tokens"
   assert.equal(submitted.customerSelection.status, "submitted");
   assert.equal(submitted.customerSelection.selectedTotal, 50000);
   assert.equal(disabled.reason, "disabled");
+});
+
+test("customer portal approval helper posts only approval action fields", async () => {
+  const approval = {
+    acknowledgedLegalTerms: true,
+    acknowledgedNotices: true,
+    acknowledgedPaymentTerms: true,
+    acknowledgedScope: true,
+    customerName: "Homeowner",
+    typedSignature: "Homeowner",
+  };
+  const submitted = await submitCustomerPortalApprovalByToken("lyp_public", approval, {
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+
+      assert.equal(url, "/api/customer-proposal");
+      assert.equal(options.method, "POST");
+      assert.equal(body.action, "approve");
+      assert.equal(body.shareToken, "lyp_public");
+      assert.deepEqual(body.approval, approval);
+      assert.equal("pricing" in body, false);
+      assert.equal("scopeSections" in body, false);
+
+      return {
+        ok: true,
+        headers: { get: () => "application/json" },
+        async json() {
+          return {
+            ok: true,
+            available: true,
+            customerApproval: {
+              status: "approved_signed",
+              acceptedTotal: 50000,
+            },
+            customerSelection: {
+              status: CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED,
+            },
+            proposal: { id: "proposal-1" },
+          };
+        },
+      };
+    },
+  });
+
+  assert.equal(submitted.ok, true);
+  assert.equal(submitted.customerApproval.status, "approved_signed");
+  assert.equal(submitted.customerApproval.acceptedTotal, 50000);
+  assert.equal(submitted.customerSelection.status, CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED);
 });

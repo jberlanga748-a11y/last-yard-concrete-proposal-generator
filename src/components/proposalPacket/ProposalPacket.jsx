@@ -46,6 +46,7 @@ import {
   shouldDefaultIncludeResidentialTerms,
   shouldPrintResidentialTermsAndConditions,
 } from "../../utils/proposalPacket/residentialLegalPapers.js";
+import { normalizeCustomerApproval } from "../../utils/customerPortal.js";
 
 const legacyLogoSrc = "/assets/last-yard-logo.jpg";
 const logoSrc = legacyLogoSrc;
@@ -454,6 +455,7 @@ function ProposalPacketContent({ companySettings, proposal }) {
             company={company}
             page={page}
             pageNumber={pageNumber}
+            proposal={packetProposal}
             projectName={packetProposal.project?.name}
           />
         ),
@@ -467,6 +469,7 @@ function ProposalPacketContent({ companySettings, proposal }) {
         company={company}
         pageNumber={pageNumber}
         pdfStyle={pdfStyle}
+        proposal={packetProposal}
         projectName={packetProposal.project?.name}
         showTermsCopy={residentialLegalSummarySections.length === 0}
         termsCopy={termsCopy}
@@ -1099,7 +1102,7 @@ function buildResidentialTermsAndConditionsPages(sections = [], sectionsPerPage 
   }));
 }
 
-function ResidentialTermsAndConditionsPage({ company, page, pageNumber, projectName }) {
+function ResidentialTermsAndConditionsPage({ company, page, pageNumber, proposal = {}, projectName }) {
   const isLastPage = page.pageIndex === page.pageCount - 1;
 
   return (
@@ -1133,6 +1136,7 @@ function ResidentialTermsAndConditionsPage({ company, page, pageNumber, projectN
           <section className="residential-print-section residential-terms-signature-section">
             <h3>Signature / Acceptance</h3>
             <SignatureBlock companyName={company.name} />
+            <ResidentialCustomerApprovalRecord proposal={proposal} />
           </section>
         ) : null}
       </div>
@@ -1142,7 +1146,7 @@ function ResidentialTermsAndConditionsPage({ company, page, pageNumber, projectN
   );
 }
 
-function ResidentialPaymentTermsPage({ company, pageNumber, pdfStyle, projectName, showTermsCopy = true, termsCopy }) {
+function ResidentialPaymentTermsPage({ company, pageNumber, pdfStyle, proposal = {}, projectName, showTermsCopy = true, termsCopy }) {
   const labels = getProposalToneLabels(pdfStyle);
 
   return (
@@ -1160,11 +1164,48 @@ function ResidentialPaymentTermsPage({ company, pageNumber, pdfStyle, projectNam
         <section className="residential-print-section">
           <h3>{labels.acceptance}</h3>
           <SignatureBlock companyName={company.name} />
+          <ResidentialCustomerApprovalRecord proposal={proposal} />
         </section>
       </div>
 
       <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
     </ProposalPage>
+  );
+}
+
+function ResidentialCustomerApprovalRecord({ proposal = {} }) {
+  const approval = normalizeCustomerApproval(proposal.customerApproval);
+
+  if (approval.status !== "approved_signed") {
+    return null;
+  }
+
+  return (
+    <div className="residential-approval-record">
+      <h4>Customer Approval / Signature Record</h4>
+      <div>
+        <p>
+          <span>Signed by:</span>
+          <strong>{approval.typedSignature || approval.customerName || "Customer"}</strong>
+        </p>
+        <p>
+          <span>Approved date:</span>
+          <strong>{approval.approvedAt ? formatDisplayDate(approval.approvedAt) : "Submitted"}</strong>
+        </p>
+        <p>
+          <span>Approved total:</span>
+          <strong>{formatResidentialCurrency(approval.acceptedTotal)}</strong>
+        </p>
+        <p>
+          <span>50% down:</span>
+          <strong>{formatResidentialCurrency(approval.acceptedDownPayment)}</strong>
+        </p>
+        <p>
+          <span>Final payment:</span>
+          <strong>{formatResidentialCurrency(approval.acceptedFinalPayment)}</strong>
+        </p>
+      </div>
+    </div>
   );
 }
 

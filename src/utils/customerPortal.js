@@ -2,7 +2,32 @@ import { BASE_PLUS_ADDONS_PRICING_MODE, CHOOSE_ONE_PRICING_MODE } from "./propos
 
 const customerPortalTokenPrefix = "lyp_";
 const customerPortalTokenByteLength = 18;
-const customerSelectionStatuses = ["none", "submitted", "reviewed"];
+export const CUSTOMER_SELECTION_STATUS_NONE = "none";
+export const CUSTOMER_SELECTION_STATUS_SUBMITTED = "submitted";
+export const CUSTOMER_SELECTION_STATUS_REVIEWED = "reviewed";
+export const CUSTOMER_SELECTION_STATUS_APPLIED = "applied_to_proposal";
+export const CUSTOMER_SELECTION_STATUS_APPROVAL_SENT = "approval_sent";
+export const CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED = "approved_signed";
+export const CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED = "rejected_or_change_requested";
+
+export const CUSTOMER_APPROVAL_STATUS_NONE = "none";
+export const CUSTOMER_APPROVAL_STATUS_APPROVED_SIGNED = "approved_signed";
+export const CUSTOMER_APPROVAL_STATUS_CHANGE_REQUESTED = "change_requested";
+
+const customerSelectionStatuses = [
+  CUSTOMER_SELECTION_STATUS_NONE,
+  CUSTOMER_SELECTION_STATUS_SUBMITTED,
+  CUSTOMER_SELECTION_STATUS_REVIEWED,
+  CUSTOMER_SELECTION_STATUS_APPLIED,
+  CUSTOMER_SELECTION_STATUS_APPROVAL_SENT,
+  CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED,
+  CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED,
+];
+const customerApprovalStatuses = [
+  CUSTOMER_APPROVAL_STATUS_NONE,
+  CUSTOMER_APPROVAL_STATUS_APPROVED_SIGNED,
+  CUSTOMER_APPROVAL_STATUS_CHANGE_REQUESTED,
+];
 
 export function normalizeCustomerShareToken(value = "") {
   return String(value ?? "")
@@ -146,6 +171,14 @@ export function getCustomerPortalUnavailableMessage(reason = "") {
     return "This proposal link is no longer available. Please contact Last Yard Concrete if you need access.";
   }
 
+  if (reason === "approval-not-ready") {
+    return "This proposal is not ready for approval yet. Last Yard Concrete must review and apply the selection first.";
+  }
+
+  if (reason === "approval-incomplete") {
+    return "Please enter your name, typed signature, and required acknowledgements before approving.";
+  }
+
   return "This proposal link is unavailable or could not be found.";
 }
 
@@ -266,17 +299,112 @@ export async function submitCustomerPortalSelectionByToken(
   }
 }
 
+export async function submitCustomerPortalApprovalByToken(
+  shareToken = "",
+  approval = {},
+  { endpoint = "/api/customer-proposal", fetchImpl = globalThis.fetch } = {},
+) {
+  return submitCustomerPortalActionByToken(shareToken, "approve", { approval }, { endpoint, fetchImpl });
+}
+
+export async function submitCustomerPortalChangeRequestByToken(
+  shareToken = "",
+  changeRequest = {},
+  { endpoint = "/api/customer-proposal", fetchImpl = globalThis.fetch } = {},
+) {
+  return submitCustomerPortalActionByToken(shareToken, "request_changes", { approval: changeRequest }, { endpoint, fetchImpl });
+}
+
+async function submitCustomerPortalActionByToken(
+  shareToken = "",
+  action = "",
+  body = {},
+  { endpoint = "/api/customer-proposal", fetchImpl = globalThis.fetch } = {},
+) {
+  const token = normalizeCustomerShareToken(shareToken);
+
+  if (!token) {
+    return {
+      available: false,
+      ok: false,
+      proposal: null,
+      reason: "missing-token",
+    };
+  }
+
+  if (typeof fetchImpl !== "function") {
+    return {
+      available: false,
+      ok: false,
+      proposal: null,
+      reason: "api-unavailable",
+    };
+  }
+
+  try {
+    const response = await fetchImpl(endpoint, {
+      body: JSON.stringify({
+        shareToken: token,
+        action,
+        ...body,
+      }),
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      method: "POST",
+    });
+    const payload = await readCustomerPortalJsonResponse(response);
+
+    if (!response.ok) {
+      return {
+        available: false,
+        ok: false,
+        proposal: null,
+        reason:
+          payload.reason ||
+          (response.status === 503 ? "unconfigured" : response.status === 410 ? "expired" : response.status === 403 ? "disabled" : "api-unavailable"),
+      };
+    }
+
+    return {
+      available: payload.available === true,
+      customerApproval: normalizeCustomerApproval(payload.customerApproval),
+      customerSelection: normalizeCustomerSelection(payload.customerSelection),
+      ok: payload.ok === true,
+      proposal: payload.proposal || null,
+      reason: payload.reason || (payload.available ? "available" : "not-found"),
+    };
+  } catch {
+    return {
+      available: false,
+      ok: false,
+      proposal: null,
+      reason: "api-unavailable",
+    };
+  }
+}
+
 export function createDefaultCustomerSelection(overrides = {}) {
   return normalizeCustomerSelection(overrides);
 }
 
 export function normalizeCustomerSelection(selection = {}) {
   const sourceSelection = isCustomerPortalObject(selection) ? selection : {};
-  const status = customerSelectionStatuses.includes(sourceSelection.status) ? sourceSelection.status : "none";
+  const status = customerSelectionStatuses.includes(sourceSelection.status) ? sourceSelection.status : CUSTOMER_SELECTION_STATUS_NONE;
 
   return {
     status,
     submittedAt: cleanCustomerPortalText(sourceSelection.submittedAt),
+    reviewedAt: cleanCustomerPortalText(sourceSelection.reviewedAt),
+    reviewedBy: cleanCustomerPortalText(sourceSelection.reviewedBy),
+    appliedAt: cleanCustomerPortalText(sourceSelection.appliedAt),
+    appliedBy: cleanCustomerPortalText(sourceSelection.appliedBy),
+    appliedSnapshot: sanitizeCustomerPortalObject(sourceSelection.appliedSnapshot),
+    appliedProposalTotal: toCustomerPortalNumber(sourceSelection.appliedProposalTotal),
+    appliedDownPayment: toCustomerPortalNumber(sourceSelection.appliedDownPayment),
+    appliedFinalPayment: toCustomerPortalNumber(sourceSelection.appliedFinalPayment),
+    reviewNotes: cleanCustomerPortalLongText(sourceSelection.reviewNotes),
     selectedPricingMode: cleanCustomerPortalText(sourceSelection.selectedPricingMode),
     selectedOptionId: cleanCustomerPortalText(sourceSelection.selectedOptionId),
     selectedOptionName: cleanCustomerPortalText(sourceSelection.selectedOptionName),
@@ -289,6 +417,32 @@ export function normalizeCustomerSelection(selection = {}) {
     customerEmail: cleanCustomerPortalText(sourceSelection.customerEmail),
     customerPhone: cleanCustomerPortalText(sourceSelection.customerPhone),
     customerNotes: cleanCustomerPortalLongText(sourceSelection.customerNotes),
+  };
+}
+
+export function normalizeCustomerApproval(approval = {}) {
+  const sourceApproval = isCustomerPortalObject(approval) ? approval : {};
+  const status = customerApprovalStatuses.includes(sourceApproval.status) ? sourceApproval.status : CUSTOMER_APPROVAL_STATUS_NONE;
+
+  return {
+    status,
+    approvedAt: cleanCustomerPortalText(sourceApproval.approvedAt),
+    customerName: cleanCustomerPortalText(sourceApproval.customerName),
+    customerEmail: cleanCustomerPortalText(sourceApproval.customerEmail),
+    customerPhone: cleanCustomerPortalText(sourceApproval.customerPhone),
+    typedSignature: cleanCustomerPortalText(sourceApproval.typedSignature),
+    signatureDataUrl: cleanCustomerPortalText(sourceApproval.signatureDataUrl),
+    ipAddress: cleanCustomerPortalText(sourceApproval.ipAddress),
+    userAgent: cleanCustomerPortalText(sourceApproval.userAgent),
+    acceptedTotal: toCustomerPortalNumber(sourceApproval.acceptedTotal),
+    acceptedDownPayment: toCustomerPortalNumber(sourceApproval.acceptedDownPayment),
+    acceptedFinalPayment: toCustomerPortalNumber(sourceApproval.acceptedFinalPayment),
+    acceptedSelectionSnapshot: sanitizeCustomerPortalObject(sourceApproval.acceptedSelectionSnapshot),
+    acknowledgedPaymentTerms: sourceApproval.acknowledgedPaymentTerms === true,
+    acknowledgedScope: sourceApproval.acknowledgedScope === true,
+    acknowledgedLegalTerms: sourceApproval.acknowledgedLegalTerms === true,
+    acknowledgedNotices: sourceApproval.acknowledgedNotices === true,
+    customerNotes: cleanCustomerPortalLongText(sourceApproval.customerNotes),
   };
 }
 
@@ -328,6 +482,215 @@ export function buildSubmittedCustomerSelection(proposal = {}, selection = {}, s
     customerPhone: selection.customerPhone,
     customerNotes: selection.customerNotes,
   });
+}
+
+export function buildCustomerSelectionReview(selection = {}, reviewer = "", reviewedAt = new Date().toISOString(), reviewNotes = "") {
+  const currentSelection = normalizeCustomerSelection(selection);
+
+  return normalizeCustomerSelection({
+    ...currentSelection,
+    status: CUSTOMER_SELECTION_STATUS_REVIEWED,
+    reviewedAt: currentSelection.reviewedAt || reviewedAt,
+    reviewedBy: currentSelection.reviewedBy || reviewer,
+    reviewNotes: reviewNotes || currentSelection.reviewNotes,
+  });
+}
+
+export function applyCustomerSelectionToProposal(
+  proposal = {},
+  { appliedBy = "", appliedAt = new Date().toISOString(), status = CUSTOMER_SELECTION_STATUS_APPLIED, reviewNotes = "" } = {},
+) {
+  const currentSelection = normalizeCustomerSelection(proposal.customerSelection);
+
+  if (![CUSTOMER_SELECTION_STATUS_SUBMITTED, CUSTOMER_SELECTION_STATUS_REVIEWED, CUSTOMER_SELECTION_STATUS_APPLIED, CUSTOMER_SELECTION_STATUS_APPROVAL_SENT].includes(currentSelection.status)) {
+    return {
+      applied: false,
+      proposal,
+      reason: "no-submitted-selection",
+    };
+  }
+
+  const summary = calculateCustomerSelectionSummary(proposal, currentSelection);
+  const selectedAddOnIds = new Set(summary.selectedAddOnIds);
+  const pricing = isCustomerPortalObject(proposal.pricing) ? proposal.pricing : {};
+  const pricingMode = summary.selectedPricingMode || proposal.pricingMode || pricing.pricingMode;
+  const rootPricingOptions = selectCustomerPortalRows(proposal.pricingOptions, pricing.pricingOptions);
+  const rootOptionalAddOns = selectCustomerPortalRows(proposal.optionalAddOns, pricing.optionalAddOns);
+  const selectedOptionId = summary.selectedOptionId;
+  const selectedOption = rootPricingOptions
+    .map((option, index) => ({ option, id: getCustomerSelectionItemId(option, index, "option") }))
+    .find(({ id, option }) => id === selectedOptionId || cleanCustomerPortalText(option?.name) === selectedOptionId)?.option;
+  const nextPricingOptions =
+    pricingMode === CHOOSE_ONE_PRICING_MODE
+      ? rootPricingOptions.map((option, index) => {
+          const optionId = getCustomerSelectionItemId(option, index, "option");
+          const isSelected = optionId === selectedOptionId || cleanCustomerPortalText(option?.name) === selectedOptionId;
+
+          return {
+            ...option,
+            included: isSelected,
+            selected: isSelected,
+          };
+        })
+      : rootPricingOptions;
+  const nextOptionalAddOns = rootOptionalAddOns.map((addOn, index) => {
+    const addOnId = getCustomerSelectionItemId(addOn, index, "addon");
+    const isSelected = selectedAddOnIds.has(addOnId);
+
+    return {
+      ...addOn,
+      included: isSelected,
+      selected: isSelected,
+    };
+  });
+  const appliedSnapshot = removeEmptyCustomerPortalFields({
+    ...currentSelection,
+    selectedPricingMode: summary.selectedPricingMode,
+    selectedOptionId: summary.selectedOptionId,
+    selectedOptionName: summary.selectedOptionName,
+    selectedAddOnIds: summary.selectedAddOnIds,
+    selectedAddOnNames: summary.selectedAddOnNames,
+    selectedTotal: summary.selectedTotal,
+    selectedDownPayment: summary.selectedDownPayment,
+    selectedFinalPayment: summary.selectedFinalPayment,
+    selectedOption: selectedOption ? sanitizeCustomerPortalPricingOptions([selectedOption])[0] : undefined,
+    selectedAddOns: sanitizeCustomerPortalOptionalAddOns(nextOptionalAddOns.filter((addOn) => addOn.selected || addOn.included)),
+  });
+  const nextSelection = normalizeCustomerSelection({
+    ...currentSelection,
+    status,
+    reviewedAt: currentSelection.reviewedAt || appliedAt,
+    reviewedBy: currentSelection.reviewedBy || appliedBy,
+    appliedAt,
+    appliedBy,
+    appliedSnapshot,
+    appliedProposalTotal: summary.selectedTotal,
+    appliedDownPayment: summary.selectedDownPayment,
+    appliedFinalPayment: summary.selectedFinalPayment,
+    reviewNotes: reviewNotes || currentSelection.reviewNotes,
+    selectedPricingMode: summary.selectedPricingMode,
+    selectedOptionId: summary.selectedOptionId,
+    selectedOptionName: summary.selectedOptionName,
+    selectedAddOnIds: summary.selectedAddOnIds,
+    selectedAddOnNames: summary.selectedAddOnNames,
+    selectedTotal: summary.selectedTotal,
+    selectedDownPayment: summary.selectedDownPayment,
+    selectedFinalPayment: summary.selectedFinalPayment,
+  });
+  const nextPricing = {
+    ...pricing,
+    pricingMode,
+    totalProposal: summary.selectedTotal,
+    selectedTotal: summary.selectedTotal,
+    selectedDownPayment: summary.selectedDownPayment,
+    selectedFinalPayment: summary.selectedFinalPayment,
+    selectedAddOnIds: summary.selectedAddOnIds,
+    pricingOptions: nextPricingOptions,
+    optionalAddOns: nextOptionalAddOns,
+  };
+
+  return {
+    applied: true,
+    proposal: {
+      ...proposal,
+      customerSelection: nextSelection,
+      pricingMode,
+      pricing: nextPricing,
+      pricingOptions: nextPricingOptions,
+      optionalAddOns: nextOptionalAddOns,
+      revisedTotal: summary.selectedTotal,
+      totalAmount: summary.selectedTotal,
+      totalProposal: summary.selectedTotal,
+      updatedAt: appliedAt,
+    },
+    reason: "applied",
+    summary,
+  };
+}
+
+export function buildCustomerApprovalRecord(
+  proposal = {},
+  approval = {},
+  { approvedAt = new Date().toISOString(), ipAddress = "", userAgent = "" } = {},
+) {
+  const sourceApproval = isCustomerPortalObject(approval) ? approval : {};
+  const selection = normalizeCustomerSelection(proposal.customerSelection);
+  const summary = getAppliedCustomerSelectionSummary(proposal);
+
+  return normalizeCustomerApproval({
+    status: CUSTOMER_APPROVAL_STATUS_APPROVED_SIGNED,
+    approvedAt,
+    customerName: sourceApproval.customerName || selection.customerName,
+    customerEmail: sourceApproval.customerEmail || selection.customerEmail,
+    customerPhone: sourceApproval.customerPhone || selection.customerPhone,
+    typedSignature: sourceApproval.typedSignature,
+    signatureDataUrl: sourceApproval.signatureDataUrl,
+    ipAddress,
+    userAgent,
+    acceptedTotal: summary.selectedTotal,
+    acceptedDownPayment: summary.selectedDownPayment,
+    acceptedFinalPayment: summary.selectedFinalPayment,
+    acceptedSelectionSnapshot: selection.appliedSnapshot || {
+      selectedPricingMode: summary.selectedPricingMode,
+      selectedOptionId: summary.selectedOptionId,
+      selectedOptionName: summary.selectedOptionName,
+      selectedAddOnIds: summary.selectedAddOnIds,
+      selectedAddOnNames: summary.selectedAddOnNames,
+      selectedTotal: summary.selectedTotal,
+    },
+    acknowledgedPaymentTerms: sourceApproval.acknowledgedPaymentTerms === true,
+    acknowledgedScope: sourceApproval.acknowledgedScope === true,
+    acknowledgedLegalTerms: sourceApproval.acknowledgedLegalTerms === true,
+    acknowledgedNotices: sourceApproval.acknowledgedNotices === true,
+    customerNotes: sourceApproval.customerNotes,
+  });
+}
+
+export function buildCustomerChangeRequestRecord(
+  proposal = {},
+  changeRequest = {},
+  { requestedAt = new Date().toISOString(), ipAddress = "", userAgent = "" } = {},
+) {
+  const sourceRequest = isCustomerPortalObject(changeRequest) ? changeRequest : {};
+  const selection = normalizeCustomerSelection(proposal.customerSelection);
+
+  return normalizeCustomerApproval({
+    status: CUSTOMER_APPROVAL_STATUS_CHANGE_REQUESTED,
+    approvedAt: requestedAt,
+    customerName: sourceRequest.customerName || selection.customerName,
+    customerEmail: sourceRequest.customerEmail || selection.customerEmail,
+    customerPhone: sourceRequest.customerPhone || selection.customerPhone,
+    typedSignature: "",
+    ipAddress,
+    userAgent,
+    acceptedSelectionSnapshot: selection.appliedSnapshot,
+    customerNotes: sourceRequest.customerNotes,
+  });
+}
+
+export function canCustomerApproveProposal(proposal = {}) {
+  const selection = normalizeCustomerSelection(proposal.customerSelection);
+
+  return [CUSTOMER_SELECTION_STATUS_APPLIED, CUSTOMER_SELECTION_STATUS_APPROVAL_SENT].includes(selection.status);
+}
+
+export function getAppliedCustomerSelectionSummary(proposal = {}) {
+  const selection = normalizeCustomerSelection(proposal.customerSelection);
+
+  if (selection.appliedProposalTotal > 0 || selection.selectedTotal > 0) {
+    return {
+      selectedPricingMode: selection.selectedPricingMode,
+      selectedOptionId: selection.selectedOptionId,
+      selectedOptionName: selection.selectedOptionName,
+      selectedAddOnIds: selection.selectedAddOnIds,
+      selectedAddOnNames: selection.selectedAddOnNames,
+      selectedTotal: selection.appliedProposalTotal || selection.selectedTotal,
+      selectedDownPayment: selection.appliedDownPayment || selection.selectedDownPayment,
+      selectedFinalPayment: selection.appliedFinalPayment || selection.selectedFinalPayment,
+    };
+  }
+
+  return calculateCustomerSelectionSummary(proposal, selection);
 }
 
 export function calculateCustomerSelectionSummary(proposal = {}, selection = {}) {
@@ -421,6 +784,7 @@ export function createCustomerSafeProposalPayload(proposal = {}) {
     pdfStyle: sanitizeCustomerPortalObject(proposal.pdfStyle),
     ...getCustomerShareFields(proposal),
     customerSelection: normalizeCustomerSelection(proposal.customerSelection),
+    customerApproval: normalizeCustomerApproval(proposal.customerApproval),
     company: sanitizeCustomerPortalCompany(proposal.company),
     client: sanitizeCustomerPortalClient(proposal.client),
     project: sanitizeCustomerPortalProject(proposal.project),

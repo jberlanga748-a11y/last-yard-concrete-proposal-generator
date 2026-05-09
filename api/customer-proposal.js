@@ -1,8 +1,14 @@
 import { createClient } from "@supabase/supabase-js";
 import {
+  buildCustomerApprovalRecord,
+  buildCustomerChangeRequestRecord,
   buildSubmittedCustomerSelection,
+  canCustomerApproveProposal,
   createCustomerSafeProposalPayload,
+  CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED,
+  CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED,
   getCustomerShareStatus,
+  normalizeCustomerSelection,
   normalizeCustomerShareToken,
 } from "../src/utils/customerPortal.js";
 
@@ -80,10 +86,95 @@ export default async function handler(request, response) {
     }
 
     if (request.method === "POST") {
+      const action = String(body.action || "submit_selection").trim();
+
+      if (action === "approve") {
+        if (!canCustomerApproveProposal(proposal)) {
+          response.status(409).json({ ok: false, available: true, reason: "approval-not-ready" });
+          return;
+        }
+
+        const customerApproval = buildCustomerApprovalRecord(proposal, body.approval || body.customerApproval || {}, {
+          approvedAt: new Date().toISOString(),
+          ipAddress: getRequestIpAddress(request),
+          userAgent: request.headers?.["user-agent"] || "",
+        });
+
+        if (
+          !customerApproval.customerName ||
+          !customerApproval.typedSignature ||
+          !customerApproval.acknowledgedPaymentTerms ||
+          !customerApproval.acknowledgedScope ||
+          !customerApproval.acknowledgedLegalTerms ||
+          !customerApproval.acknowledgedNotices
+        ) {
+          response.status(400).json({ ok: false, available: true, reason: "approval-incomplete" });
+          return;
+        }
+
+        const proposalWithApproval = {
+          ...proposal,
+          customerApproval,
+          customerSelection: {
+            ...normalizeCustomerSelection(proposal.customerSelection),
+            status: CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED,
+          },
+          status: "accepted_deposit_due",
+          updatedAt: customerApproval.approvedAt,
+        };
+
+        await updateCustomerProposalData(supabase, data.id, proposalWithApproval, { required: true });
+
+        response.status(200).json({
+          ok: true,
+          available: true,
+          reason: "available",
+          customerApproval,
+          customerSelection: proposalWithApproval.customerSelection,
+          proposal: createCustomerSafeProposalPayload(proposalWithApproval),
+        });
+        return;
+      }
+
+      if (action === "request_changes") {
+        if (!canCustomerApproveProposal(proposal)) {
+          response.status(409).json({ ok: false, available: true, reason: "approval-not-ready" });
+          return;
+        }
+
+        const customerApproval = buildCustomerChangeRequestRecord(proposal, body.approval || body.customerApproval || {}, {
+          requestedAt: new Date().toISOString(),
+          ipAddress: getRequestIpAddress(request),
+          userAgent: request.headers?.["user-agent"] || "",
+        });
+        const proposalWithChangeRequest = {
+          ...proposal,
+          customerApproval,
+          customerSelection: {
+            ...normalizeCustomerSelection(proposal.customerSelection),
+            status: CUSTOMER_SELECTION_STATUS_CHANGE_REQUESTED,
+          },
+          updatedAt: customerApproval.approvedAt,
+        };
+
+        await updateCustomerProposalData(supabase, data.id, proposalWithChangeRequest, { required: true });
+
+        response.status(200).json({
+          ok: true,
+          available: true,
+          reason: "available",
+          customerApproval,
+          customerSelection: proposalWithChangeRequest.customerSelection,
+          proposal: createCustomerSafeProposalPayload(proposalWithChangeRequest),
+        });
+        return;
+      }
+
       const customerSelection = buildSubmittedCustomerSelection(proposal, body.selection || body.customerSelection || {});
       const proposalWithSelection = {
         ...proposal,
         customerSelection,
+        status: proposal.status === "accepted_deposit_due" ? proposal.status : "customer_selection_submitted",
       };
 
       await updateCustomerProposalData(supabase, data.id, proposalWithSelection, { required: true });
@@ -120,6 +211,16 @@ export default async function handler(request, response) {
       error: formatApiError(error),
     });
   }
+}
+
+function getRequestIpAddress(request) {
+  const forwardedFor = request.headers?.["x-forwarded-for"];
+
+  if (typeof forwardedFor === "string" && forwardedFor.trim()) {
+    return forwardedFor.split(",")[0].trim();
+  }
+
+  return request.socket?.remoteAddress || "";
 }
 
 async function updateCustomerProposalData(supabase, rowId, proposalData, { required = false } = {}) {

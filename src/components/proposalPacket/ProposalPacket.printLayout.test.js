@@ -53,6 +53,14 @@ test("residential terms and conditions render as separate PDF pages when enabled
   assert.match(source, /Signature \/ Acceptance/);
 });
 
+test("residential PDF can show customer approval signature record after signing", () => {
+  assert.match(source, /normalizeCustomerApproval/);
+  assert.match(source, /function ResidentialCustomerApprovalRecord/);
+  assert.match(source, /Customer Approval \/ Signature Record/);
+  assert.match(source, /approval\.typedSignature/);
+  assert.match(source, /formatResidentialCurrency\(approval\.acceptedTotal\)/);
+});
+
 test("residential simple estimate has a dedicated print branch and avoids GC alternate language", () => {
   assert.match(source, /RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT/);
   assert.match(source, /useResidentialSimpleEstimate/);

@@ -8,7 +8,17 @@ export const COMPANY_DEFAULTS = {
   tagline: "Crafting Concrete, Building Dreams.",
 };
 
-export const PROPOSAL_STATUSES = ["draft", "sent", "approved", "rejected", "expired"];
+export const PROPOSAL_STATUSES = [
+  "draft",
+  "sent",
+  "customer_selection_submitted",
+  "selection_reviewed",
+  "awaiting_customer_approval",
+  "accepted_deposit_due",
+  "approved",
+  "rejected",
+  "expired",
+];
 
 export const PROPOSAL_TYPES = ["residential", "gc_prime", "commercial", "public_municipal"];
 
