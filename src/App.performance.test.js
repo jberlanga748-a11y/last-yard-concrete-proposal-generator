@@ -50,6 +50,44 @@ test("proposal preview is collapsed and lazy-rendered until the user opens it", 
   assert.match(appSource, /function ProposalPreviewPanel/);
 });
 
+test("new proposal flow shows a template chooser before creating a clean draft", () => {
+  const createNewProposalSource = appSource.match(/function createNewProposal\(\)[\s\S]*?function createBlankProposal/)?.[0] || "";
+
+  assert.match(appSource, /function NewProposalTemplateChooser/);
+  assert.match(appSource, /const isNewProposalChooserView = route\.view === "new" && !route\.blank && !route\.templateType/);
+  assert.match(createNewProposalSource, /navigate\("\/proposals\/new"\)/);
+  assert.doesNotMatch(createNewProposalSource, /createNewProposalDraft/);
+  [
+    "Residential Simple Estimate",
+    "Residential Base Price + Optional Add-Ons",
+    "Residential Choose-One Options",
+    "Residential Blank",
+    "Commercial Subcontractor Proposal",
+    "GC / Prime Packet",
+    "Completely Blank Proposal",
+  ].forEach((label) => assert.match(appSource, new RegExp(label.replace(/[+/]/g, "\\$&"))));
+});
+
+test("clean proposal templates reset stale residential portal pricing and preview state", () => {
+  const factorySource = appSource.match(/function createBlankProposalByTemplate[\s\S]*?function applyProposalModeToBlankProposal/)?.[0] || "";
+
+  assert.match(factorySource, /pricingOptions: \[\]/);
+  assert.match(factorySource, /optionalAddOns: \[\]/);
+  assert.match(factorySource, /selectedAddOnIds: \[\]/);
+  assert.match(factorySource, /customerShareToken: ""/);
+  assert.match(factorySource, /customerSelection: \{ status: CUSTOMER_SELECTION_STATUS_NONE \}/);
+  assert.match(factorySource, /customerApproval: \{ status: "none" \}/);
+  assert.match(factorySource, /includedInPdf: false/);
+  assert.match(appSource, /setProposalPreviewOpen\(false\)/);
+  assert.match(appSource, /setProposalPreviewReady\(false\)/);
+});
+
+test("backup restore shortcut is not rendered inside the proposal editor route", () => {
+  assert.doesNotMatch(appSource, /\{!isPrintView \? backupShortcut : null\}/);
+  assert.match(appSource, /<BackupView backupTools=\{backupTools\}/);
+  assert.match(appSource, /backupShortcut=\{backupShortcut\}/);
+});
+
 test("development performance logging is guarded from production console noise", () => {
   assert.match(appSource, /function isDevPerformanceLoggingEnabled/);
   assert.match(appSource, /import\.meta\.env\?\.DEV/);

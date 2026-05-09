@@ -38,6 +38,8 @@ export function cleanTrueBlankProposalState(proposal = {}) {
     parentProposalId: "",
     previousTotal: "",
     revisedTotal: 0,
+    baseBid: 0,
+    totalProposal: 0,
     sentDate: "",
     sentToName: "",
     sentToEmail: "",
@@ -55,12 +57,29 @@ export function cleanTrueBlankProposalState(proposal = {}) {
     internalTrackingNotes: "",
     client: createBlankClient(),
     project: createBlankProject(),
+    customerShareEnabled: false,
+    customerShareToken: "",
+    customerShareCreatedAt: "",
+    customerShareExpiresAt: "",
+    customerShareLastViewedAt: "",
+    customerSelection: createBlankCustomerSelection(),
+    customerApproval: createBlankCustomerApproval(),
     scopeSections: [],
     concreteSpecs: createBlankConcreteSpecs(),
     lineItems: [],
     pricingSections: [],
+    pricingMode: "",
+    basePackage: {},
+    pricingOptions: [],
+    optionalAddOns: [],
+    selectedAddOnIds: [],
+    pricingExamples: [],
+    paymentExamples: [],
+    pricing: createBlankPricing(),
     exclusions: [],
     assumptions: [],
+    residentialPdfLayout: "",
+    residentialLegalPapers: undefined,
     projectPhotos: [],
     planSheets: [],
     packetBuilder: [],
@@ -185,6 +204,63 @@ function createBlankProject() {
       endDate: "",
       display: "",
     },
+  };
+}
+
+function createBlankPricing() {
+  return {
+    pricingMode: "",
+    baseBid: 0,
+    totalProposal: 0,
+    basePackage: {},
+    lineItems: [],
+    pricingOptions: [],
+    optionalAddOns: [],
+    allowances: [],
+    alternates: [],
+    selectedAddOnIds: [],
+    pricingExamples: [],
+    paymentExamples: [],
+    pricingSummaryNotes: "",
+  };
+}
+
+function createBlankCustomerSelection() {
+  return {
+    status: "none",
+    submittedAt: "",
+    selectedPricingMode: "",
+    selectedOptionId: "",
+    selectedOptionName: "",
+    selectedAddOnIds: [],
+    selectedAddOnNames: [],
+    selectedTotal: 0,
+    selectedDownPayment: 0,
+    selectedFinalPayment: 0,
+    customerName: "",
+    customerEmail: "",
+    customerPhone: "",
+    customerNotes: "",
+  };
+}
+
+function createBlankCustomerApproval() {
+  return {
+    status: "none",
+    approvedAt: "",
+    customerName: "",
+    customerEmail: "",
+    customerPhone: "",
+    typedSignature: "",
+    signatureDataUrl: "",
+    acceptedTotal: 0,
+    acceptedDownPayment: 0,
+    acceptedFinalPayment: 0,
+    acknowledgedPaymentTerms: false,
+    acknowledgedScope: false,
+    acknowledgedLegalTerms: false,
+    acknowledgedNotices: false,
+    customerNotes: "",
   };
 }
 

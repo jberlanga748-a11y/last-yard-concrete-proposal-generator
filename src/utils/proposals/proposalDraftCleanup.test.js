@@ -52,6 +52,43 @@ function dirtyProposalFixture(overrides = {}) {
     },
     lineItems: [{ description: "Old line item", quantity: 1, unit: "LS", unitPrice: 12345 }],
     pricingSections: [{ type: "allowance", label: "Estimated Shade Footings", description: "", amount: 42500, included: false }],
+    pricingMode: "choose_one_option",
+    basePackage: { name: "Old base", price: 46437.5, images: [{ src: "https://example.test/base.jpg" }] },
+    pricingOptions: [{ name: "Old option", price: 46437.5, images: [{ src: "https://example.test/option.jpg" }] }],
+    optionalAddOns: [{ name: "Old add-on", amount: 8500, selected: true, images: [{ src: "https://example.test/addon.jpg" }] }],
+    selectedAddOnIds: ["old-add-on"],
+    pricing: {
+      pricingMode: "base_plus_addons",
+      baseBid: 46437.5,
+      totalProposal: 54937.5,
+      basePackage: { name: "Old base package", price: 46437.5 },
+      pricingOptions: [{ name: "Old nested option", price: 46437.5 }],
+      optionalAddOns: [{ name: "Old nested add-on", amount: 8500, selected: true }],
+      selectedAddOnIds: ["old-nested-add-on"],
+      pricingExamples: [{ label: "Old example" }],
+      paymentExamples: [{ label: "Old payment example" }],
+    },
+    residentialPdfLayout: "detailed_backup",
+    residentialLegalPapers: {
+      informationNoticeToOwner: { status: "included", providedToCustomer: true },
+      termsAndConditions: { status: "included", includedInPdf: true },
+      legalAttachments: [{ title: "Old legal paper", publicUrl: "https://example.test/legal.pdf" }],
+    },
+    customerShareEnabled: true,
+    customerShareToken: "old-share-token",
+    customerShareCreatedAt: "2026-05-01T00:00:00.000Z",
+    customerShareExpiresAt: "2026-06-01T00:00:00.000Z",
+    customerShareLastViewedAt: "2026-05-02T00:00:00.000Z",
+    customerSelection: {
+      status: "submitted",
+      selectedTotal: 54937.5,
+      selectedAddOnIds: ["old-add-on"],
+    },
+    customerApproval: {
+      status: "approved_signed",
+      typedSignature: "Old Customer",
+      acceptedTotal: 54937.5,
+    },
     exclusions: ["Old exclusion", "New item"],
     assumptions: ["Old assumption"],
     projectPhotos: [{ label: "Old photo", src: "data:image/png;base64,abc" }],
@@ -120,6 +157,23 @@ test("true blank proposal state removes prior project client pricing scope and p
   assert.deepEqual(blank.scopeSections, []);
   assert.deepEqual(blank.lineItems, []);
   assert.deepEqual(blank.pricingSections, []);
+  assert.equal(blank.baseBid, 0);
+  assert.equal(blank.totalProposal, 0);
+  assert.equal(blank.pricingMode, "");
+  assert.deepEqual(blank.basePackage, {});
+  assert.deepEqual(blank.pricingOptions, []);
+  assert.deepEqual(blank.optionalAddOns, []);
+  assert.deepEqual(blank.selectedAddOnIds, []);
+  assert.deepEqual(blank.pricing.pricingOptions, []);
+  assert.deepEqual(blank.pricing.optionalAddOns, []);
+  assert.equal(blank.pricing.baseBid, 0);
+  assert.equal(blank.pricing.totalProposal, 0);
+  assert.equal(blank.customerShareEnabled, false);
+  assert.equal(blank.customerShareToken, "");
+  assert.equal(blank.customerSelection.status, "none");
+  assert.equal(blank.customerApproval.status, "none");
+  assert.equal(blank.residentialPdfLayout, "");
+  assert.equal(blank.residentialLegalPapers, undefined);
   assert.deepEqual(blank.exclusions, []);
   assert.deepEqual(blank.assumptions, []);
   assert.deepEqual(blank.planSheets, []);

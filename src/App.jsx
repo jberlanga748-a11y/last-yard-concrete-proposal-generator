@@ -228,6 +228,108 @@ const demoMetadata = {
   isDemo: true,
   source: "client-ready-demo",
 };
+const NEW_PROPOSAL_TEMPLATE_TYPES = {
+  RESIDENTIAL_SIMPLE_ESTIMATE: "residential_simple_estimate",
+  RESIDENTIAL_BASE_ADDONS: "residential_base_addons",
+  RESIDENTIAL_CHOOSE_ONE: "residential_choose_one",
+  RESIDENTIAL_BLANK: "residential_blank",
+  COMMERCIAL_SUBCONTRACTOR: "commercial_subcontractor",
+  GC_PRIME_PACKET: "gc_prime_packet",
+  COMPLETELY_BLANK: "completely_blank",
+};
+const NEW_PROPOSAL_TEMPLATE_OPTIONS = [
+  {
+    id: NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_SIMPLE_ESTIMATE,
+    label: "Residential Simple Estimate",
+    mode: "residential",
+    path: "/proposals/new/template/residential-simple-estimate",
+    pricingMode: BASE_PLUS_ADDONS_PRICING_MODE,
+    residentialPdfLayout: "simple_estimate",
+    shortDescription: "Clean homeowner estimate with pricing, scope, payment terms, and legal summary.",
+    details: "Starts at $0.00 with no photos, customer data, portal state, or full terms packet.",
+  },
+  {
+    id: NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_BASE_ADDONS,
+    label: "Residential Base Price + Optional Add-Ons",
+    mode: "residential",
+    path: "/proposals/new/template/residential-base-addons",
+    pricingMode: BASE_PLUS_ADDONS_PRICING_MODE,
+    residentialPdfLayout: "simple_estimate",
+    shortDescription: "Base package plus customer-friendly selectable add-ons.",
+    details: "Creates empty base/add-on structure only; no demo pricing or stale examples.",
+  },
+  {
+    id: NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_CHOOSE_ONE,
+    label: "Residential Choose-One Options",
+    mode: "residential",
+    path: "/proposals/new/template/residential-choose-one",
+    pricingMode: CHOOSE_ONE_PRICING_MODE,
+    residentialPdfLayout: "proposal_with_photos",
+    shortDescription: "Customer chooses exactly one main option, with optional add-ons kept separate.",
+    details: "Starts with empty options and add-ons; no fake broom/stamped/sand rows.",
+  },
+  {
+    id: NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_BLANK,
+    label: "Residential Blank",
+    mode: "residential",
+    path: "/proposals/new/blank/residential",
+    residentialPdfLayout: "simple_estimate",
+    shortDescription: "Residential mode with no pricing structure selected yet.",
+    details: "Clean $0.00 draft for manual entry or Smart Paste.",
+  },
+  {
+    id: NEW_PROPOSAL_TEMPLATE_TYPES.COMMERCIAL_SUBCONTRACTOR,
+    label: "Commercial Subcontractor Proposal",
+    mode: "commercial_subcontractor",
+    path: "/proposals/new/blank/commercial",
+    shortDescription: "GC-facing concrete subcontractor proposal.",
+    details: "Base bid, alternates, exclusions, clarifications, and addenda support without full packet pages.",
+  },
+  {
+    id: NEW_PROPOSAL_TEMPLATE_TYPES.GC_PRIME_PACKET,
+    label: "GC / Prime Packet",
+    mode: "gc_prime_packet",
+    path: "/proposals/new/blank/gc-prime",
+    shortDescription: "Full GC / Prime packet builder.",
+    details: "Empty SOV, takeoff, RFI, addenda, legal, and appendix structures.",
+  },
+  {
+    id: NEW_PROPOSAL_TEMPLATE_TYPES.COMPLETELY_BLANK,
+    label: "Completely Blank Proposal",
+    mode: DEFAULT_PROPOSAL_MODE,
+    modeLabel: "No default mode",
+    path: "/proposals/new/blank",
+    shortDescription: "No residential, commercial, or packet assumptions.",
+    details: "No client, project, pricing, scope, photos, portal state, approvals, or packet data.",
+  },
+];
+const newProposalTemplateAliases = new Map([
+  ["residential-simple-estimate", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_SIMPLE_ESTIMATE],
+  ["residential_simple_estimate", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_SIMPLE_ESTIMATE],
+  ["simple-estimate", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_SIMPLE_ESTIMATE],
+  ["simple_estimate", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_SIMPLE_ESTIMATE],
+  ["residential-base-addons", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_BASE_ADDONS],
+  ["residential-base-add-ons", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_BASE_ADDONS],
+  ["residential_base_addons", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_BASE_ADDONS],
+  ["base-plus-addons", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_BASE_ADDONS],
+  ["base_plus_addons", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_BASE_ADDONS],
+  ["residential-choose-one", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_CHOOSE_ONE],
+  ["residential_choose_one", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_CHOOSE_ONE],
+  ["choose-one", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_CHOOSE_ONE],
+  ["choose_one", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_CHOOSE_ONE],
+  ["residential-blank", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_BLANK],
+  ["residential_blank", NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_BLANK],
+  ["commercial", NEW_PROPOSAL_TEMPLATE_TYPES.COMMERCIAL_SUBCONTRACTOR],
+  ["commercial-subcontractor", NEW_PROPOSAL_TEMPLATE_TYPES.COMMERCIAL_SUBCONTRACTOR],
+  ["commercial_subcontractor", NEW_PROPOSAL_TEMPLATE_TYPES.COMMERCIAL_SUBCONTRACTOR],
+  ["gc-prime", NEW_PROPOSAL_TEMPLATE_TYPES.GC_PRIME_PACKET],
+  ["gc_prime", NEW_PROPOSAL_TEMPLATE_TYPES.GC_PRIME_PACKET],
+  ["gc-prime-packet", NEW_PROPOSAL_TEMPLATE_TYPES.GC_PRIME_PACKET],
+  ["gc_prime_packet", NEW_PROPOSAL_TEMPLATE_TYPES.GC_PRIME_PACKET],
+  ["completely-blank", NEW_PROPOSAL_TEMPLATE_TYPES.COMPLETELY_BLANK],
+  ["completely_blank", NEW_PROPOSAL_TEMPLATE_TYPES.COMPLETELY_BLANK],
+  ["blank", NEW_PROPOSAL_TEMPLATE_TYPES.COMPLETELY_BLANK],
+]);
 const cloudLocalOnlyLabel = "Local only";
 const cloudNeedsSyncLabel = "Needs sync";
 const cloudSyncedLabel = "Synced";
@@ -543,6 +645,7 @@ export default function App() {
   const isActivityView = route.view === "activity";
   const isCustomerPortalView = route.view === "customerPortal";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
+  const isNewProposalChooserView = route.view === "new" && !route.blank && !route.templateType;
   const authGate = getAuthGateState({ authLoading, authUser, isDev: import.meta.env.DEV, route });
   const permissionRole = normalizePermissionRole(authUser ? cloudSync.currentRole : authGate.localDevelopmentMode ? "local" : "viewer");
   const permissions = getRolePermissions(permissionRole);
@@ -831,7 +934,7 @@ export default function App() {
 
       if (isProposalRouteView(nextRoute.view)) {
         resetProposalTransientState();
-        if (nextRoute.blank) {
+        if (nextRoute.view === "new") {
           clearTransientProposalDraftStorage();
         }
         setProposalDraft(getProposalDraftForRoute(nextRoute, savedProposals, companySettings));
@@ -1035,7 +1138,7 @@ export default function App() {
 
     if (isProposalRouteView(nextRoute.view)) {
       resetProposalTransientState();
-      if (nextRoute.blank) {
+      if (nextRoute.view === "new") {
         clearTransientProposalDraftStorage();
       }
 
@@ -1060,6 +1163,9 @@ export default function App() {
     setAiProposalMessage("");
     setAiProposalLoading("");
     setAssetUploadMessage("");
+    setProposalPreviewOpen(false);
+    setProposalPreviewReady(false);
+    setBackupMessage("");
 
     if (clearSaveMessage) {
       setSaveMessage("");
@@ -1327,19 +1433,11 @@ export default function App() {
       return;
     }
 
-    const proposal = createNewProposalDraft(savedProposals, companySettings);
-
-    if (!navigate("/proposals/new", { proposal })) {
+    if (!navigate("/proposals/new")) {
       return;
     }
 
-    setSaveMessage("New Draft started. This draft starts with starter template data. Choose a template or edit fields before sending.");
-    recordActivity({
-      action: "Proposal created",
-      entityType: "proposal",
-      entityId: proposal.id,
-      entityLabel: proposal.proposalNumber || proposal.project?.name || "New proposal",
-    });
+    setSaveMessage("Choose a proposal type to start from a clean blank template.");
   }
 
   function createBlankProposal(mode = DEFAULT_PROPOSAL_MODE) {
@@ -1347,47 +1445,50 @@ export default function App() {
       return;
     }
 
-    const proposal = createBlankProposalDraft(savedProposals, companySettings, mode);
-    const path = getBlankProposalModePath(proposal.proposalMode);
+    const templateType = getNewProposalTemplateTypeForBlankMode(mode);
+    const proposal = createBlankProposalByTemplate(templateType, savedProposals, companySettings);
+    const path = getNewProposalTemplatePath(templateType);
 
-    if (!navigate(path, { proposal })) {
+    if (!navigate(path, { proposal, proposalAlreadyEditable: true })) {
       return;
     }
 
     setSaveMessage(`${getProposalModeLabel(proposal.proposalMode)} Blank Draft started. Add required fields before saving or printing.`);
   }
 
-  function createNewProposalFromTemplate(templateId) {
+  function createNewProposalFromTemplate(templateType) {
     if (!canPerform("createProposal")) {
       return;
     }
 
-    const proposal = createEditableProposal(applyTemplateToProposal(templateId, createNewProposalDraft(savedProposals, companySettings)));
+    const normalizedTemplateType = normalizeNewProposalTemplateType(templateType);
+    const proposal = createBlankProposalByTemplate(normalizedTemplateType, savedProposals, companySettings);
+    const path = getNewProposalTemplatePath(normalizedTemplateType);
 
-    if (!navigate("/proposals/new", { proposal })) {
+    if (!navigate(path, { proposal, proposalAlreadyEditable: true })) {
       return;
     }
 
-    setSaveMessage(`New Draft started from the ${proposal.templateName || templateId} template.`);
+    setSaveMessage(`New Draft started from the clean ${proposal.templateName || normalizedTemplateType} template. Current total is ${formatCurrency(0)}.`);
     recordActivity({
       action: "Proposal created",
       entityType: "proposal",
       entityId: proposal.id,
       entityLabel: proposal.proposalNumber || proposal.project?.name || "New proposal",
-      notes: `Template: ${templateId}`,
+      notes: `Template: ${normalizedTemplateType}`,
     });
   }
 
   function createNewGcPacket() {
-    createNewProposalFromTemplate("gc_prime_full_packet");
+    createNewProposalFromTemplate(NEW_PROPOSAL_TEMPLATE_TYPES.GC_PRIME_PACKET);
   }
 
   function createNewCommercialProposal() {
-    createNewProposalFromTemplate("commercial_flatwork");
+    createNewProposalFromTemplate(NEW_PROPOSAL_TEMPLATE_TYPES.COMMERCIAL_SUBCONTRACTOR);
   }
 
   function createNewResidentialProposal() {
-    createNewProposalFromTemplate("driveway");
+    createNewProposalFromTemplate(NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_SIMPLE_ESTIMATE);
   }
 
   function loadDemoData({ open = "" } = {}) {
@@ -1505,10 +1606,11 @@ export default function App() {
       return;
     }
 
-    const proposal = createBlankProposalDraft(savedProposals, companySettings, mode);
-    const path = getBlankProposalModePath(proposal.proposalMode);
+    const templateType = getNewProposalTemplateTypeForBlankMode(mode);
+    const proposal = createBlankProposalByTemplate(templateType, savedProposals, companySettings);
+    const path = getNewProposalTemplatePath(templateType);
 
-    if (!navigate(path, { proposal, skipUnsavedCheck: true })) {
+    if (!navigate(path, { proposal, proposalAlreadyEditable: true, skipUnsavedCheck: true })) {
       return;
     }
 
@@ -4229,7 +4331,7 @@ export default function App() {
 
     setProposalDirty(true);
     setProposalDraft((currentProposal) => {
-      const projectPhotos = normalizeProjectPhotos(currentProposal.projectPhotos).map((photo, photoIndex) =>
+      const projectPhotos = normalizeProjectPhotos(currentProposal.projectPhotos, { includeDefaultSlots: true }).map((photo, photoIndex) =>
         photoIndex === index ? normalizeProjectPhoto({ ...photo, ...updates }, photoIndex) : photo,
       );
 
@@ -4251,7 +4353,7 @@ export default function App() {
     const attemptedAt = new Date().toISOString();
     const uploadType = imageFiles.length > 1 ? "Featured photo batch" : `Featured photo ${index + 1}`;
     const localReason = getAssetLocalStorageReason(authUser);
-    let workingPhotos = normalizeProjectPhotos(proposalDraft.projectPhotos);
+    let workingPhotos = normalizeProjectPhotos(proposalDraft.projectPhotos, { includeDefaultSlots: true });
     const uploadedPaths = [];
     const failures = [];
 
@@ -6262,6 +6364,13 @@ export default function App() {
           onStatusChange={updateListProposalStatus}
           onSyncProposals={syncProposalsNow}
         />
+      ) : isNewProposalChooserView ? (
+        <NewProposalTemplateChooser
+          options={NEW_PROPOSAL_TEMPLATE_OPTIONS}
+          permissions={permissions}
+          onBackToList={() => navigate("/proposals")}
+          onSelectTemplate={createNewProposalFromTemplate}
+        />
       ) : (
         <>
           {isPrintView ? (
@@ -6287,7 +6396,7 @@ export default function App() {
                 revisionHistory={getRevisionHistory(proposalDraft, savedProposals)}
                 saveMessage={saveMessage}
                 saveState={saveState}
-                showStartBlank={route.view === "new"}
+                showStartBlank={false}
                 permissions={permissions}
                 onBackToList={() => navigate("/proposals")}
                 onCreateRevision={createRevision}
@@ -6299,8 +6408,6 @@ export default function App() {
                 onStatusChange={updateCurrentStatus}
               />
           )}
-          {!isPrintView ? backupShortcut : null}
-
           <div className={`proposal-workbench ${isPrintView ? "print-route-view" : ""}`}>
             {isPrintView ? null : (
               <ProposalEditor
@@ -6310,7 +6417,7 @@ export default function App() {
                 contacts={savedContacts}
                 assetUploadMessage={assetUploadMessage}
                 draftLabel={getDraftRouteLabel(route)}
-                showTemplatePicker={route.view === "new"}
+                showTemplatePicker={false}
                 permissions={permissions}
                 onAddLineItem={addLineItem}
                 onAddLineItemFromLibrary={addLineItemFromPriceLibrary}
@@ -6428,6 +6535,50 @@ export default function App() {
       )}
       </div>
     </main>
+  );
+}
+
+function NewProposalTemplateChooser({ options = [], permissions = {}, onBackToList, onSelectTemplate }) {
+  return (
+    <section className="new-proposal-template-panel">
+      <div className="section-heading">
+        <div>
+          <p className="list-kicker">New Proposal</p>
+          <h2>Choose a clean proposal template</h2>
+          <p>
+            Templates provide structure only. They do not clone the last proposal, load demo pricing, or reuse hidden customer,
+            photo, portal, or packet state.
+          </p>
+        </div>
+        <button className="secondary-action" type="button" onClick={onBackToList}>
+          Back to Proposals
+        </button>
+      </div>
+
+      <div className="new-proposal-template-grid">
+        {options.map((option) => (
+          <article className="template-card new-proposal-template-card" key={option.id}>
+            <div>
+              <div className="template-card-meta">
+                <span>{option.modeLabel || getProposalModeLabel(option.mode)}</span>
+                <strong>{option.pricingMode ? formatOptionLabel(option.pricingMode) : "Blank structure"}</strong>
+              </div>
+              <h3>{option.label}</h3>
+              <p>{option.shortDescription}</p>
+              <small>{option.details}</small>
+            </div>
+            <button
+              type="button"
+              onClick={() => onSelectTemplate?.(option.id)}
+              disabled={!permissions.createProposal}
+              title={`Start ${option.label}`}
+            >
+              Start
+            </button>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -11655,7 +11806,7 @@ function PricingSummary({ totals }) {
 }
 
 function ProjectPhotoEditor({ message = "", photos, onPhotoChange, onPhotoUpload }) {
-  const photoSlots = normalizeProjectPhotos(photos);
+  const photoSlots = normalizeProjectPhotos(photos, { includeDefaultSlots: true });
 
   function handleUpload(index, files) {
     if (!files || files.length === 0) {
@@ -12683,6 +12834,55 @@ function EditorField({ label, path, value, onChange, type = "text", multiline = 
   );
 }
 
+function normalizeNewProposalTemplateType(value = "") {
+  const normalizedKey = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const underscoreKey = normalizedKey.replace(/-/g, "_");
+
+  return (
+    newProposalTemplateAliases.get(normalizedKey) ||
+    newProposalTemplateAliases.get(underscoreKey) ||
+    NEW_PROPOSAL_TEMPLATE_TYPES.COMPLETELY_BLANK
+  );
+}
+
+function getNewProposalTemplateOption(templateType) {
+  const normalizedTemplateType = normalizeNewProposalTemplateType(templateType);
+  return (
+    NEW_PROPOSAL_TEMPLATE_OPTIONS.find((option) => option.id === normalizedTemplateType) ||
+    NEW_PROPOSAL_TEMPLATE_OPTIONS.find((option) => option.id === NEW_PROPOSAL_TEMPLATE_TYPES.COMPLETELY_BLANK)
+  );
+}
+
+function getNewProposalTemplatePath(templateType) {
+  return getNewProposalTemplateOption(templateType)?.path || "/proposals/new/blank";
+}
+
+function getNewProposalTemplateTypeForBlankMode(mode = DEFAULT_PROPOSAL_MODE) {
+  const normalizedMode = normalizeProposalMode(mode) || DEFAULT_PROPOSAL_MODE;
+
+  if (isResidentialProposalMode(normalizedMode)) {
+    return NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_BLANK;
+  }
+
+  if (isGcPrimePacketMode(normalizedMode)) {
+    return NEW_PROPOSAL_TEMPLATE_TYPES.GC_PRIME_PACKET;
+  }
+
+  return NEW_PROPOSAL_TEMPLATE_TYPES.COMMERCIAL_SUBCONTRACTOR;
+}
+
+function getNewProposalTemplateTypeFromBlankRoute(segments = []) {
+  if (!segments[3]) {
+    return NEW_PROPOSAL_TEMPLATE_TYPES.COMPLETELY_BLANK;
+  }
+
+  return getNewProposalTemplateTypeForBlankMode(getProposalModeFromBlankSlug(segments[3]));
+}
+
 function parseRoute(pathname) {
   const segments = pathname.split("/").filter(Boolean);
 
@@ -12737,14 +12937,26 @@ function parseRoute(pathname) {
     return { view: "list", path: "/proposals" };
   }
 
+  if (segments[1] === "new" && segments[2] === "template") {
+    const templateType = normalizeNewProposalTemplateType(segments[3]);
+
+    return {
+      view: "new",
+      path: getNewProposalTemplatePath(templateType),
+      templateType,
+    };
+  }
+
   if (segments[1] === "new" && segments[2] === "blank") {
     const blankMode = getProposalModeFromBlankSlug(segments[3]);
+    const templateType = getNewProposalTemplateTypeFromBlankRoute(segments);
 
     return {
       view: "new",
       path: segments[3] ? getBlankProposalModePath(blankMode) : "/proposals/new/blank",
       blank: true,
       blankMode,
+      templateType,
     };
   }
 
@@ -12768,11 +12980,15 @@ function getDraftRouteLabel(route = {}) {
     return "";
   }
 
-  return route.blank ? `${getProposalModeLabel(route.blankMode)} Blank Draft` : "New Draft";
+  if (route.templateType) {
+    return `${getNewProposalTemplateOption(route.templateType)?.label || "Blank Proposal"} Draft`;
+  }
+
+  return "New Proposal";
 }
 
 function isBlankProposalSmartPasteMode(route = {}, proposal = {}) {
-  return Boolean(route.view === "new" && route.blank) || proposal.templateId === "blank";
+  return Boolean(route.view === "new" && (route.blank || route.templateType)) || proposal.templateId === "blank";
 }
 
 function createCloudSyncState() {
@@ -13078,11 +13294,11 @@ function loadInitialAppState(pathname = "/proposals") {
 
 function getInitialProposalForRoute(route, proposals, companySettings = getDefaultCompanySettings()) {
   if (route.view === "new") {
-    if (route.blank) {
-      return createBlankProposalDraft(proposals, companySettings, route.blankMode);
+    if (route.templateType) {
+      return createBlankProposalByTemplate(route.templateType, proposals, companySettings);
     }
 
-    return createNewProposalDraft(proposals, companySettings);
+    return createBlankProposalByTemplate(NEW_PROPOSAL_TEMPLATE_TYPES.COMPLETELY_BLANK, proposals, companySettings);
   }
 
   if (route.id) {
@@ -13097,13 +13313,17 @@ function getInitialProposalForRoute(route, proposals, companySettings = getDefau
 }
 
 function getProposalDraftForRoute(route, proposals, companySettings = getDefaultCompanySettings(), proposalOverride = null, options = {}) {
+  if (!proposalOverride && route.view === "new" && route.templateType) {
+    return createBlankProposalByTemplate(route.templateType, proposals, companySettings);
+  }
+
   const draft = proposalOverride
     ? options.alreadyEditable
       ? proposalOverride
       : createEditableProposal(proposalOverride)
     : getInitialProposalForRoute(route, proposals, companySettings);
 
-  return route.blank
+  return route.blank && !proposalOverride
     ? applyProposalModeToBlankProposal(cleanTrueBlankProposalState(draft), route.blankMode || draft.proposalMode, companySettings.proposalPdfStyle)
     : draft;
 }
@@ -13820,7 +14040,7 @@ function createNewProposalDraft(existingProposals, companySettings = getDefaultC
   });
 }
 
-function createBlankProposalDraft(existingProposals, companySettings = getDefaultCompanySettings(), proposalMode = DEFAULT_PROPOSAL_MODE) {
+function createCleanProposalDraftForMode(existingProposals, companySettings = getDefaultCompanySettings(), proposalMode = DEFAULT_PROPOSAL_MODE) {
   const normalizedMode = normalizeProposalMode(proposalMode) || DEFAULT_PROPOSAL_MODE;
   const normalizedSettings = normalizeCompanySettings(companySettings);
   const baseProposal = cleanTrueBlankProposalState(createNewProposalDraft(existingProposals, companySettings));
@@ -13879,6 +14099,98 @@ function createBlankProposalDraft(existingProposals, companySettings = getDefaul
   return applyProposalModeToBlankProposal(cleanTrueBlankProposalState(blankProposal), normalizedMode, normalizedSettings.proposalPdfStyle);
 }
 
+function createBlankProposalDraft(existingProposals, companySettings = getDefaultCompanySettings(), proposalMode = DEFAULT_PROPOSAL_MODE) {
+  return createBlankProposalByTemplate(getNewProposalTemplateTypeForBlankMode(proposalMode), existingProposals, companySettings);
+}
+
+function createBlankProposalByTemplate(templateType, existingProposals, companySettings = getDefaultCompanySettings()) {
+  const normalizedTemplateType = normalizeNewProposalTemplateType(templateType);
+  const template = getNewProposalTemplateOption(normalizedTemplateType);
+  const normalizedMode = normalizeProposalMode(template?.mode) || DEFAULT_PROPOSAL_MODE;
+  const normalizedSettings = normalizeCompanySettings(companySettings);
+  const sourceProposal = cleanTrueBlankProposalState(createCleanProposalDraftForMode(existingProposals, companySettings, normalizedMode));
+  const isResidential = isResidentialProposalMode(normalizedMode);
+  const isGcPrime = isGcPrimePacketMode(normalizedMode);
+  const pricingMode = isResidential ? template?.pricingMode || "" : "";
+  const residentialPdfLayout = isResidential
+    ? normalizeResidentialPdfLayout(template?.residentialPdfLayout || "", { proposalMode: normalizedMode, pricingMode })
+    : "";
+  const residentialLegalPapers = isResidential
+    ? normalizeResidentialLegalPapers(
+        {
+          termsAndConditions: {
+            status: "provided_separately",
+            includedInPdf: false,
+          },
+        },
+        { includedInPdf: false, includeTermsByDefault: false },
+      )
+    : undefined;
+  const proposal = {
+    ...sourceProposal,
+    proposalMode: normalizedMode,
+    proposalType: getProposalTypeForMode(normalizedMode),
+    type: getProposalTypeForMode(normalizedMode),
+    packetMode: getPacketModeForProposalMode(normalizedMode),
+    templateId: normalizedTemplateType,
+    templateName: template?.label || "Blank Proposal",
+    pdfStyle: getProposalPdfStyleForMode(normalizedSettings.proposalPdfStyle, normalizedMode),
+    pricingMode,
+    residentialPdfLayout,
+    baseBid: 0,
+    totalProposal: 0,
+    revisedTotal: 0,
+    previousTotal: "",
+    lineItems: [],
+    pricingSections: [],
+    pricingOptions: [],
+    optionalAddOns: [],
+    selectedAddOnIds: [],
+    pricingExamples: [],
+    paymentExamples: [],
+    basePackage: {},
+    pricing: {
+      pricingMode,
+      baseBid: 0,
+      totalProposal: 0,
+      basePackage: {},
+      lineItems: [],
+      pricingOptions: [],
+      optionalAddOns: [],
+      allowances: [],
+      alternates: [],
+      selectedAddOnIds: [],
+      pricingExamples: [],
+      paymentExamples: [],
+      pricingSummaryNotes: "",
+    },
+    projectPhotos: [],
+    planSheets: [],
+    scopeSections: [],
+    exclusions: [],
+    assumptions: [],
+    residentialLegalPapers,
+    customerShareEnabled: false,
+    customerShareToken: "",
+    customerShareCreatedAt: "",
+    customerShareExpiresAt: "",
+    customerShareLastViewedAt: "",
+    customerSelection: { status: CUSTOMER_SELECTION_STATUS_NONE },
+    customerApproval: { status: "none" },
+    submittedPacketRecords: [],
+    sendRecords: [],
+    packetBuilder: isGcPrime ? normalizePacketBuilder([]) : [],
+    gcPacketTables: normalizeGcPacketTables({}),
+    gcPrime: getDefaultGcPrime(),
+    takeoffQuantityBackup: "",
+    quantityBackup: "",
+    proposalNotes: "",
+    notes: "",
+  };
+
+  return applyProposalModeToBlankProposal(proposal, normalizedMode, normalizedSettings.proposalPdfStyle);
+}
+
 function applyProposalModeToBlankProposal(proposal = {}, mode = DEFAULT_PROPOSAL_MODE, proposalPdfStyleSettings = null) {
   const normalizedMode = normalizeProposalMode(mode) || DEFAULT_PROPOSAL_MODE;
   const proposalType = getProposalTypeForMode(normalizedMode);
@@ -13890,8 +14202,8 @@ function applyProposalModeToBlankProposal(proposal = {}, mode = DEFAULT_PROPOSAL
     proposalType,
     type: proposalType,
     packetMode,
-    templateId: "blank",
-    templateName: `${getProposalModeLabel(normalizedMode)} Blank Proposal`,
+    templateId: proposal.templateId || "blank",
+    templateName: proposal.templateName || `${getProposalModeLabel(normalizedMode)} Blank Proposal`,
     pdfStyle: getProposalPdfStyleForMode(pdfStyleSettings, normalizedMode),
     pricingMode: isResidentialProposalMode(normalizedMode) ? proposal.pricingMode || "" : proposal.pricingMode || "",
     residentialPdfLayout: isResidentialProposalMode(normalizedMode)
@@ -15491,9 +15803,9 @@ function parseMultilineList(value) {
   return items.length > 0 ? items : [...SEED_PROPOSAL.exclusions];
 }
 
-function normalizeProjectPhotos(photos = []) {
+function normalizeProjectPhotos(photos = [], { includeDefaultSlots = false } = {}) {
   const sourcePhotos = Array.isArray(photos) ? photos : [];
-  const photoCount = Math.max(defaultProjectPhotos.length, sourcePhotos.length);
+  const photoCount = includeDefaultSlots ? Math.max(defaultProjectPhotos.length, sourcePhotos.length) : sourcePhotos.length;
 
   return Array.from({ length: photoCount }, (_, index) => {
     const defaultPhoto = defaultProjectPhotos[index] || { label: `Project Photo ${index + 1}`, src: "" };
@@ -16491,6 +16803,22 @@ function normalizeResidentialBasePackage(basePackage = {}) {
   const lineItems = normalizeResidentialOptionLineItems(basePackage.lineItems ?? basePackage.items);
   const images = normalizeResidentialOptionImages(basePackage.images || basePackage.optionPhotos || basePackage.photos);
   const price = toEditableNumber(basePackage.price ?? basePackage.amount ?? basePackage.total);
+  const notes = normalizeResidentialTextList(basePackage.notes);
+  const hasBasePackageValue =
+    hasTextValue(basePackage.id) ||
+    hasTextValue(basePackage.name) ||
+    hasTextValue(basePackage.label) ||
+    hasTextValue(basePackage.description) ||
+    hasTextValue(basePackage.scopeSummary) ||
+    hasTextValue(basePackage.summary) ||
+    price > 0 ||
+    lineItems.length > 0 ||
+    images.length > 0 ||
+    notes.length > 0;
+
+  if (!hasBasePackageValue) {
+    return {};
+  }
 
   return {
     ...basePackage,
@@ -16504,7 +16832,7 @@ function normalizeResidentialBasePackage(basePackage = {}) {
     total: toEditableNumber(basePackage.total ?? basePackage.amount) || price,
     lineItems,
     images,
-    notes: normalizeResidentialTextList(basePackage.notes),
+    notes,
   };
 }
 
