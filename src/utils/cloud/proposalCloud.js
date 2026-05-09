@@ -39,6 +39,12 @@ const cloudProposalRowStatusByWorkflowStatus = {
 };
 const defaultCloudProposalPageSize = 25;
 const retryCloudProposalPageSize = 10;
+const maxCloudProposalPayloadBytes = 2 * 1024 * 1024;
+const localOnlyImageCloudSaveWarning = "Some photos are stored locally only until uploaded to cloud storage.";
+const cloudSaveBlockedLargePayloadMessage =
+  "Cloud save blocked because this proposal contains too much embedded image data. Local draft is still saved. Upload photos to cloud storage or remove/compress photos.";
+const cloudSaveNetworkFailureMessage = "Cloud save failed before Supabase returned details. Your local draft is still saved.";
+const embeddedImageFieldNames = new Set(["dataUrl", "src", "imageSrc", "publicUrl", "signedUrl", "thumbnailUrl", "url"]);
 
 function normalizeProposalForCloud(proposal = {}, deps = {}, options = {}) {
   const lightweightNormalizer = options.forCollection ? deps.normalizeProposalForCollection : null;
@@ -229,7 +235,9 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
         sourceUpdatedAt,
       })
     : normalizedProposal;
-  const row = createCloudProposalRow(companyId, proposalToSave, deps);
+  const cloudSaveSanitization = sanitizeProposalDataForCloudSave(proposalToSave);
+  const row = createCloudProposalRow(companyId, cloudSaveSanitization.proposalData, deps);
+  assertCloudProposalPayloadSize(row.proposal_data, deps);
   const targetRowId = row.id || existingRow?.id || "";
 
   try {
@@ -242,7 +250,7 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
     await writeCloudProposalRow(client, createCompatibleCloudProposalRow(row), targetRowId);
   }
 
-  return proposalToSave;
+  return attachCloudProposalSaveWarning(proposalToSave, cloudSaveSanitization.warning);
 }
 
 async function writeCloudProposalRow(client, row, targetRowId = "") {
@@ -375,11 +383,27 @@ export function formatCloudProposalSaveError(error = {}) {
   let reason = "cloud-save-failed";
   let label = "Cloud save failed";
 
+  if (error?.reason === "cloud-payload-too-large" || /cloud save blocked because this proposal contains too much embedded image data/.test(lowerCombined)) {
+    return {
+      code,
+      message: cloudSaveBlockedLargePayloadMessage,
+      reason: "cloud-payload-too-large",
+    };
+  }
+
   if (/statement timeout|canceling statement due to statement timeout|57014/.test(lowerCombined)) {
     return {
       code,
       message: "Cloud proposal load timed out. Try loading fewer proposals or contact support.",
       reason: "statement-timeout",
+    };
+  }
+
+  if (/failed to fetch|networkerror|network request failed|\b520\b|\b521\b|origin/.test(lowerCombined)) {
+    return {
+      code,
+      message: cloudSaveNetworkFailureMessage,
+      reason: "cloud-save-network-origin-failure",
     };
   }
 
@@ -413,6 +437,194 @@ export function formatCloudProposalSaveError(error = {}) {
     message: safeDetail ? `${label}: ${safeDetail}` : label,
     reason,
   };
+}
+
+export function sanitizeProposalDataForCloudSave(proposal = {}) {
+  const stats = {
+    localOnlyImages: 0,
+    removedEmbeddedImageStrings: 0,
+    removedFileObjects: 0,
+  };
+  const proposalData = sanitizeCloudProposalValue(proposal, {
+    currentKey: "",
+    parentKey: "",
+    stats,
+    seen: new WeakSet(),
+  });
+  const warnings = [];
+
+  if (stats.localOnlyImages > 0) {
+    warnings.push(
+      `${localOnlyImageCloudSaveWarning} ${stats.localOnlyImages} local-only photo${
+        stats.localOnlyImages === 1 ? " was" : "s were"
+      } kept as metadata so cloud sync does not send embedded image data.`,
+    );
+  }
+
+  return {
+    payloadBytes: getJsonPayloadSizeBytes(proposalData),
+    proposalData: isPlainObject(proposalData) ? proposalData : {},
+    stats,
+    warning: warnings.join(" "),
+  };
+}
+
+export function getCloudProposalSaveWarning(proposal = {}) {
+  return proposal?.cloudSaveWarning || "";
+}
+
+function sanitizeCloudProposalValue(value, { currentKey = "", parentKey = "", stats, seen }) {
+  if (typeof value === "string") {
+    return isEmbeddedImageReference(value) ? undefined : value;
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  if (isFileLikeCloudValue(value)) {
+    stats.removedFileObjects += 1;
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) =>
+        sanitizeCloudProposalValue(item, {
+          currentKey: "",
+          parentKey: currentKey,
+          stats,
+          seen,
+        }),
+      )
+      .filter((item) => item !== undefined);
+  }
+
+  if (seen.has(value)) {
+    return undefined;
+  }
+
+  seen.add(value);
+
+  const looksLikeImage = looksLikeImageMetadataObject(value, currentKey, parentKey);
+  const sanitized = {};
+  let removedEmbeddedImageData = false;
+
+  Object.entries(value).forEach(([key, entryValue]) => {
+    if (typeof entryValue === "string" && embeddedImageFieldNames.has(key) && isEmbeddedImageReference(entryValue)) {
+      removedEmbeddedImageData = true;
+      stats.removedEmbeddedImageStrings += 1;
+      return;
+    }
+
+    const sanitizedValue = sanitizeCloudProposalValue(entryValue, {
+      currentKey: key,
+      parentKey: currentKey,
+      stats,
+      seen,
+    });
+
+    if (sanitizedValue !== undefined) {
+      sanitized[key] = sanitizedValue;
+    } else if (typeof entryValue === "string" && isEmbeddedImageReference(entryValue)) {
+      removedEmbeddedImageData = true;
+      stats.removedEmbeddedImageStrings += 1;
+    }
+  });
+
+  if (looksLikeImage && removedEmbeddedImageData && !hasCloudImageSource(sanitized)) {
+    stats.localOnlyImages += 1;
+    sanitized.localOnly = true;
+    sanitized.cloudSynced = false;
+  }
+
+  seen.delete(value);
+
+  return sanitized;
+}
+
+function looksLikeImageMetadataObject(value = {}, currentKey = "", parentKey = "") {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  const keyText = `${currentKey} ${parentKey}`.toLowerCase();
+
+  if (/(image|photo|photos|asset|logo|plan|attachment)/.test(keyText)) {
+    return true;
+  }
+
+  return ["dataUrl", "imageSrc", "storagePath", "publicUrl", "signedUrl", "thumbnailUrl", "fileName", "fileType"].some((key) => key in value);
+}
+
+function hasCloudImageSource(image = {}) {
+  return ["storagePath", "publicUrl", "signedUrl", "thumbnailUrl", "src", "imageSrc"].some((key) => {
+    const value = String(image?.[key] || "").trim();
+    return value && !isEmbeddedImageReference(value);
+  });
+}
+
+function isEmbeddedImageReference(value = "") {
+  const normalizedValue = String(value || "").trim().toLowerCase();
+  return normalizedValue.startsWith("data:image/") || normalizedValue.startsWith("blob:");
+}
+
+function isFileLikeCloudValue(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if ((typeof File !== "undefined" && value instanceof File) || (typeof Blob !== "undefined" && value instanceof Blob)) {
+    return true;
+  }
+
+  return (
+    !isPlainObject(value) &&
+    typeof value.name === "string" &&
+    typeof value.size === "number" &&
+    typeof value.type === "string" &&
+    ("lastModified" in value || typeof value.arrayBuffer === "function")
+  );
+}
+
+function assertCloudProposalPayloadSize(proposalData = {}, deps = {}) {
+  const limit = Number.parseInt(deps.maxCloudProposalPayloadBytes, 10) || maxCloudProposalPayloadBytes;
+  const payloadBytes = getJsonPayloadSizeBytes(proposalData);
+
+  if (payloadBytes <= limit) {
+    return;
+  }
+
+  const error = new Error(cloudSaveBlockedLargePayloadMessage);
+  error.code = "PAYLOAD_TOO_LARGE";
+  error.reason = "cloud-payload-too-large";
+  error.payloadBytes = payloadBytes;
+  error.maxPayloadBytes = limit;
+  throw error;
+}
+
+function getJsonPayloadSizeBytes(value = {}) {
+  const json = JSON.stringify(value) || "";
+
+  if (typeof TextEncoder !== "undefined") {
+    return new TextEncoder().encode(json).length;
+  }
+
+  return json.length;
+}
+
+function attachCloudProposalSaveWarning(proposal = {}, warning = "") {
+  if (!warning) {
+    return proposal;
+  }
+
+  Object.defineProperty(proposal, "cloudSaveWarning", {
+    configurable: true,
+    enumerable: false,
+    value: warning,
+  });
+
+  return proposal;
 }
 
 async function fetchCloudProposalPage(client, companyId, start, pageSize) {

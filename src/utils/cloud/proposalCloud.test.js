@@ -7,7 +7,9 @@ import {
   formatCloudProposalSaveError,
   getCloudProposalRowStatus,
   getCloudProposalLoadWarning,
+  getCloudProposalSaveWarning,
   mergeCloudPortalFieldsForSave,
+  sanitizeProposalDataForCloudSave,
   saveCloudProposal,
 } from "./proposalCloud.js";
 
@@ -422,6 +424,175 @@ test("saveCloudProposal does not wipe portal fields while persisting residential
   assert.ok(updatePayload.updated_at);
 });
 
+test("sanitizeProposalDataForCloudSave removes embedded project and residential option image data", () => {
+  const embeddedImage = `data:image/jpeg;base64,${"a".repeat(1200)}`;
+  const sanitized = sanitizeProposalDataForCloudSave({
+    id: "proposal-images",
+    projectPhotos: [
+      {
+        id: "project-photo-1",
+        caption: "Existing patio",
+        dataUrl: embeddedImage,
+        fileName: "patio.jpg",
+        fileSize: 1200,
+        fileType: "image/jpeg",
+        src: embeddedImage,
+      },
+    ],
+    pricing: {
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Broom Finish",
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "Broom finish example",
+              dataUrl: embeddedImage,
+              fileName: "broom.jpg",
+              thumbnailUrl: "blob:http://localhost/preview",
+            },
+          ],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "cantilever",
+          name: "Cantilever-Style Stair Upgrade",
+          images: [
+            {
+              id: "addon-photo-1",
+              caption: "Cantilever example",
+              dataUrl: embeddedImage,
+              fileName: "cantilever.jpg",
+              publicUrl: "https://cdn.example/cantilever.jpg",
+              src: "https://cdn.example/cantilever.jpg",
+              storagePath: "company/company-1/proposals/proposal-images/option-photos/cantilever.jpg",
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  const payloadJson = JSON.stringify(sanitized.proposalData);
+
+  assert.equal(payloadJson.includes("data:image/"), false);
+  assert.equal(payloadJson.includes("blob:"), false);
+  assert.equal(sanitized.proposalData.projectPhotos[0].caption, "Existing patio");
+  assert.equal(sanitized.proposalData.projectPhotos[0].fileName, "patio.jpg");
+  assert.equal(sanitized.proposalData.projectPhotos[0].localOnly, true);
+  assert.equal(sanitized.proposalData.pricing.pricingOptions[0].images[0].localOnly, true);
+  assert.equal(sanitized.proposalData.pricing.optionalAddOns[0].images[0].publicUrl, "https://cdn.example/cantilever.jpg");
+  assert.equal(
+    sanitized.proposalData.pricing.optionalAddOns[0].images[0].storagePath,
+    "company/company-1/proposals/proposal-images/option-photos/cantilever.jpg",
+  );
+  assert.match(sanitized.warning, /Some photos are stored locally only until uploaded to cloud storage/);
+  assert.equal(sanitized.stats.localOnlyImages, 2);
+  assert.equal(sanitized.stats.removedEmbeddedImageStrings >= 4, true);
+});
+
+test("saveCloudProposal upserts sanitized image metadata instead of raw base64 image data", async () => {
+  const embeddedImage = `data:image/png;base64,${"b".repeat(1500)}`;
+  let insertPayload = null;
+
+  const savedProposal = await saveCloudProposal(
+    "company-1",
+    {
+      id: "proposal-local-image-save",
+      status: "draft",
+      projectPhotos: [
+        {
+          id: "project-photo-1",
+          caption: "Existing area",
+          dataUrl: embeddedImage,
+          fileName: "existing.png",
+          src: embeddedImage,
+        },
+      ],
+      pricing: {
+        pricingMode: "base_plus_addons",
+        basePackage: {
+          name: "Base Package",
+          price: 40000,
+          images: [
+            {
+              id: "base-photo-1",
+              caption: "Base package example",
+              dataUrl: embeddedImage,
+              fileName: "base.png",
+            },
+          ],
+        },
+        optionalAddOns: [
+          {
+            id: "walls",
+            name: "Walls",
+            amount: 10000,
+            images: [
+              {
+                id: "walls-photo-1",
+                caption: "Walls example",
+                storagePath: "company/company-1/proposals/proposal-local-image-save/option-photos/walls.png",
+                publicUrl: "https://cdn.example/walls.png",
+              },
+            ],
+          },
+        ],
+      },
+      updatedAt: "2026-05-08T12:00:00.000Z",
+    },
+    {
+      ...cloudDeps,
+      supabaseClient: createFakeSupabase({
+        onInsert(payload) {
+          insertPayload = payload;
+        },
+      }),
+    },
+  );
+
+  const proposalJson = JSON.stringify(insertPayload.proposal_data);
+
+  assert.equal(proposalJson.includes("data:image/"), false);
+  assert.equal(insertPayload.proposal_data.projectPhotos[0].localOnly, true);
+  assert.equal(insertPayload.proposal_data.pricing.basePackage.images[0].fileName, "base.png");
+  assert.equal(insertPayload.proposal_data.pricing.basePackage.images[0].dataUrl, undefined);
+  assert.equal(insertPayload.proposal_data.pricing.optionalAddOns[0].images[0].publicUrl, "https://cdn.example/walls.png");
+  assert.match(getCloudProposalSaveWarning(savedProposal), /Some photos are stored locally only until uploaded to cloud storage/);
+});
+
+test("saveCloudProposal blocks oversized sanitized proposal payload before cloud upsert", async () => {
+  let insertAttempted = false;
+
+  await assert.rejects(
+    () =>
+      saveCloudProposal(
+        "company-1",
+        {
+          id: "proposal-too-large",
+          status: "draft",
+          internalNotes: "x".repeat(2000),
+          updatedAt: "2026-05-08T12:00:00.000Z",
+        },
+        {
+          ...cloudDeps,
+          maxCloudProposalPayloadBytes: 500,
+          supabaseClient: createFakeSupabase({
+            onInsert() {
+              insertAttempted = true;
+            },
+          }),
+        },
+      ),
+    /Cloud save blocked because this proposal contains too much embedded image data/,
+  );
+
+  assert.equal(insertAttempted, false);
+});
+
 test("fetchCloudProposalById hydrates full customer portal data for signed-in proposal opens", async () => {
   const row = createProposalRow({
     customerSelection: {
@@ -553,5 +724,25 @@ test("formatCloudProposalSaveError returns safe actionable reasons", () => {
   assert.equal(
     formatCloudProposalSaveError({ message: "Request Entity Too Large", status: 413 }).reason,
     "json-too-large",
+  );
+  assert.deepEqual(formatCloudProposalSaveError(new TypeError("Failed to fetch")), {
+    code: "",
+    message: "Cloud save failed before Supabase returned details. Your local draft is still saved.",
+    reason: "cloud-save-network-origin-failure",
+  });
+  assert.equal(formatCloudProposalSaveError({ message: "Cloudflare origin failure", status: 520 }).reason, "cloud-save-network-origin-failure");
+  assert.deepEqual(
+    formatCloudProposalSaveError({
+      message:
+        "Cloud save blocked because this proposal contains too much embedded image data. Local draft is still saved. Upload photos to cloud storage or remove/compress photos.",
+      code: "PAYLOAD_TOO_LARGE",
+      reason: "cloud-payload-too-large",
+    }),
+    {
+      code: "PAYLOAD_TOO_LARGE",
+      message:
+        "Cloud save blocked because this proposal contains too much embedded image data. Local draft is still saved. Upload photos to cloud storage or remove/compress photos.",
+      reason: "cloud-payload-too-large",
+    },
   );
 });

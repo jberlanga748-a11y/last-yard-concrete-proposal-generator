@@ -54,6 +54,7 @@ import {
   fetchCloudProposalByShareToken,
   fetchCloudProposals,
   getCloudProposalLoadWarning,
+  getCloudProposalSaveWarning,
   formatCloudProposalSaveError,
   loadOrMergeCloudProposals,
   mergeProposalCollections,
@@ -636,6 +637,7 @@ export default function App() {
   const [cloudSync, setCloudSync] = useState(() => createCloudSyncState());
   const [saveState, setSaveState] = useState(() => createSaveState());
   const lastProposalSyncErrorRef = useRef("");
+  const lastProposalSyncWarningRef = useRef("");
   const [teamMembers, setTeamMembers] = useState([]);
   const [teamMessage, setTeamMessage] = useState("");
   const [proposalDirty, setProposalDirty] = useState(false);
@@ -2147,6 +2149,7 @@ export default function App() {
     try {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
       const cloudSavedProposal = await saveCloudProposal(companyRecord.id, proposal, proposalCloudDeps);
+      const cloudSaveWarning = getCloudProposalSaveWarning(cloudSavedProposal);
       const syncedProposal = cloudSavedProposal ? createEditableProposal(cloudSavedProposal) : proposal;
 
       setSavedProposals((currentProposals) => upsertProposal(currentProposals, syncedProposal));
@@ -2161,10 +2164,13 @@ export default function App() {
         currentRole: companyRecord.role || currentSync.currentRole || "owner",
         lastError: "",
         lastSyncedAt: new Date().toISOString(),
-        message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
+        message: cloudSaveWarning
+          ? `${successMessage} ${cloudSaveWarning}`
+          : `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
       lastProposalSyncErrorRef.current = "";
+      lastProposalSyncWarningRef.current = cloudSaveWarning;
       setSaveState((currentState) => ({
         ...currentState,
         lastCloudSavedAt: new Date().toISOString(),
@@ -2176,6 +2182,7 @@ export default function App() {
       const safeErrorMessage = formattedError.message;
 
       lastProposalSyncErrorRef.current = safeErrorMessage;
+      lastProposalSyncWarningRef.current = "";
 
       if (import.meta.env.DEV) {
         console.error("Proposal cloud save failed:", {
@@ -2221,6 +2228,7 @@ export default function App() {
     try {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
       const cloudSavedProposals = await saveCloudProposals(companyRecord.id, proposals, proposalCloudDeps);
+      const cloudSaveWarnings = cloudSavedProposals.map(getCloudProposalSaveWarning).filter(Boolean);
       const syncedProposals = cloudSavedProposals.length > 0 ? cloudSavedProposals.map((proposal) => createEditableProposal(proposal)) : proposals;
 
       if (cloudSavedProposals.length > 0) {
@@ -2242,10 +2250,13 @@ export default function App() {
         lastError: "",
         lastSyncedAt: new Date().toISOString(),
         loading: false,
-        message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
+        message: cloudSaveWarnings[0]
+          ? `${successMessage} ${cloudSaveWarnings[0]}`
+          : `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
       lastProposalSyncErrorRef.current = "";
+      lastProposalSyncWarningRef.current = cloudSaveWarnings.join(" ");
       setSaveState((currentState) => ({
         ...currentState,
         lastCloudSavedAt: new Date().toISOString(),
@@ -2257,6 +2268,7 @@ export default function App() {
       const safeErrorMessage = formattedError.message;
 
       lastProposalSyncErrorRef.current = safeErrorMessage;
+      lastProposalSyncWarningRef.current = "";
 
       if (import.meta.env.DEV) {
         console.error("Proposal cloud sync failed:", {
@@ -2383,6 +2395,7 @@ export default function App() {
       const mergeResult = mergeProposalCollections(savedProposals, cloudProposals, proposalCloudDeps);
 
       const cloudSavedProposals = await saveCloudProposals(companyRecord.id, mergeResult.proposals, proposalCloudDeps);
+      const cloudSaveWarnings = cloudSavedProposals.map(getCloudProposalSaveWarning).filter(Boolean);
       const syncedProposals = cloudSavedProposals.length > 0 ? cloudSavedProposals.map((proposal) => createEditableProposal(proposal)) : mergeResult.proposals;
 
       setSavedProposals(syncedProposals);
@@ -2397,15 +2410,19 @@ export default function App() {
         message:
           `${cloudLoadWarning ? `${cloudLoadWarning} ` : ""}${
             mergeResult.warning || "Cloud and local proposals are synced."
-          } Legacy data URL images may still make cloud sync slower until they are replaced.`.trim(),
+          } ${
+            cloudSaveWarnings[0] || "Legacy data URL images may still make cloud sync slower until they are replaced."
+          }`.trim(),
         proposalStatus: cloudLoadWarning ? cloudNeedsSyncLabel : cloudSyncedLabel,
       }));
       lastProposalSyncErrorRef.current = "";
+      lastProposalSyncWarningRef.current = cloudSaveWarnings.join(" ");
     } catch (error) {
       const formattedError = formatCloudProposalSaveError(error);
       const safeErrorMessage = formattedError.message;
 
       lastProposalSyncErrorRef.current = safeErrorMessage;
+      lastProposalSyncWarningRef.current = "";
 
       if (import.meta.env.DEV) {
         console.error("Proposal cloud sync failed:", {
@@ -2427,6 +2444,7 @@ export default function App() {
 
   function clearCloudSyncMessage() {
     lastProposalSyncErrorRef.current = "";
+    lastProposalSyncWarningRef.current = "";
     setCloudSync((currentSync) => ({
       ...currentSync,
       lastError: "",
@@ -3127,7 +3145,8 @@ export default function App() {
         status: synced ? "Saved locally and synced to cloud" : "Saved locally. Cloud sync failed",
       }));
       if (synced) {
-        setSaveMessage(cloudSuccessMessage);
+        const cloudWarning = lastProposalSyncWarningRef.current;
+        setSaveMessage(cloudWarning ? `${cloudSuccessMessage} ${cloudWarning}` : cloudSuccessMessage);
       } else {
         setSaveMessage(`Saved locally. Cloud sync failed: ${lastProposalSyncErrorRef.current || "See Settings for details."}`);
       }
@@ -3201,7 +3220,7 @@ export default function App() {
       const synced = await syncSingleProposalToCloud(proposalToSave, "Customer portal link synced to Supabase.");
       setSaveMessage(
         synced
-          ? `${message} Link is ready to share.`
+          ? `${message} Link is ready to share.${lastProposalSyncWarningRef.current ? ` ${lastProposalSyncWarningRef.current}` : ""}`
           : `${message} Saved locally, but cloud sync failed: ${lastProposalSyncErrorRef.current || "Cloud save did not complete."} Resolve cloud sync before sharing the public link.`,
       );
     } else {
@@ -3906,7 +3925,7 @@ export default function App() {
         status: synced ? "Saved locally and synced to cloud" : "Saved locally. Cloud sync failed",
       }));
       if (synced) {
-        setSaveMessage(cloudMessage);
+        setSaveMessage(lastProposalSyncWarningRef.current ? `${cloudMessage} ${lastProposalSyncWarningRef.current}` : cloudMessage);
       }
     }
   }
