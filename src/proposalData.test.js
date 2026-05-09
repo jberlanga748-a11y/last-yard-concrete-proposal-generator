@@ -82,6 +82,37 @@ test("calculates line item subtotal, tax, discount, deposit, and balance due", (
   assert.equal(totals.balanceDue, 165);
 });
 
+test("applied customer selection total overrides original option estimate total", () => {
+  const submittedTotals = calculateProposalTotals({
+    lineItems: [{ description: "Original base option", quantity: 1, unitPrice: 40000 }],
+    customerSelection: {
+      status: "submitted",
+      selectedTotal: 72000,
+      selectedDownPayment: 36000,
+      selectedFinalPayment: 36000,
+    },
+  });
+  const appliedTotals = calculateProposalTotals({
+    lineItems: [{ description: "Original base option", quantity: 1, unitPrice: 40000 }],
+    pricing: {
+      selectedTotal: 72000,
+      selectedDownPayment: 36000,
+      selectedFinalPayment: 36000,
+    },
+    customerSelection: {
+      status: "applied_to_proposal",
+      selectedTotal: 72000,
+      selectedDownPayment: 36000,
+      selectedFinalPayment: 36000,
+    },
+  });
+
+  assert.equal(submittedTotals.total, 40000);
+  assert.equal(appliedTotals.total, 72000);
+  assert.equal(appliedTotals.deposit, 36000);
+  assert.equal(appliedTotals.balanceDue, 36000);
+});
+
 test("respects explicit deposit amount over deposit rate", () => {
   const totals = calculateProposalTotals({
     financials: {

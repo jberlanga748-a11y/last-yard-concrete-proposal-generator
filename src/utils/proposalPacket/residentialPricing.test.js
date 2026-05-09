@@ -19,6 +19,7 @@ import {
   countResidentialOptionImagePlaceholders,
   formatResidentialCurrency,
   formatResidentialMoneyText,
+  getAppliedResidentialCustomerSelectionSummary,
   getResidentialAddOnAmountForOption,
   getPrintableResidentialOptionImages,
   getResidentialOptionLineItemTotal,
@@ -692,4 +693,121 @@ test("simple estimate totals include selected add-ons and ignore unselected add-
       ["Lighting in walls", false],
     ],
   );
+});
+
+test("submitted customer selection does not drive simple estimate final total until applied", () => {
+  const proposal = {
+    proposalMode: "residential",
+    pricingMode: CHOOSE_ONE_WITH_ADDONS_PRICING_MODE,
+    residentialPdfLayout: RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT,
+    pricingOptions: [
+      { id: "proposal-1", name: "Proposal 1 - Broom Finish Package", price: 40000 },
+      { id: "proposal-2", name: "Proposal 2 - Exposed Finish Package", price: 50000 },
+    ],
+    optionalAddOns: [
+      { id: "walls", name: "Walls", optionAmounts: [{ optionId: "proposal-2", amount: 15000 }] },
+      { id: "lighting", name: "Lighting", amount: 7000 },
+    ],
+    customerSelection: {
+      status: "submitted",
+      selectedPricingMode: CHOOSE_ONE_WITH_ADDONS_PRICING_MODE,
+      selectedOptionId: "proposal-2",
+      selectedOptionName: "Proposal 2 - Exposed Finish Package",
+      selectedAddOnIds: ["walls", "lighting"],
+      selectedAddOnAmounts: [
+        { id: "walls", name: "Walls", amount: 15000 },
+        { id: "lighting", name: "Lighting", amount: 7000 },
+      ],
+      selectedTotal: 72000,
+    },
+  };
+  const totals = calculateResidentialSimpleEstimateTotals(proposal);
+  const appliedSummary = getAppliedResidentialCustomerSelectionSummary(proposal);
+
+  assert.equal(appliedSummary.hasAppliedCustomerSelection, false);
+  assert.equal(totals.hasPendingCustomerSelection, true);
+  assert.equal(totals.total, 40000);
+  assert.equal(totals.basePackage.name, "Proposal 1 - Broom Finish Package");
+});
+
+test("applied choose-one with add-ons drives simple estimate total for proposal 2", () => {
+  const proposal = {
+    proposalMode: "residential",
+    pricingMode: CHOOSE_ONE_WITH_ADDONS_PRICING_MODE,
+    residentialPdfLayout: RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT,
+    pricingOptions: [
+      { id: "proposal-1", name: "Proposal 1 - Broom Finish Package", price: 40000 },
+      { id: "proposal-2", name: "Proposal 2 - Exposed Finish Package", price: 50000 },
+      { id: "proposal-3", name: "Proposal 3 - Stamped Finish Package", price: 60000 },
+    ],
+    customerSelection: {
+      status: "applied_to_proposal",
+      selectedPricingMode: CHOOSE_ONE_WITH_ADDONS_PRICING_MODE,
+      selectedOptionId: "proposal-2",
+      selectedOptionName: "Proposal 2 - Exposed Finish Package",
+      selectedAddOnIds: ["walls", "lighting"],
+      selectedAddOnAmounts: [
+        { id: "walls", name: "Walls", amount: 15000 },
+        { id: "lighting", name: "Lighting", amount: 7000 },
+      ],
+      selectedTotal: 72000,
+      selectedDownPayment: 36000,
+      selectedFinalPayment: 36000,
+      appliedProposalTotal: 72000,
+      appliedDownPayment: 36000,
+      appliedFinalPayment: 36000,
+    },
+  };
+  const totals = calculateResidentialSimpleEstimateTotals(proposal);
+
+  assert.equal(totals.hasAppliedCustomerSelection, true);
+  assert.equal(totals.basePackage.name, "Proposal 2 - Exposed Finish Package");
+  assert.equal(totals.basePrice, 50000);
+  assert.equal(totals.selectedAddOnsTotal, 22000);
+  assert.equal(totals.total, 72000);
+  assert.equal(totals.downPayment, 36000);
+  assert.equal(totals.finalPayment, 36000);
+  assert.deepEqual(
+    totals.selectedAddOns.map((addOn) => [addOn.name, addOn.amount]),
+    [
+      ["Walls", 15000],
+      ["Lighting", 7000],
+    ],
+  );
+});
+
+test("applied choose-one with add-ons drives simple estimate total for proposal 3", () => {
+  const proposal = {
+    proposalMode: "residential",
+    pricingMode: CHOOSE_ONE_WITH_ADDONS_PRICING_MODE,
+    residentialPdfLayout: RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT,
+    pricingOptions: [
+      { id: "proposal-1", name: "Proposal 1 - Broom Finish Package", price: 40000 },
+      { id: "proposal-2", name: "Proposal 2 - Exposed Finish Package", price: 50000 },
+      { id: "proposal-3", name: "Proposal 3 - Stamped Finish Package", price: 60000 },
+    ],
+    customerSelection: {
+      status: "approval_sent",
+      selectedPricingMode: CHOOSE_ONE_WITH_ADDONS_PRICING_MODE,
+      selectedOptionId: "proposal-3",
+      selectedOptionName: "Proposal 3 - Stamped Finish Package",
+      selectedAddOnIds: ["walls", "cantilever"],
+      selectedAddOnAmounts: [
+        { id: "walls", name: "Walls", amount: 20000 },
+        { id: "cantilever", name: "Cantilever-Style Stair Upgrade", amount: 20000 },
+      ],
+      selectedTotal: 100000,
+      selectedDownPayment: 50000,
+      selectedFinalPayment: 50000,
+    },
+  };
+  const totals = calculateResidentialSimpleEstimateTotals(proposal);
+
+  assert.equal(totals.hasAppliedCustomerSelection, true);
+  assert.equal(totals.basePackage.name, "Proposal 3 - Stamped Finish Package");
+  assert.equal(totals.basePrice, 60000);
+  assert.equal(totals.selectedAddOnsTotal, 40000);
+  assert.equal(totals.total, 100000);
+  assert.equal(totals.downPayment, 50000);
+  assert.equal(totals.finalPayment, 50000);
 });

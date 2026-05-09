@@ -16,6 +16,8 @@ export const RESIDENTIAL_CHOOSE_ONE_COVER_SCHEDULE = "Estimated duration: 10 wor
 export const RESIDENTIAL_CHOOSE_ONE_COVER_DESCRIPTION =
   "Residential concrete package including walkway, landings, steps, curbs, side walls, wall footings, rebar reinforcement, selected finish, and cleanup.";
 
+const APPLIED_CUSTOMER_SELECTION_STATUSES = new Set(["applied_to_proposal", "approval_sent", "approved_signed"]);
+
 export function toResidentialPricingNumber(value) {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : 0;
@@ -656,6 +658,7 @@ export function normalizeResidentialOptionalAddOns(optionalAddOns = []) {
         notes,
         included: Boolean(addOn.included === true || addOn.selected === true),
         selected: Boolean(addOn.selected === true || addOn.included === true),
+        selectedAmount: toResidentialPricingNumber(addOn.selectedAmount),
         images,
       };
     })
@@ -929,6 +932,31 @@ export function getResidentialSimpleEstimateBasePackage(proposal = {}) {
     };
   }
 
+  const pricingBasePackage =
+    proposal.basePackage && typeof proposal.basePackage === "object"
+      ? proposal.basePackage
+      : proposal.pricing?.basePackage && typeof proposal.pricing.basePackage === "object"
+        ? proposal.pricing.basePackage
+        : null;
+
+  if (pricingBasePackage) {
+    const price = toResidentialPricingNumber(pricingBasePackage.total ?? pricingBasePackage.price ?? pricingBasePackage.amount);
+    const name = cleanResidentialText(pricingBasePackage.name || pricingBasePackage.label);
+    const description = cleanResidentialText(pricingBasePackage.description || pricingBasePackage.scopeSummary || proposal.project?.description);
+
+    if (name || description || price > 0) {
+      return {
+        name: name || "Base Package",
+        description,
+        quantity: toResidentialPricingNumber(pricingBasePackage.quantity) || 1,
+        unit: cleanResidentialText(pricingBasePackage.unit || "LS"),
+        price,
+        total: price,
+        lineItems: normalizeResidentialOptionLineItems(pricingBasePackage.lineItems),
+      };
+    }
+  }
+
   const selectedOption = getResidentialPricingOptions(proposal).find((option) => option.selected || option.included) || getResidentialPricingOptions(proposal)[0];
 
   if (selectedOption) {
@@ -966,7 +994,112 @@ export function getResidentialSimpleEstimateAddOns(proposal = {}) {
   }));
 }
 
+export function hasAppliedResidentialCustomerSelection(proposal = {}) {
+  return APPLIED_CUSTOMER_SELECTION_STATUSES.has(cleanResidentialText(proposal.customerSelection?.status));
+}
+
+export function getAppliedResidentialCustomerSelectionSummary(proposal = {}) {
+  const selection = proposal.customerSelection && typeof proposal.customerSelection === "object" ? proposal.customerSelection : {};
+  const pricing = proposal.pricing && typeof proposal.pricing === "object" ? proposal.pricing : {};
+  const status = cleanResidentialText(selection.status);
+
+  if (!APPLIED_CUSTOMER_SELECTION_STATUSES.has(status)) {
+    return {
+      hasAppliedCustomerSelection: false,
+      status,
+      selectedAddOns: [],
+      selectedAddOnAmounts: [],
+    };
+  }
+
+  const pricingMode = cleanResidentialText(selection.selectedPricingMode || proposal.pricingMode || pricing.pricingMode);
+  const selectedOptionId = cleanResidentialText(selection.selectedOptionId);
+  const selectedOptionName = cleanResidentialText(selection.selectedOptionName);
+  const options = getResidentialPricingOptions(proposal);
+  const selectedOption =
+    options.find((option) => {
+      const optionKeys = [normalizeResidentialKey(option.id), normalizeResidentialKey(option.name)].filter(Boolean);
+      const selectionKeys = [normalizeResidentialKey(selectedOptionId), normalizeResidentialKey(selectedOptionName)].filter(Boolean);
+
+      return selectionKeys.some((selectionKey) => optionKeys.some((optionKey) => optionKey === selectionKey || optionKey.includes(selectionKey) || selectionKey.includes(optionKey)));
+    }) ||
+    options.find((option) => option.selected || option.included) ||
+    null;
+  const selectedAddOnIds = normalizeResidentialTextList(selection.selectedAddOnIds);
+  const selectedAddOnNames = normalizeResidentialTextList(selection.selectedAddOnNames);
+  const selectedAddOnAmounts = getAppliedResidentialAddOnAmounts(proposal, selection, selectedOption, selectedAddOnIds, selectedAddOnNames);
+  const selectedAddOnsTotal = selectedAddOnAmounts.reduce((sum, row) => sum + toResidentialPricingNumber(row.amount), 0);
+  const appliedTotal = toResidentialPricingNumber(selection.appliedProposalTotal || selection.selectedTotal || pricing.selectedTotal || pricing.totalProposal);
+  const optionPrice = toResidentialPricingNumber(selectedOption?.price ?? selectedOption?.amount ?? selectedOption?.total);
+  const fallbackBasePackage = getResidentialSimpleEstimateBasePackage({ ...proposal, pricingOptions: selectedOption ? [selectedOption] : proposal.pricingOptions });
+  const basePrice =
+    optionPrice > 0
+      ? optionPrice
+      : Math.max(0, toResidentialPricingNumber(fallbackBasePackage.total || fallbackBasePackage.price) || appliedTotal - selectedAddOnsTotal);
+  const total = appliedTotal > 0 ? appliedTotal : basePrice + selectedAddOnsTotal;
+  const basePackage = {
+    ...fallbackBasePackage,
+    name: selectedOptionName || selectedOption?.name || fallbackBasePackage.name || "Selected Base Option",
+    description: cleanResidentialText(selectedOption?.description || selectedOption?.scopeSummary || fallbackBasePackage.description),
+    price: basePrice,
+    total: basePrice,
+  };
+
+  return {
+    hasAppliedCustomerSelection: true,
+    status,
+    selectedPricingMode: pricingMode,
+    selectedOptionId,
+    selectedOptionName: basePackage.name,
+    selectedAddOnIds,
+    selectedAddOnNames,
+    selectedAddOnAmounts,
+    selectedAddOns: selectedAddOnAmounts,
+    basePackage,
+    basePrice,
+    selectedAddOnsTotal,
+    total,
+    downPayment: toResidentialPricingNumber(selection.appliedDownPayment || selection.selectedDownPayment || pricing.selectedDownPayment) || total / 2,
+    finalPayment: toResidentialPricingNumber(selection.appliedFinalPayment || selection.selectedFinalPayment || pricing.selectedFinalPayment) || total / 2,
+  };
+}
+
+function getAppliedResidentialAddOnAmounts(proposal = {}, selection = {}, selectedOption = null, selectedAddOnIds = [], selectedAddOnNames = []) {
+  const explicitRows = normalizeAppliedResidentialAddOnAmounts(selection.selectedAddOnAmounts);
+
+  if (explicitRows.length > 0) {
+    return explicitRows;
+  }
+
+  const selectedIdKeys = new Set(selectedAddOnIds.map(normalizeResidentialKey).filter(Boolean));
+  const selectedNameKeys = new Set(selectedAddOnNames.map(normalizeResidentialKey).filter(Boolean));
+
+  return getResidentialSimpleEstimateAddOns(proposal)
+    .filter((addOn) => {
+      const keys = [normalizeResidentialKey(addOn.id), normalizeResidentialKey(addOn.name)].filter(Boolean);
+
+      return addOn.selected || addOn.included || keys.some((key) => selectedIdKeys.has(key) || selectedNameKeys.has(key));
+    })
+    .map((addOn) => ({
+      id: addOn.id,
+      name: addOn.name,
+      amount: toResidentialPricingNumber(addOn.selectedAmount) || (selectedOption ? getResidentialAddOnAmountForOption(addOn, selectedOption) : toResidentialPricingNumber(addOn.amount)),
+    }))
+    .filter((row) => row.name || row.amount > 0);
+}
+
 export function calculateResidentialSimpleEstimateTotals(proposal = {}) {
+  const appliedSelection = getAppliedResidentialCustomerSelectionSummary(proposal);
+
+  if (appliedSelection.hasAppliedCustomerSelection) {
+    return {
+      ...appliedSelection,
+      addOns: getResidentialSimpleEstimateAddOns(proposal),
+      selectedAddOns: appliedSelection.selectedAddOns,
+      hasPendingCustomerSelection: false,
+    };
+  }
+
   const basePackage = getResidentialSimpleEstimateBasePackage(proposal);
   const addOns = getResidentialSimpleEstimateAddOns(proposal);
   const pricingMode = proposal.pricingMode || proposal.pricing?.pricingMode || "";
@@ -987,7 +1120,32 @@ export function calculateResidentialSimpleEstimateTotals(proposal = {}) {
     total,
     downPayment: total / 2,
     finalPayment: total / 2,
+    hasAppliedCustomerSelection: false,
+    hasPendingCustomerSelection: ["submitted", "reviewed"].includes(cleanResidentialText(proposal.customerSelection?.status)),
+    customerSelectionStatus: cleanResidentialText(proposal.customerSelection?.status),
+    selectedAddOns: addOns.filter((addOn) => addOn.selected || addOn.included),
   };
+}
+
+function normalizeAppliedResidentialAddOnAmounts(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row, index) => {
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+
+      const amount = toResidentialPricingNumber(row.amount ?? row.price ?? row.total);
+      const name = cleanResidentialText(row.name || row.label || `Selected Add-On ${index + 1}`);
+
+      return name || amount > 0
+        ? {
+            id: cleanResidentialText(row.id),
+            name: name || `Selected Add-On ${index + 1}`,
+            amount,
+          }
+        : null;
+    })
+    .filter(Boolean);
 }
 
 export function buildResidentialOptionBreakdowns(proposal = {}) {

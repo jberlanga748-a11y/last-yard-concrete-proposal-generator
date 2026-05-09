@@ -132,6 +132,11 @@ test("signed-in editor can review, apply, and send customer selection for approv
 
 test("customer portal supports final approval without exposing editor controls", () => {
   assert.match(appSource, /Final Selection for Approval/);
+  assert.match(appSource, /function CustomerPortalFinalSelectionPricing/);
+  assert.match(appSource, /showFinalSelection/);
+  assert.match(appSource, /getAppliedCustomerSelectionSummary\(proposal\)/);
+  assert.match(appSource, /Selected Base Option/);
+  assert.match(appSource, /Original options were provided for selection\. This view reflects the option\/add-ons currently applied by Last Yard Concrete/);
   assert.match(appSource, /Approve and Sign/);
   assert.match(appSource, /Typed Signature/);
   assert.match(appSource, /approval confirms the reviewed selection only/i);

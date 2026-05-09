@@ -970,6 +970,31 @@ export function calculateProposalTotals(proposalOrLineItems, overrides = {}) {
     ? { lineItems: proposalOrLineItems, financials: {} }
     : proposalOrLineItems || {};
   const financials = { ...(proposal.financials || {}), ...overrides };
+  const appliedCustomerSelectionTotal = getAppliedCustomerSelectionTotal(proposal);
+
+  if (appliedCustomerSelectionTotal > 0) {
+    const selection = proposal.customerSelection || {};
+    const pricing = proposal.pricing || {};
+    const deposit = roundMoney(
+      toNumber(selection.appliedDownPayment || selection.selectedDownPayment || pricing.selectedDownPayment) || resolveDeposit(appliedCustomerSelectionTotal, financials),
+    );
+    const balanceDue = roundMoney(
+      toNumber(selection.appliedFinalPayment || selection.selectedFinalPayment || pricing.selectedFinalPayment) ||
+        Math.max(0, appliedCustomerSelectionTotal - deposit),
+    );
+
+    return {
+      baseBid: appliedCustomerSelectionTotal,
+      subtotal: appliedCustomerSelectionTotal,
+      tax: 0,
+      discount: 0,
+      includedPricingSectionsTotal: 0,
+      totalIfAllAlternatesAccepted: appliedCustomerSelectionTotal,
+      total: appliedCustomerSelectionTotal,
+      deposit,
+      balanceDue,
+    };
+  }
 
   const subtotal = roundMoney(
     (proposal.lineItems || []).reduce((sum, item) => sum + getLineItemAmount(item), 0),
@@ -1009,6 +1034,17 @@ export function calculateProposalTotals(proposalOrLineItems, overrides = {}) {
     deposit,
     balanceDue,
   };
+}
+
+function getAppliedCustomerSelectionTotal(proposal = {}) {
+  const selection = proposal.customerSelection && typeof proposal.customerSelection === "object" ? proposal.customerSelection : {};
+  const pricing = proposal.pricing && typeof proposal.pricing === "object" ? proposal.pricing : {};
+
+  if (!["applied_to_proposal", "approval_sent", "approved_signed"].includes(selection.status)) {
+    return 0;
+  }
+
+  return roundMoney(selection.appliedProposalTotal || selection.selectedTotal || pricing.selectedTotal || pricing.totalProposal || proposal.totalProposal || proposal.totalAmount);
 }
 
 export function validateRequiredFields(proposal) {

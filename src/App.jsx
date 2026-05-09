@@ -7019,6 +7019,17 @@ function CustomerPortalHero({ company = {}, projectAddress = "", proposal = {} }
 }
 
 function CustomerPortalPricing({ proposal = {}, readOnly = false, selectionDraft = {}, onSelectionChange }) {
+  const customerSelection = normalizeCustomerSelection(proposal.customerSelection);
+  const showFinalSelection = [
+    CUSTOMER_SELECTION_STATUS_APPLIED,
+    CUSTOMER_SELECTION_STATUS_APPROVAL_SENT,
+    CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED,
+  ].includes(customerSelection.status);
+
+  if (showFinalSelection) {
+    return <CustomerPortalFinalSelectionPricing proposal={proposal} selection={customerSelection} />;
+  }
+
   if (hasResidentialChooseOnePricing(proposal)) {
     return <CustomerPortalChooseOnePricing proposal={proposal} readOnly={readOnly} selectionDraft={selectionDraft} onSelectionChange={onSelectionChange} />;
   }
@@ -7049,6 +7060,45 @@ function CustomerPortalPricing({ proposal = {}, readOnly = false, selectionDraft
       ) : (
         <p>Proposal total: {formatCurrency(totals.total)}</p>
       )}
+    </section>
+  );
+}
+
+function CustomerPortalFinalSelectionPricing({ proposal = {}, selection = {} }) {
+  const selectionSummary = getAppliedCustomerSelectionSummary(proposal);
+  const addOns = Array.isArray(selectionSummary.selectedAddOnAmounts) ? selectionSummary.selectedAddOnAmounts : [];
+  const addOnsTotal = addOns.reduce((sum, addOn) => sum + Number(addOn.amount || 0), 0);
+  const baseTotal = Math.max(0, Number(selectionSummary.selectedTotal || 0) - addOnsTotal);
+  const selectedBaseLabel = selection.selectedOptionName || selectionSummary.selectedOptionName || "Selected base package";
+
+  return (
+    <section className="customer-portal-section customer-portal-final-pricing">
+      <div className="customer-portal-section-heading">
+        <span>Final Selection for Approval</span>
+        <strong>{formatResidentialCurrency(selectionSummary.selectedTotal)}</strong>
+      </div>
+      <p className="customer-portal-submitted-note">
+        Original options were provided for selection. This view reflects the option/add-ons currently applied by Last Yard Concrete.
+      </p>
+      <div className="customer-portal-table">
+        <div className="customer-portal-table-row customer-portal-table-row-primary">
+          <span>Selected Base Option</span>
+          <span>{selectedBaseLabel}</span>
+          <strong>{formatResidentialCurrency(baseTotal)}</strong>
+        </div>
+        {addOns.map((addOn, index) => (
+          <div className="customer-portal-table-row" key={addOn.id || addOn.name || `final-addon-${index}`}>
+            <span>Selected Add-On</span>
+            <span>{addOn.name || `Add-On ${index + 1}`}</span>
+            <strong>{formatResidentialCurrency(addOn.amount, { plus: true })}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="customer-portal-payment-mini">
+        <span>Estimate Total: {formatResidentialCurrency(selectionSummary.selectedTotal)}</span>
+        <span>50% Down: {formatResidentialCurrency(selectionSummary.selectedDownPayment)}</span>
+        <span>Final Payment: {formatResidentialCurrency(selectionSummary.selectedFinalPayment)}</span>
+      </div>
     </section>
   );
 }

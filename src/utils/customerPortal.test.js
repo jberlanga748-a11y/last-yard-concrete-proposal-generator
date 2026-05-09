@@ -319,7 +319,9 @@ test("choose-one with add-ons uses option-specific add-on amounts", () => {
   assert.equal(totalFor("proposal-1", ["lighting"]).selectedTotal, 47000);
   assert.equal(totalFor("proposal-1", ["cantilever"]).selectedTotal, 50000);
   assert.equal(totalFor("proposal-1", ["walls", "lighting", "cantilever"]).selectedTotal, 67000);
+  assert.equal(totalFor("proposal-2", ["walls", "lighting"]).selectedTotal, 72000);
   assert.equal(totalFor("proposal-2", ["walls", "lighting", "cantilever"]).selectedTotal, 87000);
+  assert.equal(totalFor("proposal-3", ["walls", "cantilever"]).selectedTotal, 100000);
   const proposal3Summary = totalFor("proposal-3", ["walls", "lighting", "cantilever"]);
 
   assert.equal(proposal3Summary.selectedTotal, 107000);
