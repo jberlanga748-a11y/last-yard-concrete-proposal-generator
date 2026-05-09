@@ -88,6 +88,9 @@ test("customer portal renders simple-estimate and choose-one customer pricing co
   assert.match(appSource, /Not Selected/);
   assert.match(appSource, /function CustomerPortalChooseOnePricing/);
   assert.match(appSource, /Customer to Select One/);
+  assert.match(appSource, /Optional add-ons are selected below and added only if chosen/);
+  assert.match(appSource, /getResidentialAddOnAmountForOption\(addOn, selectedOptionRow/);
+  assert.doesNotMatch(appSource, /With optional add-on|With selected add-on|With add-on/);
   assert.match(appSource, /getCustomerSafeImageCaption/);
   assert.match(appSource, /\.filter\(\(image\) => image\.src\)/);
 });
@@ -121,6 +124,15 @@ test("customer portal supports final approval without exposing editor controls",
 });
 
 test("customer portal selection API validates token and writes only requested public action state", () => {
+  assert.match(customerPortalApiSource, /getSupabaseServerConfig\(env\)/);
+  assert.match(customerPortalApiSource, /SUPABASE_URL, env\.NEXT_PUBLIC_SUPABASE_URL, env\.VITE_SUPABASE_URL/);
+  assert.match(customerPortalApiSource, /SUPABASE_SERVICE_ROLE_KEY, env\.SUPABASE_SECRET_KEY/);
+  assert.match(customerPortalApiSource, /missing-server-supabase-config/);
+  assert.match(customerPortalApiSource, /persistSession:\s*false/);
+  assert.match(customerPortalApiSource, /autoRefreshToken:\s*false/);
+  assert.match(customerPortalApiSource, /apikey:\s*serviceRoleKey/);
+  assert.match(customerPortalApiSource, /Authorization:\s*`Bearer \$\{serviceRoleKey\}`/);
+  assert.doesNotMatch(customerPortalApiSource, /VITE_SUPABASE_SERVICE_ROLE_KEY|NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY/);
   assert.match(customerPortalApiSource, /request\.method === "POST"/);
   assert.match(customerPortalApiSource, /getCustomerShareStatus\(proposal, shareToken\)/);
   assert.match(customerPortalApiSource, /buildSubmittedCustomerSelection\(proposal, body\.selection/);

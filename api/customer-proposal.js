@@ -13,8 +13,21 @@ import {
 } from "../src/utils/customerPortal.js";
 
 const proposalsTable = "proposals";
+const customerPortalConfigError = {
+  ok: false,
+  error: "Customer portal is not configured. Please contact Last Yard Concrete.",
+  reason: "missing-server-supabase-config",
+};
 
 export default async function handler(request, response) {
+  return handleCustomerProposalRequest(request, response);
+}
+
+export async function handleCustomerProposalRequest(
+  request,
+  response,
+  { env = process.env, createClientImpl = createClient, logger = console } = {},
+) {
   response.setHeader("Cache-Control", "no-store");
 
   if (request.method === "OPTIONS") {
@@ -35,27 +48,20 @@ export default async function handler(request, response) {
     return;
   }
 
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const serverConfig = getSupabaseServerConfig(env);
 
-  if (!supabaseUrl || !serviceRoleKey) {
-    response.status(503).json({
-      ok: false,
-      available: false,
-      configured: false,
-      reason: "unconfigured",
-      error: "Customer proposal portal lookup is not configured.",
+  if (!serverConfig.configured) {
+    logger.error?.("[customer-proposal] Missing server Supabase config.", {
+      hasSupabaseUrl: Boolean(serverConfig.supabaseUrl),
+      hasServiceRoleKey: Boolean(serverConfig.serviceRoleKey),
+      missing: serverConfig.missing,
     });
+    response.status(500).json({ ...customerPortalConfigError });
     return;
   }
 
   try {
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
+    const supabase = createCustomerPortalSupabaseClient(serverConfig, { createClientImpl });
     const { data, error } = await supabase
       .from(proposalsTable)
       .select("id,proposal_data,created_at,updated_at")
@@ -211,6 +217,66 @@ export default async function handler(request, response) {
       error: formatApiError(error),
     });
   }
+}
+
+export function getSupabaseServerConfig(env = process.env) {
+  const supabaseUrl = firstNonEmptyEnvValue(env.SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_URL, env.VITE_SUPABASE_URL);
+  const serviceRoleKey = firstNonEmptyEnvValue(env.SUPABASE_SERVICE_ROLE_KEY, env.SUPABASE_SECRET_KEY);
+  const missing = [];
+
+  if (!supabaseUrl) {
+    missing.push("SUPABASE_URL");
+  }
+
+  if (!serviceRoleKey) {
+    missing.push("SUPABASE_SERVICE_ROLE_KEY");
+  }
+
+  return {
+    configured: Boolean(supabaseUrl && serviceRoleKey),
+    missing,
+    serviceRoleKey,
+    supabaseUrl,
+  };
+}
+
+export function createCustomerPortalSupabaseClient({ supabaseUrl, serviceRoleKey } = {}, { createClientImpl = createClient } = {}) {
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new Error("Missing server Supabase config for customer proposal portal.");
+  }
+
+  return createClientImpl(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+    global: {
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+      },
+    },
+  });
+}
+
+export function getCustomerPortalConfigErrorPayload() {
+  return { ...customerPortalConfigError };
+}
+
+function firstNonEmptyEnvValue(...values) {
+  for (const value of values) {
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    const trimmed = value.trim();
+
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return "";
 }
 
 function getRequestIpAddress(request) {
