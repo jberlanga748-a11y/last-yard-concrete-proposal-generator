@@ -102,6 +102,8 @@ export function buildResidentialPricingOptionRows(proposal = {}) {
       lineItems: normalizeResidentialOptionLineItems(option.lineItems),
       lineItemTotal: getResidentialOptionLineItemTotal(option),
       totalWarning: getResidentialOptionTotalWarning(option),
+      included: Boolean(option.included || option.selected),
+      selected: Boolean(option.selected || option.included),
       basePrice,
       downPayment: toResidentialPricingNumber(option.downPayment) || basePrice / 2,
       finalPayment: toResidentialPricingNumber(option.finalPayment) || basePrice / 2,
@@ -379,21 +381,43 @@ export function getResidentialComparisonAddOn(addOns = []) {
 }
 
 export function getResidentialPacketPageStructure(proposal = {}) {
-  if (hasResidentialBasePlusAddOnsPricing(proposal) && normalizeResidentialPdfLayout(proposal.residentialPdfLayout, proposal) === RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT) {
+  const layout = normalizeResidentialPdfLayout(proposal.residentialPdfLayout, proposal);
+  const hasChooseOne = hasResidentialChooseOnePricing(proposal);
+  const hasBasePlusAddOns = hasResidentialBasePlusAddOnsPricing(proposal);
+
+  if (layout === RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT) {
     return ["cover_summary", "residential_simple_estimate", "residential_legal_papers", "residential_payment_terms"];
   }
 
-  if (!hasResidentialChooseOnePricing(proposal)) {
-    return ["cover_summary", "details_pricing"];
+  if (layout === RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT) {
+    return [
+      "cover_summary",
+      hasChooseOne ? "residential_pricing_options" : "residential_simple_estimate",
+      "residential_scope",
+      "residential_legal_papers",
+      "residential_payment_terms",
+    ];
   }
 
-  const pages = ["cover_summary", "residential_pricing_options"];
+  const pages = ["cover_summary"];
+
+  if (hasChooseOne) {
+    pages.push("residential_pricing_options");
+  } else if (hasBasePlusAddOns) {
+    pages.push("residential_simple_estimate");
+  } else {
+    pages.push("residential_scope");
+  }
 
   if (hasResidentialOptionBreakdowns(proposal)) {
     pages.push("residential_option_breakdowns");
   }
 
-  pages.push("residential_scope", "residential_legal_papers", "residential_payment_terms");
+  if (!pages.includes("residential_scope")) {
+    pages.push("residential_scope");
+  }
+
+  pages.push("residential_legal_papers", "residential_payment_terms");
 
   return pages;
 }

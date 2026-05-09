@@ -22,9 +22,8 @@ import {
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
   getPrintableResidentialOptionImages,
-  hasResidentialBasePlusAddOnsPricing,
-  hasResidentialChooseOnePricing,
   normalizeResidentialPdfLayout,
+  RESIDENTIAL_DETAILED_BACKUP_LAYOUT,
   RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT,
   splitResidentialOptionalAddOnsForPrint,
 } from "../../utils/proposalPacket/residentialPricing.js";
@@ -156,6 +155,18 @@ export function ProposalPreview({ companySettings, proposal, helpers }) {
   );
 }
 
+function renderResidentialPacket({ detailedBackupItems = [], layout = "", proposalWithPhotosItems = [], simpleEstimateItems = [] } = {}) {
+  if (layout === RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT) {
+    return simpleEstimateItems;
+  }
+
+  if (layout === RESIDENTIAL_DETAILED_BACKUP_LAYOUT) {
+    return detailedBackupItems;
+  }
+
+  return proposalWithPhotosItems;
+}
+
 function formatResidentialProposalTextForPrint(proposal = {}) {
   return {
     ...proposal,
@@ -274,17 +285,20 @@ function ProposalPacketContent({ companySettings, proposal }) {
     : [];
   const includeResidentialTerms = isResidentialMode && shouldPrintResidentialTermsAndConditions({ ...packetProposal, residentialLegalPapers }) && residentialTermsSections.length > 0;
   const visiblePricingSections = isResidentialMode ? [] : appendixPlan.mainPricingSections;
-  const hasChooseOnePricing = hasResidentialChooseOnePricing(packetProposal);
-  const hasBasePlusAddOnsPricing = hasResidentialBasePlusAddOnsPricing(packetProposal);
   const residentialPdfLayout = isResidentialMode ? normalizeResidentialPdfLayout(packetProposal.residentialPdfLayout, packetProposal) : "";
-  const useResidentialSimpleEstimate = isResidentialMode && residentialPdfLayout === RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT && hasBasePlusAddOnsPricing;
+  const useResidentialSimpleEstimate = isResidentialMode && residentialPdfLayout === RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT;
+  const useResidentialDetailedBackup = isResidentialMode && residentialPdfLayout === RESIDENTIAL_DETAILED_BACKUP_LAYOUT;
   const simpleEstimateTotals = useResidentialSimpleEstimate ? calculateResidentialSimpleEstimateTotals(packetProposal) : null;
-  const residentialPricingOptionPrintPages = buildResidentialPricingOptionPrintPages(packetProposal);
+  const residentialPricingOptionPrintPages = useResidentialSimpleEstimate ? [] : buildResidentialPricingOptionPrintPages(packetProposal);
   const { withoutPhotos: residentialTextOptionalAddOns } = splitResidentialOptionalAddOnsForPrint(packetProposal);
-  const residentialOptionalAddOnPrintPages = buildResidentialOptionalAddOnPrintPages(packetProposal);
+  const residentialOptionalAddOnPrintPages = useResidentialSimpleEstimate ? [] : buildResidentialOptionalAddOnPrintPages(packetProposal);
   const structuredPacketPages = isResidentialMode ? [] : buildStructuredPacketPages(packetProposal);
-  const residentialOptionBreakdownPages = buildResidentialOptionBreakdownPages(packetProposal);
-  const planSheetPages = isResidentialMode ? getEnabledPlanSheets(packetProposal.planSheets).filter(hasResidentialPlanSheetPrintData) : getEnabledPlanSheets(packetProposal.planSheets);
+  const residentialOptionBreakdownPages = useResidentialDetailedBackup ? buildResidentialOptionBreakdownPages(packetProposal) : [];
+  const planSheetPages = isResidentialMode
+    ? useResidentialDetailedBackup
+      ? getEnabledPlanSheets(packetProposal.planSheets).filter(hasResidentialPlanSheetPrintData)
+      : []
+    : getEnabledPlanSheets(packetProposal.planSheets);
   const appendixPages = isResidentialMode ? [] : appendixPlan.pages;
   const hasExtendedPacketPages =
     structuredPacketPages.length > 0 || residentialOptionBreakdownPages.length > 0 || appendixPages.length > 0 || planSheetPages.length > 0;
@@ -476,7 +490,31 @@ function ProposalPacketContent({ companySettings, proposal }) {
       />
     ),
   };
-  const residentialPacketItems = [
+  const residentialProposalWithPhotosItems = [
+    coverSummaryItem,
+    ...residentialPricingItems,
+    ...residentialOptionalAddOnItems,
+    {
+      key: "residential-scope",
+      sectionId: "residential_scope",
+      render: (pageNumber) => (
+        <ResidentialScopePage
+          company={company}
+          exclusions={appendixPlan.mainExclusions}
+          pageNumber={pageNumber}
+          pdfStyle={pdfStyle}
+          projectName={packetProposal.project?.name}
+          scopeLeft={scopeLeft}
+          scopeRight={scopeRight}
+          specRows={specRows}
+        />
+      ),
+    },
+    residentialLegalPapersItem,
+    ...residentialTermsItems,
+    ...(!includeResidentialTerms ? [residentialPaymentTermsItem] : []),
+  ];
+  const residentialDetailedBackupItems = [
     coverSummaryItem,
     ...residentialPricingItems,
     ...residentialOptionalAddOnItems,
@@ -541,9 +579,15 @@ function ProposalPacketContent({ companySettings, proposal }) {
     ...(isResidentialMode ? [residentialLegalPapersItem] : []),
     ...(isResidentialMode ? residentialTermsItems : []),
   ];
+  const residentialRenderItems = renderResidentialPacket({
+    detailedBackupItems: residentialDetailedBackupItems,
+    layout: residentialPdfLayout,
+    proposalWithPhotosItems: residentialProposalWithPhotosItems,
+    simpleEstimateItems: residentialSimpleEstimateItems,
+  });
   const packetItems = orderPacketRenderItems(
     packetProposal,
-    useResidentialSimpleEstimate ? residentialSimpleEstimateItems : isResidentialMode && hasChooseOnePricing ? residentialPacketItems : standardPacketItems,
+    isResidentialMode ? residentialRenderItems : standardPacketItems,
     getPacketBuilderSectionStatus,
   );
 
@@ -715,10 +759,6 @@ function ResidentialOptionBreakdownsPage({ company, page, pageNumber, projectNam
 }
 
 function buildResidentialSimpleEstimateAttachmentPages(proposal = {}, photosPerPage = 6) {
-  if (!hasResidentialBasePlusAddOnsPricing(proposal)) {
-    return [];
-  }
-
   const projectPhotos = (Array.isArray(proposal.projectPhotos) ? proposal.projectPhotos : [])
     .filter(hasSimpleEstimateImageSource)
     .map((photo, index) => ({
@@ -726,8 +766,15 @@ function buildResidentialSimpleEstimateAttachmentPages(proposal = {}, photosPerP
       id: photo.id || `project-photo-${index + 1}`,
       label: getSimpleEstimatePhotoCaption(photo, index),
     }));
+  const optionPhotos = buildResidentialPricingOptionRows(proposal).flatMap((option, optionIndex) =>
+    getPrintableResidentialOptionImages(option.images).map((image, imageIndex) => ({
+      ...image,
+      id: image.id || `option-photo-${optionIndex + 1}-${imageIndex + 1}`,
+      label: getSimpleEstimatePhotoCaption(image, imageIndex, option.name || "Pricing Option"),
+    })),
+  );
   const addOnPhotos = getResidentialSimpleAddOnPhotos(proposal);
-  const photos = [...projectPhotos, ...addOnPhotos];
+  const photos = [...projectPhotos, ...optionPhotos, ...addOnPhotos];
 
   if (photos.length === 0) {
     return [];
@@ -785,6 +832,8 @@ function ResidentialSimpleEstimatePage({ company, pageNumber, projectName, propo
   ].filter(Boolean);
   const fromLines = [company.name, company.phone, company.email, company.license, ...(Array.isArray(company.credentials) ? company.credentials : [])].filter(Boolean);
   const addOns = estimateTotals.addOns || [];
+  const optionRows = buildResidentialPricingOptionRows(proposal);
+  const hasChooseOneOptions = optionRows.length > 0;
 
   return (
     <ProposalPage className="structured-packet-page residential-simple-estimate-page">
@@ -834,13 +883,29 @@ function ResidentialSimpleEstimatePage({ company, pageNumber, projectName, propo
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>{basePackage.name || "Base Package"}</td>
-                <td>{basePackage.description || project.description || "Residential concrete base package."}</td>
-                <td>{formatResidentialCurrency(estimateTotals.basePrice)}</td>
-                <td>{basePackage.quantity || 1}</td>
-                <td>{formatResidentialCurrency(estimateTotals.basePrice)}</td>
-              </tr>
+              {hasChooseOneOptions ? (
+                optionRows.map((option) => {
+                  const selected = Boolean(option.selected || option.included);
+
+                  return (
+                    <tr key={option.id || option.name}>
+                      <td>{option.name || "Pricing Option"}</td>
+                      <td>{option.description || option.scopeSummary || "Customer to select one main option."}</td>
+                      <td>{formatResidentialCurrency(option.basePrice)}</td>
+                      <td>Choose one</td>
+                      <td>{selected ? "Selected base option" : `Available - ${formatResidentialCurrency(option.basePrice)}`}</td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td>{basePackage.name || "Base Package"}</td>
+                  <td>{basePackage.description || project.description || "Residential concrete base package."}</td>
+                  <td>{formatResidentialCurrency(estimateTotals.basePrice)}</td>
+                  <td>{basePackage.quantity || 1}</td>
+                  <td>{formatResidentialCurrency(estimateTotals.basePrice)}</td>
+                </tr>
+              )}
               {addOns.map((addOn) => {
                 const selected = Boolean(addOn.selected || addOn.included);
 

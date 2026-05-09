@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   BASE_PLUS_ADDONS_PRICING_MODE,
+  RESIDENTIAL_DETAILED_BACKUP_LAYOUT,
   RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT,
   RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT,
   RESIDENTIAL_CHOOSE_ONE_COVER_DESCRIPTION,
@@ -501,8 +502,27 @@ test("residential optional add-on placeholders stay in pricing text and do not c
   assert.equal(pages.length, 0);
 });
 
-test("residential choose-one page structure separates pricing, SOV, scope, and terms", () => {
-  assert.deepEqual(getResidentialPacketPageStructure(residentialProposal), [
+test("residential simple estimate page structure does not include option/SOV backup pages", () => {
+  assert.deepEqual(getResidentialPacketPageStructure({ ...residentialProposal, residentialPdfLayout: RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT }), [
+    "cover_summary",
+    "residential_simple_estimate",
+    "residential_legal_papers",
+    "residential_payment_terms",
+  ]);
+});
+
+test("residential proposal-with-photos shows option cards without SOV backup pages", () => {
+  assert.deepEqual(getResidentialPacketPageStructure({ ...residentialProposal, residentialPdfLayout: RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT }), [
+    "cover_summary",
+    "residential_pricing_options",
+    "residential_scope",
+    "residential_legal_papers",
+    "residential_payment_terms",
+  ]);
+});
+
+test("residential detailed backup page structure separates pricing, SOV, scope, and terms", () => {
+  assert.deepEqual(getResidentialPacketPageStructure({ ...residentialProposal, residentialPdfLayout: RESIDENTIAL_DETAILED_BACKUP_LAYOUT }), [
     "cover_summary",
     "residential_pricing_options",
     "residential_option_breakdowns",

@@ -64,12 +64,33 @@ test("residential PDF can show customer approval signature record after signing"
 test("residential simple estimate has a dedicated print branch and avoids GC alternate language", () => {
   assert.match(source, /RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT/);
   assert.match(source, /useResidentialSimpleEstimate/);
+  assert.match(source, /function renderResidentialPacket/);
+  assert.match(source, /layout === RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT[\s\S]*return simpleEstimateItems/);
   assert.match(source, /function ResidentialSimpleEstimatePage/);
   assert.match(source, /Optional Add-On:/);
   assert.match(source, /Estimate Total/);
+  assert.match(source, /residentialPricingOptionPrintPages = useResidentialSimpleEstimate \? \[\] : buildResidentialPricingOptionPrintPages/);
   assert.match(source, /residentialSimpleEstimateItems[\s\S]*residentialLegalPapersItem[\s\S]*residentialTermsItems/);
   assert.match(source, /!\s*includeResidentialTerms\s*\?\s*\[residentialPaymentTermsItem\]\s*:\s*\[\]/);
   assert.doesNotMatch(source.match(/function ResidentialSimpleEstimatePage[\s\S]*?function ResidentialSimpleEstimateAttachmentsPage/)?.[0] || "", /Add Alternate|Total if All Alternates Accepted/);
+});
+
+test("residential layout routing gates detailed backup pages behind detailed_backup", () => {
+  assert.match(source, /RESIDENTIAL_DETAILED_BACKUP_LAYOUT/);
+  assert.match(source, /const useResidentialDetailedBackup = isResidentialMode && residentialPdfLayout === RESIDENTIAL_DETAILED_BACKUP_LAYOUT/);
+  assert.match(source, /residentialOptionBreakdownPages = useResidentialDetailedBackup \? buildResidentialOptionBreakdownPages\(packetProposal\) : \[\]/);
+  assert.match(source, /useResidentialDetailedBackup[\s\S]*getEnabledPlanSheets\(packetProposal\.planSheets\)\.filter\(hasResidentialPlanSheetPrintData\)[\s\S]*: \[\]/);
+  assert.match(source, /layout === RESIDENTIAL_DETAILED_BACKUP_LAYOUT[\s\S]*return detailedBackupItems/);
+});
+
+test("residential simple estimate can summarize choose-one options without customer pricing packet pages", () => {
+  const simpleEstimateSource = source.match(/function ResidentialSimpleEstimatePage[\s\S]*?function ResidentialSimpleEstimateAttachmentsPage/)?.[0] || "";
+
+  assert.match(simpleEstimateSource, /const optionRows = buildResidentialPricingOptionRows\(proposal\)/);
+  assert.match(simpleEstimateSource, /hasChooseOneOptions/);
+  assert.match(simpleEstimateSource, /Selected base option/);
+  assert.doesNotMatch(simpleEstimateSource, /Customer Pricing Options/);
+  assert.doesNotMatch(simpleEstimateSource, /Schedule of Values/);
 });
 
 test("simple estimate attachments render customer-safe captions and photos", () => {
