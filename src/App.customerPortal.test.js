@@ -67,6 +67,20 @@ test("local-only image uploads warn that images are not cloud portable", () => {
   assert.match(storageCloudSource, /Local image only - sign in\/save to cloud for access on other devices/);
 });
 
+test("proposal photo uploads attach local previews before cloud sync", () => {
+  const projectPhotoUploadSource = appSource.match(/async function uploadProjectPhoto[\s\S]*?function updateResidentialPricingOptions/)?.[0] || "";
+  const optionPhotoUploadSource = appSource.match(/async function uploadResidentialOptionImage[\s\S]*?function updatePlanSheet/)?.[0] || "";
+  const attachOptionImageSource = appSource.match(/function attachResidentialOptionImageToProposal[\s\S]*?function formatUploadResultMessage/)?.[0] || "";
+
+  assert.match(projectPhotoUploadSource, /const asset = await createLocalImageAsset\(uploadFile\)/);
+  assert.match(optionPhotoUploadSource, /const asset = await createLocalImageAsset\(uploadFile\)/);
+  assert.doesNotMatch(projectPhotoUploadSource, /uploadProposalAssetToCloud\(uploadFile/);
+  assert.doesNotMatch(optionPhotoUploadSource, /uploadProposalAssetToCloud\(uploadFile/);
+  assert.match(attachOptionImageSource, /\.\.\.placeholder,[\s\S]*?\.\.\.asset/);
+  assert.match(attachOptionImageSource, /uploadRequired:\s*false/);
+  assert.match(appSource, /Cloud photo upload will retry on Save Draft/);
+});
+
 test("customer portal view is read-only and hides protected app navigation", () => {
   assert.match(appSource, /Customer Proposal View/);
   assert.match(appSource, /Read-only proposal/);

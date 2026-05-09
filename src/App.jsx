@@ -4552,21 +4552,12 @@ export default function App() {
       }));
       setAssetUploadMessage(
         canUseCloudSync(authUser)
-          ? `Uploading to cloud... ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
+          ? `Preparing preview and cloud upload... ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
           : `Saved locally only. Reason: ${localReason} ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(uploadFile)}${preparationMessage ? ` ${preparationMessage}` : ""}`,
       );
 
       try {
-        const asset = canUseCloudSync(authUser)
-          ? await uploadProposalAssetToCloud(uploadFile, {
-              area: "featured",
-              companySettings,
-              companyUser: authUser,
-              companyDeps: companyCloudDeps,
-              fileStem: `photo-${targetIndex + 1}`,
-              proposalId: proposalDraft.id,
-            })
-          : await createLocalImageAsset(uploadFile);
+        const asset = await createLocalImageAsset(uploadFile);
         const safeAsset = withImageSafetyMetadata(asset, file, preparedImage);
         const existingPhoto = workingPhotos[targetIndex] || {};
         workingPhotos[targetIndex] = normalizeProjectPhoto(
@@ -4579,52 +4570,17 @@ export default function App() {
           targetIndex,
         );
         uploadedPaths.push(safeAsset.storagePath || safeAsset.fileName || file.name || `photo-${targetIndex + 1}`);
-
-        if (canUseCloudSync(authUser)) {
-          setStorageDiagnostics((currentDiagnostics) => ({
-            ...currentDiagnostics,
-            companyId: safeAsset.companyId || currentDiagnostics.companyId,
-            errorMessage: "",
-            lastAttemptedAt: attemptedAt,
-            lastFileName: file.name || safeAsset.fileName || `photo-${targetIndex + 1}`,
-            lastFileSize: file.size || 0,
-            lastProcessedFileSize: uploadFile.size || file.size || 0,
-            lastPublicUrl: safeAsset.publicUrl || "",
-            lastStatus: "success",
-            lastStoragePath: safeAsset.storagePath || "",
-            lastSuccessfulImageUploadPath: safeAsset.storagePath || currentDiagnostics.lastSuccessfulImageUploadPath,
-            lastUploadType: uploadType,
-          }));
-        }
       } catch (error) {
-        console.error("Cloud image upload failed:", error);
+        console.error("Local image preview failed:", error);
         const errorMessage = formatStorageUploadError(error);
-        try {
-          const localAsset = withImageSafetyMetadata(await createLocalImageAsset(uploadFile), file, preparedImage);
-          const existingPhoto = workingPhotos[targetIndex] || {};
-          workingPhotos[targetIndex] = normalizeProjectPhoto(
-            {
-              ...existingPhoto,
-              ...localAsset,
-              caption: getCleanUploadedImageCaption(existingPhoto.caption || existingPhoto.label, existingPhoto.label),
-              label: getCleanUploadedImageCaption(existingPhoto.label, getImageCaptionFromFile(file.name) || `Photo ${targetIndex + 1}`),
-            },
-            targetIndex,
-          );
-          uploadedPaths.push(localAsset.fileName || file.name || `photo-${targetIndex + 1}`);
-          failures.push(`${file.name || `Photo ${fileIndex + 1}`}: cloud upload failed; saved locally.`);
-          recordActivity({
-            action: "Image upload failed",
-            entityType: "storage",
-            entityId: proposalDraft.id,
-            entityLabel: uploadType,
-            notes: errorMessage,
-          });
-        } catch (localError) {
-          console.error("Local image fallback failed:", localError);
-          const localErrorMessage = formatStorageUploadError(localError);
-          failures.push(`${file.name || `Photo ${fileIndex + 1}`}: ${errorMessage}. Local fallback failed: ${localErrorMessage}`);
-        }
+        failures.push(`${file.name || `Photo ${fileIndex + 1}`}: ${errorMessage}`);
+        recordActivity({
+          action: "Image upload failed",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: errorMessage,
+        });
       }
     }
 
@@ -4639,17 +4595,22 @@ export default function App() {
       setProposalDraft(nextProposal);
       setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
 
+      let cloudSyncSucceeded = false;
+
       if (canUseCloudSync(authUser)) {
-        await syncSingleProposalToCloud(nextProposal, `${uploadedPaths.length} photo${uploadedPaths.length === 1 ? "" : "s"} uploaded to Supabase Storage and proposal synced.`);
+        cloudSyncSucceeded = await syncSingleProposalToCloud(
+          nextProposal,
+          `${uploadedPaths.length} photo${uploadedPaths.length === 1 ? "" : "s"} uploaded to Supabase Storage and proposal synced.`,
+        );
         setStorageDiagnostics((currentDiagnostics) => ({
           ...currentDiagnostics,
           companyId: currentDiagnostics.companyId,
-          errorMessage: "",
+          errorMessage: cloudSyncSucceeded ? "" : "Saved locally. Cloud photo upload will retry on Save Draft.",
           lastAttemptedAt: attemptedAt,
           lastFailedUploadError: failures.join(" "),
-          lastStatus: "success",
-          lastStoragePath: uploadedPaths.at(-1) || "",
-          lastSuccessfulImageUploadPath: uploadedPaths.at(-1) || currentDiagnostics.lastSuccessfulImageUploadPath,
+          lastStatus: cloudSyncSucceeded ? "success" : "local fallback",
+          lastStoragePath: cloudSyncSucceeded ? uploadedPaths.at(-1) || "" : "",
+          lastSuccessfulImageUploadPath: cloudSyncSucceeded ? uploadedPaths.at(-1) || currentDiagnostics.lastSuccessfulImageUploadPath : currentDiagnostics.lastSuccessfulImageUploadPath,
           lastUploadType: uploadType,
         }));
       }
@@ -4665,7 +4626,13 @@ export default function App() {
         }));
       }
 
-      setAssetUploadMessage(formatImageBatchResultMessage(uploadedPaths.length, failures, canUseCloudSync(authUser) ? "Uploaded to Supabase Storage" : `Saved locally only. Reason: ${localReason}`));
+      const uploadPrefix =
+        canUseCloudSync(authUser) && cloudSyncSucceeded
+          ? "Uploaded to Supabase Storage"
+          : canUseCloudSync(authUser)
+            ? "Saved locally. Cloud photo upload will retry on Save Draft"
+            : `Saved locally only. Reason: ${localReason}`;
+      setAssetUploadMessage(formatImageBatchResultMessage(uploadedPaths.length, failures, uploadPrefix));
       recordActivity({
         action: "Image upload succeeded",
         entityType: "storage",
@@ -5154,45 +5121,26 @@ export default function App() {
       }));
       setAssetUploadMessage(
         canUseCloudSync(authUser)
-          ? `Uploading to cloud... ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
+          ? `Preparing option preview and cloud upload... ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
           : `Saved locally only. Reason: ${localReason} ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(uploadFile)}${preparationMessage ? ` ${preparationMessage}` : ""}`,
       );
 
       try {
-        const asset = canUseCloudSync(authUser)
-          ? await uploadProposalAssetToCloud(uploadFile, {
-              area: "option-photos",
-              companySettings,
-              companyUser: authUser,
-              companyDeps: companyCloudDeps,
-              fileStem: `${fileStem}-${fileIndex + 1}`,
-              proposalId: proposalDraft.id,
-            })
-          : await createLocalImageAsset(uploadFile);
+        const asset = await createLocalImageAsset(uploadFile);
         const safeAsset = withImageSafetyMetadata(asset, file, preparedImage);
         workingProposal = attachResidentialOptionImageToProposal(workingProposal, collectionKey, itemIndex, safeAsset, authUser?.email || "");
         uploadedPaths.push(safeAsset.storagePath || safeAsset.fileName || file.name || `${fileStem}-${fileIndex + 1}`);
       } catch (error) {
-        console.error("Option photo upload failed:", error);
+        console.error("Option photo preview failed:", error);
         const errorMessage = formatStorageUploadError(error);
-
-        try {
-          const localAsset = withImageSafetyMetadata(await createLocalImageAsset(uploadFile), file, preparedImage);
-          workingProposal = attachResidentialOptionImageToProposal(workingProposal, collectionKey, itemIndex, localAsset, authUser?.email || "");
-          uploadedPaths.push(localAsset.fileName || file.name || `${fileStem}-${fileIndex + 1}`);
-          failures.push(`${file.name || `Photo ${fileIndex + 1}`}: cloud upload failed; saved locally.`);
-          recordActivity({
-            action: "Image upload failed",
-            entityType: "storage",
-            entityId: proposalDraft.id,
-            entityLabel: uploadType,
-            notes: errorMessage,
-          });
-        } catch (localError) {
-          console.error("Local option photo fallback failed:", localError);
-          const localErrorMessage = formatStorageUploadError(localError);
-          failures.push(`${file.name || `Photo ${fileIndex + 1}`}: ${errorMessage}. Local fallback failed: ${localErrorMessage}`);
-        }
+        failures.push(`${file.name || `Photo ${fileIndex + 1}`}: ${errorMessage}`);
+        recordActivity({
+          action: "Image upload failed",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: errorMessage,
+        });
       }
     }
 
@@ -5202,21 +5150,39 @@ export default function App() {
       setProposalDraft(nextProposal);
       setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
 
+      let cloudSyncSucceeded = false;
+
       if (canUseCloudSync(authUser)) {
-        await syncSingleProposalToCloud(nextProposal, `${uploadedPaths.length} option photo${uploadedPaths.length === 1 ? "" : "s"} uploaded to Supabase Storage and proposal synced.`);
+        cloudSyncSucceeded = await syncSingleProposalToCloud(
+          nextProposal,
+          `${uploadedPaths.length} option photo${uploadedPaths.length === 1 ? "" : "s"} uploaded to Supabase Storage and proposal synced.`,
+        );
       }
 
       setStorageDiagnostics((currentDiagnostics) => ({
         ...currentDiagnostics,
-        errorMessage: failures.length > 0 ? failures.join(" ") : canUseCloudSync(authUser) ? "" : `Saved locally only. Reason: ${localReason}`,
+        errorMessage:
+          failures.length > 0
+            ? failures.join(" ")
+            : canUseCloudSync(authUser) && !cloudSyncSucceeded
+              ? "Saved locally. Cloud photo upload will retry on Save Draft."
+              : canUseCloudSync(authUser)
+                ? ""
+                : `Saved locally only. Reason: ${localReason}`,
         lastAttemptedAt: attemptedAt,
         lastFailedUploadError: failures.join(" "),
-        lastStatus: failures.length > 0 ? "local fallback" : canUseCloudSync(authUser) ? "success" : "local fallback",
-        lastStoragePath: canUseCloudSync(authUser) ? uploadedPaths.at(-1) || "" : "",
-        lastSuccessfulImageUploadPath: uploadedPaths.at(-1) || currentDiagnostics.lastSuccessfulImageUploadPath,
+        lastStatus: failures.length > 0 ? "local fallback" : canUseCloudSync(authUser) && cloudSyncSucceeded ? "success" : "local fallback",
+        lastStoragePath: canUseCloudSync(authUser) && cloudSyncSucceeded ? uploadedPaths.at(-1) || "" : "",
+        lastSuccessfulImageUploadPath: canUseCloudSync(authUser) && cloudSyncSucceeded ? uploadedPaths.at(-1) || currentDiagnostics.lastSuccessfulImageUploadPath : currentDiagnostics.lastSuccessfulImageUploadPath,
         lastUploadType: uploadType,
       }));
-      setAssetUploadMessage(formatImageBatchResultMessage(uploadedPaths.length, failures, canUseCloudSync(authUser) ? "Uploaded to Supabase Storage" : `Saved locally only. Reason: ${localReason}`));
+      const uploadPrefix =
+        canUseCloudSync(authUser) && cloudSyncSucceeded
+          ? "Uploaded to Supabase Storage"
+          : canUseCloudSync(authUser)
+            ? "Saved locally. Cloud photo upload will retry on Save Draft"
+            : `Saved locally only. Reason: ${localReason}`;
+      setAssetUploadMessage(formatImageBatchResultMessage(uploadedPaths.length, failures, uploadPrefix));
       recordActivity({
         action: "Image upload succeeded",
         entityType: "storage",

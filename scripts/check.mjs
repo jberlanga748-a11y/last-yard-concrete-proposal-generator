@@ -11,6 +11,7 @@ const filesToCheck = [
   "src/utils/cloud/contactCloud.js",
   "src/utils/cloud/proposalCloud.js",
   "src/utils/cloud/storageCloud.js",
+  "src/utils/cloud/storageCloud.test.js",
   "src/utils/cloud/teamAccess.js",
   "src/utils/authSession.js",
   "src/utils/authSession.test.js",
