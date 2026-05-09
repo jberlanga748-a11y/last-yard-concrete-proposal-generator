@@ -1,4 +1,4 @@
-import { isSupabaseConfigured } from "../../supabaseClient.js";
+import { isSupabaseConfigured, supabaseFrontendConfigMessage } from "../../supabaseClient.js";
 import { formatTeamRole } from "../../utils/cloud/teamAccess.js";
 import { formatAssetFileSize, formatCloudSyncTime } from "../../utils/formatting/display.js";
 
@@ -37,7 +37,7 @@ export function CloudStatusCard({
       <div className="cloud-status-grid">
         <div>
           <span>Cloud save</span>
-          <strong>{isSupabaseConfigured ? "Supabase configured" : "Supabase not configured"}</strong>
+          <strong>{isSupabaseConfigured ? "Supabase configured" : "Supabase frontend config missing"}</strong>
         </div>
         <div>
           <span>Signed in</span>
@@ -86,6 +86,7 @@ export function CloudStatusCard({
       {authUser ? <p>Current user: {authUser.email}</p> : null}
       {authMessage ? <p>{authMessage}</p> : null}
       {cloudSync.message ? <p>{cloudSync.message}</p> : null}
+      {!isSupabaseConfigured ? <p>{supabaseFrontendConfigMessage}</p> : null}
       <details className="settings-accordion-section storage-diagnostics-details no-print">
         <summary>
           <span>

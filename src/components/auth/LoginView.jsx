@@ -41,12 +41,12 @@ export function LoginView({
         {!isCloudConfigured && requireSignIn ? (
           <>
             <h3>Sign In Required</h3>
-            <p>Production access requires Supabase Auth. Configure Supabase sign-in before using protected app routes.</p>
+            <p>Supabase frontend config missing. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.</p>
           </>
         ) : !isCloudConfigured ? (
           <>
             <h3>Local Mode</h3>
-            <p>Supabase is not configured. The app will keep using local browser storage.</p>
+            <p>Supabase frontend config missing. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.</p>
           </>
         ) : authUser ? (
           <>

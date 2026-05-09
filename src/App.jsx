@@ -32,7 +32,7 @@ import {
   proposalPlaceholderWarning,
   validateProposalCompleteness,
 } from "./proposalData.js";
-import { isSupabaseConfigured, supabase } from "./supabaseClient.js";
+import { isSupabaseConfigured, supabase, supabaseFrontendConfigMessage } from "./supabaseClient.js";
 import { canManageTeamAccess, formatTeamRole } from "./utils/cloud/teamAccess.js";
 import { canUseCloudSync, getCloudReadyMessage, getCloudSignInMessage } from "./utils/cloud/cloudSync.js";
 import {
@@ -723,7 +723,7 @@ export default function App() {
         contactsStatus: cloudLocalOnlyLabel,
         currentRole: "local",
         loading: false,
-        message: "Cloud save is not configured. Proposals, contacts, and settings are stored locally.",
+        message: supabaseFrontendConfigMessage,
         proposalStatus: cloudLocalOnlyLabel,
         settingsStatus: cloudLocalOnlyLabel,
       }));
@@ -2941,7 +2941,7 @@ export default function App() {
 
   async function signInWithEmail(email, password) {
     if (!isSupabaseConfigured || !supabase) {
-      setAuthMessage("Supabase is not configured. The app is running in local mode.");
+      setAuthMessage(supabaseFrontendConfigMessage);
       return;
     }
 
@@ -2963,7 +2963,7 @@ export default function App() {
 
   async function signUpWithEmail(email, password) {
     if (!isSupabaseConfigured || !supabase) {
-      setAuthMessage("Supabase is not configured. The app is running in local mode.");
+      setAuthMessage(supabaseFrontendConfigMessage);
       return;
     }
 
@@ -3020,7 +3020,7 @@ export default function App() {
     if (!isSupabaseConfigured || !supabase) {
       setAuthUser(null);
       resetSessionWorkspaceState();
-      setAuthMessage("Supabase is not configured. The app is running in development local mode.");
+      setAuthMessage(`${supabaseFrontendConfigMessage} The app is running in development local mode.`);
       return;
     }
 
@@ -5451,7 +5451,7 @@ export default function App() {
     }));
 
     if (!isSupabaseConfigured || !supabase) {
-      const errorMessage = "Supabase is not configured.";
+      const errorMessage = supabaseFrontendConfigMessage;
       setStorageDiagnostics((currentDiagnostics) => ({
         ...currentDiagnostics,
         errorMessage,
@@ -13147,7 +13147,7 @@ function isBlankProposalSmartPasteMode(route = {}, proposal = {}) {
 }
 
 function createCloudSyncState() {
-  const localMessage = isSupabaseConfigured ? cloudSignInLabel : "Cloud save is not configured. Proposals, contacts, and settings are stored locally.";
+  const localMessage = isSupabaseConfigured ? cloudSignInLabel : supabaseFrontendConfigMessage;
 
   return {
     companyId: "",

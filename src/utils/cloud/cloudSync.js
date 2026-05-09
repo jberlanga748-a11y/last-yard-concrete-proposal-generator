@@ -1,4 +1,4 @@
-import { isSupabaseConfigured, supabase } from "../../supabaseClient.js";
+import { isSupabaseConfigured, supabase, supabaseFrontendConfigMessage } from "../../supabaseClient.js";
 
 export function canUseCloudSync(authUser) {
   return Boolean(isSupabaseConfigured && supabase && authUser?.id);
@@ -6,7 +6,7 @@ export function canUseCloudSync(authUser) {
 
 export function getCloudSignInMessage(signInLabel = "Sign in to sync proposals, contacts, and settings") {
   if (!isSupabaseConfigured) {
-    return "Supabase is not configured. Proposals, contacts, and settings are stored locally.";
+    return supabaseFrontendConfigMessage;
   }
 
   return signInLabel;
