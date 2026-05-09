@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createCustomerPortalSupabaseClient,
+  getCustomerPortalRowStatus,
   getCustomerPortalConfigErrorPayload,
   getSupabaseServerConfig,
   handleCustomerProposalRequest,
@@ -286,7 +287,7 @@ test("customer proposal API selection submit writes only customerSelection state
   assert.equal(updatedProposal.customerSelection.selectedTotal, 50000);
   assert.equal(updatedProposal.status, "customer_selection_submitted");
   assert.equal(Boolean(updatedProposal.updatedAt), true);
-  assert.equal(updatePayload.status, "customer_selection_submitted");
+  assert.equal(updatePayload.status, "sent");
   assert.equal(updatePayload.updated_at, updatedProposal.updatedAt);
   assert.equal(updatedProposal.pricing.basePackage.price, 40000);
   assert.deepEqual(updatedProposal.scopeSections, [{ title: "Original Scope", bullets: ["Keep me"] }]);
@@ -295,4 +296,12 @@ test("customer proposal API selection submit writes only customerSelection state
   assert.equal(updatedProposal.teamPermissions.owner, "last-yard");
   assert.equal("pricing" in response.body, false);
   assert.equal("scopeSections" in response.body, false);
+});
+
+test("customer proposal API maps workflow status to compatible row status", () => {
+  assert.equal(getCustomerPortalRowStatus("customer_selection_submitted"), "sent");
+  assert.equal(getCustomerPortalRowStatus("awaiting_customer_approval"), "sent");
+  assert.equal(getCustomerPortalRowStatus("accepted_deposit_due"), "approved");
+  assert.equal(getCustomerPortalRowStatus("draft"), "draft");
+  assert.equal(getCustomerPortalRowStatus("unexpected_new_status"), "draft");
 });

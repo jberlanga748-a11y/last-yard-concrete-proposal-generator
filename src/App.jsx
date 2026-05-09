@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useState } from "react";
+import { Component, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityLogView } from "./components/activity/ActivityLogView.jsx";
 import { LoginView } from "./components/auth/LoginView.jsx";
 import { BackupRestorePanel } from "./components/backup/BackupRestorePanel.jsx";
@@ -53,6 +53,7 @@ import {
   fetchCloudProposalById,
   fetchCloudProposalByShareToken,
   fetchCloudProposals,
+  formatCloudProposalSaveError,
   loadOrMergeCloudProposals,
   mergeProposalCollections,
   saveCloudProposal,
@@ -633,6 +634,7 @@ export default function App() {
   const [authMessage, setAuthMessage] = useState("");
   const [cloudSync, setCloudSync] = useState(() => createCloudSyncState());
   const [saveState, setSaveState] = useState(() => createSaveState());
+  const lastProposalSyncErrorRef = useRef("");
   const [teamMembers, setTeamMembers] = useState([]);
   const [teamMessage, setTeamMessage] = useState("");
   const [proposalDirty, setProposalDirty] = useState(false);
@@ -2161,6 +2163,7 @@ export default function App() {
         message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
+      lastProposalSyncErrorRef.current = "";
       setSaveState((currentState) => ({
         ...currentState,
         lastCloudSavedAt: new Date().toISOString(),
@@ -2168,18 +2171,32 @@ export default function App() {
       }));
       return true;
     } catch (error) {
+      const formattedError = formatCloudProposalSaveError(error);
+      const safeErrorMessage = formattedError.message;
+
+      lastProposalSyncErrorRef.current = safeErrorMessage;
+
+      if (import.meta.env.DEV) {
+        console.error("Proposal cloud save failed:", {
+          code: formattedError.code,
+          reason: formattedError.reason,
+          error,
+        });
+      }
+
       setCloudSync((currentSync) => ({
         ...currentSync,
-        lastError: error.message,
-        message: `Proposal sync failed: ${error.message}`,
+        lastError: safeErrorMessage,
+        loading: false,
+        message: `Proposal sync failed: ${safeErrorMessage}`,
         proposalStatus: cloudSyncErrorLabel,
       }));
       setSaveState((currentState) => ({
         ...currentState,
-        lastSyncError: error.message,
+        lastSyncError: safeErrorMessage,
         status: "Saved locally, cloud sync failed",
       }));
-      setSaveMessage(`Saved locally. Cloud sync failed: ${error.message}`);
+      setSaveMessage(`Saved locally. Cloud sync failed: ${safeErrorMessage}`);
       return false;
     }
   }
@@ -2227,6 +2244,7 @@ export default function App() {
         message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
+      lastProposalSyncErrorRef.current = "";
       setSaveState((currentState) => ({
         ...currentState,
         lastCloudSavedAt: new Date().toISOString(),
@@ -2234,16 +2252,29 @@ export default function App() {
       }));
       return true;
     } catch (error) {
+      const formattedError = formatCloudProposalSaveError(error);
+      const safeErrorMessage = formattedError.message;
+
+      lastProposalSyncErrorRef.current = safeErrorMessage;
+
+      if (import.meta.env.DEV) {
+        console.error("Proposal cloud sync failed:", {
+          code: formattedError.code,
+          reason: formattedError.reason,
+          error,
+        });
+      }
+
       setCloudSync((currentSync) => ({
         ...currentSync,
-        lastError: error.message,
+        lastError: safeErrorMessage,
         loading: false,
-        message: `Proposal sync failed: ${error.message}`,
+        message: `Proposal sync failed: ${safeErrorMessage}`,
         proposalStatus: cloudSyncErrorLabel,
       }));
       setSaveState((currentState) => ({
         ...currentState,
-        lastSyncError: error.message,
+        lastSyncError: safeErrorMessage,
       }));
       return false;
     }
@@ -2360,18 +2391,33 @@ export default function App() {
         message: `${mergeResult.warning || "Cloud and local proposals are synced."} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
+      lastProposalSyncErrorRef.current = "";
     } catch (error) {
+      const formattedError = formatCloudProposalSaveError(error);
+      const safeErrorMessage = formattedError.message;
+
+      lastProposalSyncErrorRef.current = safeErrorMessage;
+
+      if (import.meta.env.DEV) {
+        console.error("Proposal cloud sync failed:", {
+          code: formattedError.code,
+          reason: formattedError.reason,
+          error,
+        });
+      }
+
       setCloudSync((currentSync) => ({
         ...currentSync,
-        lastError: error.message,
+        lastError: safeErrorMessage,
         loading: false,
-        message: `Proposal sync failed: ${error.message}`,
+        message: `Proposal sync failed: ${safeErrorMessage}`,
         proposalStatus: cloudSyncErrorLabel,
       }));
     }
   }
 
   function clearCloudSyncMessage() {
+    lastProposalSyncErrorRef.current = "";
     setCloudSync((currentSync) => ({
       ...currentSync,
       lastError: "",
@@ -3068,13 +3114,13 @@ export default function App() {
         ...currentState,
         isSaving: false,
         lastCloudSavedAt: synced ? new Date().toISOString() : currentState.lastCloudSavedAt,
-        lastSyncError: synced ? "" : currentState.lastSyncError || cloudSync.lastError || "Cloud sync failed.",
+        lastSyncError: synced ? "" : lastProposalSyncErrorRef.current || currentState.lastSyncError || "Cloud sync failed.",
         status: synced ? "Saved locally and synced to cloud" : "Saved locally. Cloud sync failed",
       }));
       if (synced) {
         setSaveMessage(cloudSuccessMessage);
       } else {
-        setSaveMessage(`Saved locally. Cloud sync failed: ${cloudSync.lastError || "See Settings for details."}`);
+        setSaveMessage(`Saved locally. Cloud sync failed: ${lastProposalSyncErrorRef.current || "See Settings for details."}`);
       }
     } else {
       setSaveState((currentState) => ({
@@ -3147,7 +3193,7 @@ export default function App() {
       setSaveMessage(
         synced
           ? `${message} Link is ready to share.`
-          : `${message} Saved locally, but cloud sync failed. Resolve cloud sync before sharing the public link.`,
+          : `${message} Saved locally, but cloud sync failed: ${lastProposalSyncErrorRef.current || "Cloud save did not complete."} Resolve cloud sync before sharing the public link.`,
       );
     } else {
       setSaveMessage(`${message} Saved locally. Sign in and sync before sharing this link outside this browser.`);
@@ -3213,9 +3259,17 @@ export default function App() {
 
   async function copyCustomerShareLink() {
     const url = getCurrentCustomerPortalUrl();
+    const cloudSyncError = saveState.lastSyncError || cloudSync.lastError || lastProposalSyncErrorRef.current;
 
     if (!url) {
       setSaveMessage("Generate a customer portal link before copying.");
+      return;
+    }
+
+    if (canUseCloudSync(authUser) && (saveState.lastSyncError || cloudSync.proposalStatus === cloudSyncErrorLabel)) {
+      setSaveMessage(
+        `Cloud sync failed. Public portal may not load this proposal until cloud save succeeds. Reason: ${cloudSyncError || "Cloud save did not complete."}`,
+      );
       return;
     }
 
@@ -6472,8 +6526,10 @@ export default function App() {
                 readOnly={!permissions.editProposal}
                 contacts={savedContacts}
                 assetUploadMessage={assetUploadMessage}
+                cloudSync={cloudSync}
                 draftLabel={getDraftRouteLabel(route)}
                 showTemplatePicker={false}
+                saveState={saveState}
                 permissions={permissions}
                 onAddLineItem={addLineItem}
                 onAddLineItemFromLibrary={addLineItemFromPriceLibrary}
@@ -10206,20 +10262,29 @@ function ValidationPanel({ className = "", notice = "", validation }) {
 }
 
 function CustomerPortalLinkEditor({
+  cloudSync = {},
   proposal = {},
   portalUrl = "",
+  saveState = {},
   onCopy,
   onEnableChange,
   onExpirationChange,
   onRegenerate,
 }) {
   const shareFields = getCustomerShareFields(proposal);
+  const cloudSyncFailed = shareFields.customerShareEnabled && (saveState.lastSyncError || cloudSync.proposalStatus === cloudSyncErrorLabel);
+  const cloudSyncFailureReason = saveState.lastSyncError || cloudSync.lastError || "Cloud save did not complete.";
 
   return (
     <EditorSection id="customer-portal-section" title="Customer Portal Link">
       <p className="smart-paste-help">
         Phase 1 customer portal is read-only. Anyone with an enabled link can view the customer-safe proposal without signing in.
       </p>
+      {cloudSyncFailed ? (
+        <p className="validation-notice customer-portal-cloud-warning">
+          Cloud sync failed. Public portal may not load this proposal until cloud save succeeds. Reason: {cloudSyncFailureReason}
+        </p>
+      ) : null}
 
       <label className="editor-field checkbox-field">
         <input
@@ -10250,7 +10315,7 @@ function CustomerPortalLinkEditor({
         </label>
 
         <div className="customer-portal-status-card">
-          <strong>{shareFields.customerShareEnabled ? "Link enabled" : "Link disabled"}</strong>
+          <strong>{cloudSyncFailed ? "Link enabled - cloud sync failed" : shareFields.customerShareEnabled ? "Link enabled" : "Link disabled"}</strong>
           <span>Created: {shareFields.customerShareCreatedAt ? formatCloudSyncTime(shareFields.customerShareCreatedAt) : "Not generated yet"}</span>
           <span>Last viewed: {shareFields.customerShareLastViewedAt ? formatCloudSyncTime(shareFields.customerShareLastViewedAt) : "Not tracked yet"}</span>
         </div>
@@ -10260,7 +10325,12 @@ function CustomerPortalLinkEditor({
         <button type="button" onClick={onRegenerate}>
           {shareFields.customerShareToken ? "Regenerate Link" : "Generate Link"}
         </button>
-        <button type="button" onClick={onCopy} disabled={!portalUrl}>
+        <button
+          type="button"
+          onClick={onCopy}
+          disabled={!portalUrl || cloudSyncFailed}
+          title={cloudSyncFailed ? "Resolve cloud sync before sharing the public customer link." : "Copy customer portal link"}
+        >
           Copy Link
         </button>
         <button type="button" onClick={() => onEnableChange?.(false)} disabled={!shareFields.customerShareEnabled}>
@@ -10402,6 +10472,7 @@ function ProposalEditor({
   aiProposalNotes = "",
   aiProposalResult = null,
   assetUploadMessage = "",
+  cloudSync = {},
   contacts = [],
   draftLabel = "",
   proposal,
@@ -10480,6 +10551,7 @@ function ProposalEditor({
   permissions = {},
   priceLibrary = [],
   readOnly = false,
+  saveState = {},
   validation,
   validationNotice,
   smartPasteNotes,
@@ -10630,8 +10702,10 @@ function ProposalEditor({
       </EditorSection>
 
       <CustomerPortalLinkEditor
+        cloudSync={cloudSync}
         proposal={proposal}
         portalUrl={customerPortalUrl}
+        saveState={saveState}
         onCopy={onCustomerShareCopy}
         onEnableChange={onCustomerShareEnableChange}
         onExpirationChange={onCustomerShareExpirationChange}

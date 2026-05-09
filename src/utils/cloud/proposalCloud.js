@@ -30,6 +30,13 @@ const customerApprovalStatusRank = {
   [CUSTOMER_APPROVAL_STATUS_CHANGE_REQUESTED]: 40,
   [CUSTOMER_APPROVAL_STATUS_APPROVED_SIGNED]: 50,
 };
+const cloudProposalRowStatuses = new Set(["draft", "sent", "approved", "rejected", "expired", "archived"]);
+const cloudProposalRowStatusByWorkflowStatus = {
+  accepted_deposit_due: "approved",
+  awaiting_customer_approval: "sent",
+  customer_selection_submitted: "sent",
+  selection_reviewed: "sent",
+};
 
 function normalizeProposalForCloud(proposal = {}, deps = {}, options = {}) {
   const lightweightNormalizer = options.forCollection ? deps.normalizeProposalForCollection : null;
@@ -184,6 +191,20 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
   const row = createCloudProposalRow(companyId, proposalToSave, deps);
   const targetRowId = row.id || existingRow?.id || "";
 
+  try {
+    await writeCloudProposalRow(client, row, targetRowId);
+  } catch (error) {
+    if (!shouldRetryWithCompatibleProposalRow(error)) {
+      throw error;
+    }
+
+    await writeCloudProposalRow(client, createCompatibleCloudProposalRow(row), targetRowId);
+  }
+
+  return proposalToSave;
+}
+
+async function writeCloudProposalRow(client, row, targetRowId = "") {
   if (row.id) {
     const { error } = await client.from("proposals").upsert(row, { onConflict: "id" });
 
@@ -191,7 +212,7 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
       throw error;
     }
 
-    return proposalToSave;
+    return;
   }
 
   if (targetRowId) {
@@ -201,7 +222,7 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
       throw error;
     }
 
-    return proposalToSave;
+    return;
   }
 
   const { error } = await client.from("proposals").insert(row);
@@ -209,8 +230,6 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
   if (error) {
     throw error;
   }
-
-  return proposalToSave;
 }
 
 async function findCloudProposalRow(companyId, proposalId, client = getSupabaseClient()) {
@@ -259,7 +278,7 @@ function createCloudProposalRow(companyId, proposal, deps = {}) {
     proposal_data: normalizedProposal,
     proposal_number: normalizedProposal.proposalNumber || "",
     proposal_type: normalizedProposal.proposalType || normalizedProposal.type || "",
-    status: normalizedProposal.status || "draft",
+    status: getCloudProposalRowStatus(normalizedProposal.status),
     updated_at: normalizedProposal.updatedAt || new Date().toISOString(),
   };
 
@@ -268,6 +287,104 @@ function createCloudProposalRow(companyId, proposal, deps = {}) {
   }
 
   return row;
+}
+
+function createCompatibleCloudProposalRow(row = {}) {
+  const compatibleRow = {
+    company_id: row.company_id,
+    proposal_data: row.proposal_data,
+    status: row.status || getCloudProposalRowStatus(row.proposal_data?.status),
+    updated_at: row.updated_at || row.proposal_data?.updatedAt || new Date().toISOString(),
+  };
+
+  if (row.id) {
+    compatibleRow.id = row.id;
+  }
+
+  return compatibleRow;
+}
+
+function shouldRetryWithCompatibleProposalRow(error = {}) {
+  const combined = getCloudErrorText(error);
+  const mentionsOptionalColumn = /(contact_id|packet_mode|proposal_number|proposal_type)/i.test(combined);
+  return mentionsOptionalColumn && /(column|schema cache|pgrst204|42703)/i.test(combined);
+}
+
+export function getCloudProposalRowStatus(status = "") {
+  const normalizedStatus = String(status || "draft").trim().toLowerCase();
+
+  if (cloudProposalRowStatuses.has(normalizedStatus)) {
+    return normalizedStatus;
+  }
+
+  return cloudProposalRowStatusByWorkflowStatus[normalizedStatus] || "draft";
+}
+
+export function formatCloudProposalSaveError(error = {}) {
+  const message = getCloudErrorMessage(error);
+  const code = String(error?.code || error?.status || error?.statusCode || "").trim();
+  const combined = getCloudErrorText(error);
+  const lowerCombined = combined.toLowerCase();
+  let reason = "cloud-save-failed";
+  let label = "Cloud save failed";
+
+  if (/supabase is not configured|missing.*supabase|no api key|apikey/.test(lowerCombined)) {
+    reason = "missing-env-config";
+    label = "Missing Supabase configuration";
+  } else if (/auth session|session missing|jwt|not authenticated|invalid login|auth.*missing/.test(lowerCombined)) {
+    reason = "missing-auth-session";
+    label = "Supabase auth/session missing";
+  } else if (/row-level security|rls|permission denied|42501|not authorized|violates row-level security/.test(lowerCombined)) {
+    reason = "rls-permission-denied";
+    label = "RLS permission denied";
+  } else if (/column .* does not exist|schema cache|pgrst204|42703/.test(lowerCombined)) {
+    reason = "schema-column-missing";
+    label = "Supabase schema mismatch";
+  } else if (/check constraint|invalid input value|22p02|23514|enum/.test(lowerCombined)) {
+    reason = "invalid-payload-shape";
+    label = "Supabase rejected the proposal payload";
+  } else if (/413|payload too large|request entity too large|json.*too large|too large/.test(lowerCombined)) {
+    reason = "json-too-large";
+    label = "Proposal JSON is too large";
+  } else if (/failed to fetch|networkerror|network request failed|timeout|timed out/.test(lowerCombined)) {
+    reason = "network-error";
+    label = "Network error";
+  }
+
+  const safeDetail = sanitizeCloudErrorMessage(message);
+
+  return {
+    code,
+    message: safeDetail ? `${label}: ${safeDetail}` : label,
+    reason,
+  };
+}
+
+function getCloudErrorMessage(error = {}) {
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return error?.message || error?.error_description || error?.error || error?.details || "Unknown Supabase save error.";
+}
+
+function getCloudErrorText(error = {}) {
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return [error?.message, error?.details, error?.hint, error?.code, error?.status, error?.statusCode]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function sanitizeCloudErrorMessage(message = "") {
+  return String(message || "")
+    .replace(/Bearer\s+[A-Za-z0-9._~-]+/g, "Bearer [redacted]")
+    .replace(/eyJ[A-Za-z0-9._~-]+/g, "[redacted-token]")
+    .replace(/[A-Za-z0-9_-]{32,}\.[A-Za-z0-9._-]{16,}/g, "[redacted-token]")
+    .slice(0, 240)
+    .trim();
 }
 
 function normalizeCloudProposalRow(row = {}, deps = {}, { forCollection = true } = {}) {

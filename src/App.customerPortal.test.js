@@ -21,6 +21,8 @@ test("proposal editor includes customer portal link controls", () => {
   assert.match(appSource, /Generate Link/);
   assert.match(appSource, /Copy Link/);
   assert.match(appSource, /Disable Link/);
+  assert.match(appSource, /Cloud sync failed\. Public portal may not load this proposal until cloud save succeeds/);
+  assert.match(appSource, /disabled=\{!portalUrl \|\| cloudSyncFailed\}/);
 });
 
 test("editable proposals preserve customer share fields safely", () => {
@@ -48,6 +50,8 @@ test("editor cloud save accepts merged portal fields returned from cloud persist
   assert.match(appSource, /const cloudSavedProposal = await saveCloudProposal\(companyRecord\.id, proposal, proposalCloudDeps\)/);
   assert.match(appSource, /setSavedProposals\(\(currentProposals\) => upsertProposal\(currentProposals, syncedProposal\)\)/);
   assert.match(appSource, /if \(proposalDraft\.id === syncedProposal\.id\)/);
+  assert.match(appSource, /formatCloudProposalSaveError\(error\)/);
+  assert.match(appSource, /lastProposalSyncErrorRef\.current/);
 });
 
 test("editable proposals mirror residential pricing into nested pricing payload for cloud save", () => {
@@ -150,6 +154,7 @@ test("customer portal selection API validates token and writes only requested pu
   assert.match(customerPortalApiSource, /buildSubmittedCustomerSelection\(proposal, body\.selection/);
   assert.match(customerPortalApiSource, /updatedAt: submittedAt/);
   assert.match(customerPortalApiSource, /updated_at: proposalData\.updatedAt \|\| new Date\(\)\.toISOString\(\)/);
+  assert.match(customerPortalApiSource, /status: getCustomerPortalRowStatus\(proposalData\.status\)/);
   assert.match(customerPortalApiSource, /const proposalWithSelection = \{[\s\S]*?customerSelection,[\s\S]*?\};/);
   assert.match(customerPortalApiSource, /updateCustomerProposalData\(supabase, data\.id, proposalWithSelection, \{ required: true \}\)/);
   assert.match(customerPortalApiSource, /action === "approve"/);

@@ -305,7 +305,7 @@ async function updateCustomerProposalData(supabase, rowId, proposalData, { requi
       .from(proposalsTable)
       .update({
         proposal_data: proposalData,
-        status: proposalData.status || "draft",
+        status: getCustomerPortalRowStatus(proposalData.status),
         updated_at: proposalData.updatedAt || new Date().toISOString(),
       })
       .eq("id", rowId);
@@ -362,6 +362,28 @@ function getUnavailableStatusCode(reason = "") {
   }
 
   return 404;
+}
+
+export function getCustomerPortalRowStatus(status = "") {
+  const normalizedStatus = String(status || "draft").trim().toLowerCase();
+
+  if (["draft", "sent", "approved", "rejected", "expired", "archived"].includes(normalizedStatus)) {
+    return normalizedStatus;
+  }
+
+  if (normalizedStatus === "accepted_deposit_due") {
+    return "approved";
+  }
+
+  if (
+    normalizedStatus === "customer_selection_submitted" ||
+    normalizedStatus === "selection_reviewed" ||
+    normalizedStatus === "awaiting_customer_approval"
+  ) {
+    return "sent";
+  }
+
+  return "draft";
 }
 
 function getQueryParam(url = "", key = "") {

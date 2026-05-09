@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   fetchCloudProposalById,
+  formatCloudProposalSaveError,
+  getCloudProposalRowStatus,
   mergeCloudPortalFieldsForSave,
   saveCloudProposal,
 } from "./proposalCloud.js";
@@ -21,7 +23,19 @@ function createProposalRow(proposalData = {}, row = {}) {
   };
 }
 
-function createFakeSupabase({ rows = [], onUpdate = () => {}, onInsert = () => {}, onUpsert = () => {} } = {}) {
+function createFakeSupabase({
+  rows = [],
+  onUpdate = () => {},
+  onInsert = () => {},
+  onUpsert = () => {},
+  updateResults = [],
+  insertResults = [],
+  upsertResults = [],
+} = {}) {
+  let updateCount = 0;
+  let insertCount = 0;
+  let upsertCount = 0;
+
   return {
     from(tableName) {
       assert.equal(tableName, "proposals");
@@ -59,17 +73,17 @@ function createFakeSupabase({ rows = [], onUpdate = () => {}, onInsert = () => {
             async eq(column, value) {
               assert.equal(column, "id");
               assert.ok(value);
-              return { error: null };
+              return updateResults[updateCount++] || { error: null };
             },
           };
         },
         async insert(payload) {
           onInsert(payload);
-          return { error: null };
+          return insertResults[insertCount++] || { error: null };
         },
         async upsert(payload) {
           onUpsert(payload);
-          return { error: null };
+          return upsertResults[upsertCount++] || { error: null };
         },
       };
     },
@@ -308,4 +322,95 @@ test("fetchCloudProposalById hydrates full customer portal data for signed-in pr
   assert.equal(proposal.customerApproval.status, "approved_signed");
   assert.equal(proposal.pricing.optionalAddOns[0].amount, 10000);
   assert.equal(proposal.residentialLegalPapers.informationNoticeToOwner.status, "needs_review");
+});
+
+test("cloud proposal row status keeps workflow status inside proposal data while using compatible row status", () => {
+  assert.equal(getCloudProposalRowStatus("customer_selection_submitted"), "sent");
+  assert.equal(getCloudProposalRowStatus("awaiting_customer_approval"), "sent");
+  assert.equal(getCloudProposalRowStatus("accepted_deposit_due"), "approved");
+  assert.equal(getCloudProposalRowStatus("draft"), "draft");
+  assert.equal(getCloudProposalRowStatus("unexpected_new_status"), "draft");
+});
+
+test("saveCloudProposal persists accepted workflow status without putting it in the table row status", async () => {
+  let updatePayload = null;
+  const cloudRow = createProposalRow({ status: "awaiting_customer_approval" });
+  cloudRow.company_id = "company-1";
+
+  await saveCloudProposal(
+    "company-1",
+    {
+      id: "proposal-1",
+      status: "accepted_deposit_due",
+      updatedAt: "2026-05-08T12:00:00.000Z",
+      customerApproval: { status: "approved_signed", approvedAt: "2026-05-08T12:00:00.000Z" },
+    },
+    {
+      ...cloudDeps,
+      supabaseClient: createFakeSupabase({
+        rows: [cloudRow],
+        onUpdate(payload) {
+          updatePayload = payload;
+        },
+      }),
+    },
+  );
+
+  assert.equal(updatePayload.proposal_data.status, "accepted_deposit_due");
+  assert.equal(updatePayload.status, "approved");
+});
+
+test("saveCloudProposal retries with compatible row payload when optional schema columns are missing", async () => {
+  const proposalId = "proposal-compatible-row";
+  const insertPayloads = [];
+
+  await saveCloudProposal(
+    "company-1",
+    {
+      id: proposalId,
+      status: "draft",
+      updatedAt: "2026-05-08T12:00:00.000Z",
+    },
+    {
+      ...cloudDeps,
+      supabaseClient: createFakeSupabase({
+        onInsert(payload) {
+          insertPayloads.push(payload);
+        },
+        insertResults: [
+          {
+            error: {
+              code: "PGRST204",
+              message: "Could not find the 'packet_mode' column of 'proposals' in the schema cache",
+            },
+          },
+          { error: null },
+        ],
+      }),
+    },
+  );
+
+  assert.equal(insertPayloads.length, 2);
+  assert.equal(insertPayloads[0].packet_mode, "summary");
+  assert.equal("packet_mode" in insertPayloads[1], false);
+  assert.equal(insertPayloads[1].proposal_data.id, proposalId);
+});
+
+test("formatCloudProposalSaveError returns safe actionable reasons", () => {
+  assert.match(
+    formatCloudProposalSaveError({ message: "new row violates row-level security policy for table proposals", code: "42501" }).message,
+    /RLS permission denied/,
+  );
+  assert.equal(
+    formatCloudProposalSaveError({ message: "No API key found in request", code: "401" }).reason,
+    "missing-env-config",
+  );
+  assert.equal(
+    formatCloudProposalSaveError({ message: "Could not find the 'proposal_type' column of 'proposals' in the schema cache", code: "PGRST204" }).reason,
+    "schema-column-missing",
+  );
+  assert.equal(
+    formatCloudProposalSaveError({ message: "Request Entity Too Large", status: 413 }).reason,
+    "json-too-large",
+  );
 });
