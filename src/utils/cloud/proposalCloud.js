@@ -2,7 +2,13 @@ import { supabase } from "../../supabaseClient.js";
 import { normalizeCustomerShareToken } from "../customerPortal.js";
 import { createCloudFallbackId, isPlainObject, isUuid } from "./cloudSync.js";
 
-function normalizeProposalForCloud(proposal = {}, deps = {}) {
+function normalizeProposalForCloud(proposal = {}, deps = {}, options = {}) {
+  const lightweightNormalizer = options.forCollection ? deps.normalizeProposalForCollection : null;
+
+  if (lightweightNormalizer) {
+    return lightweightNormalizer(proposal);
+  }
+
   if (deps.normalizeProposal) {
     return deps.normalizeProposal(proposal);
   }
@@ -29,7 +35,7 @@ function getProposalTimestamp(proposal = {}, deps = {}) {
 
 export async function loadOrMergeCloudProposals(companyId, localProposals = [], deps = {}, labels = {}) {
   const cloudProposals = await fetchCloudProposals(companyId, deps);
-  const normalizedLocalProposals = localProposals.filter(isPlainObject).map((proposal) => normalizeProposalForCloud(proposal, deps));
+  const normalizedLocalProposals = localProposals.filter(isPlainObject).map((proposal) => normalizeProposalForCloud(proposal, deps, { forCollection: true }));
   const syncedLabel = labels.syncedLabel || "Synced";
   const needsSyncLabel = labels.needsSyncLabel || "Needs sync";
 
@@ -190,22 +196,23 @@ function normalizeCloudProposalRow(row = {}, deps = {}) {
       updatedAt: proposalData.updatedAt || row.updated_at,
     },
     deps,
+    { forCollection: true },
   );
 }
 
 export function mergeProposalCollections(localProposals = [], cloudProposals = [], deps = {}) {
   const mergedById = new Map();
-  const cloudIds = new Set(cloudProposals.filter(isPlainObject).map((proposal) => normalizeProposalForCloud(proposal, deps).id));
+  const cloudIds = new Set(cloudProposals.filter(isPlainObject).map((proposal) => normalizeProposalForCloud(proposal, deps, { forCollection: true }).id));
   const warnings = [];
   let needsSync = false;
 
   localProposals.filter(isPlainObject).forEach((proposal) => {
-    const normalizedProposal = normalizeProposalForCloud(proposal, deps);
+    const normalizedProposal = normalizeProposalForCloud(proposal, deps, { forCollection: true });
     mergedById.set(normalizedProposal.id, normalizedProposal);
   });
 
   cloudProposals.filter(isPlainObject).forEach((proposal) => {
-    const cloudProposal = normalizeProposalForCloud(proposal, deps);
+    const cloudProposal = normalizeProposalForCloud(proposal, deps, { forCollection: true });
     const localProposal = mergedById.get(cloudProposal.id);
 
     if (!localProposal) {
@@ -233,13 +240,14 @@ export function mergeProposalCollections(localProposals = [], cloudProposals = [
         updatedAt: cloudProposal.updatedAt || new Date().toISOString(),
       },
       deps,
+      { forCollection: true },
     );
     mergedById.set(copiedCloudProposal.id, copiedCloudProposal);
     needsSync = true;
     warnings.push(`Kept both local and cloud copies for ${cloudProposal.proposalNumber || cloudProposal.id} because the latest update was unclear.`);
   });
 
-  if (localProposals.filter(isPlainObject).some((proposal) => !cloudIds.has(normalizeProposalForCloud(proposal, deps).id))) {
+  if (localProposals.filter(isPlainObject).some((proposal) => !cloudIds.has(normalizeProposalForCloud(proposal, deps, { forCollection: true }).id))) {
     needsSync = true;
   }
 
@@ -270,5 +278,5 @@ function compareProposalUpdatedAt(localProposal = {}, cloudProposal = {}, deps =
 }
 
 function proposalsAreEquivalent(firstProposal = {}, secondProposal = {}, deps = {}) {
-  return JSON.stringify(normalizeProposalForCloud(firstProposal, deps)) === JSON.stringify(normalizeProposalForCloud(secondProposal, deps));
+  return JSON.stringify(normalizeProposalForCloud(firstProposal, deps, { forCollection: true })) === JSON.stringify(normalizeProposalForCloud(secondProposal, deps, { forCollection: true }));
 }

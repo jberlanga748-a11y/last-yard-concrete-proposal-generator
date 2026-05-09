@@ -1,4 +1,4 @@
-import { Component, useEffect, useState } from "react";
+import { Component, useEffect, useMemo, useState } from "react";
 import { ActivityLogView } from "./components/activity/ActivityLogView.jsx";
 import { LoginView } from "./components/auth/LoginView.jsx";
 import { BackupRestorePanel } from "./components/backup/BackupRestorePanel.jsx";
@@ -155,6 +155,7 @@ import {
   isResidentialProposalMode,
   normalizeProposalMode,
 } from "./utils/proposals/proposalModes.js";
+import { buildProposalListSummaries } from "./utils/proposals/proposalListSummary.js";
 import {
   cleanSmartPasteBaseProposal,
   cleanTrueBlankProposalState,
@@ -269,6 +270,7 @@ const proposalCloudDeps = {
   createProposalId,
   getProposalTimestamp,
   normalizeProposal: createEditableProposal,
+  normalizeProposalForCollection: normalizeSavedProposalForCollection,
 };
 
 const proposalCloudStatusLabels = {
@@ -448,10 +450,11 @@ const gcPacketRowFields = {
 };
 
 export default function App() {
-  const [companySettings, setCompanySettings] = useState(() => loadCompanySettings());
-  const [settingsDraft, setSettingsDraft] = useState(() => loadCompanySettings());
+  const [initialAppState] = useState(() => loadInitialAppState(window.location.pathname));
+  const [companySettings, setCompanySettings] = useState(initialAppState.companySettings);
+  const [settingsDraft, setSettingsDraft] = useState(initialAppState.companySettings);
   const [settingsMessage, setSettingsMessage] = useState("");
-  const [savedProposals, setSavedProposals] = useState(() => loadSavedProposals(loadCompanySettings()));
+  const [savedProposals, setSavedProposals] = useState(initialAppState.savedProposals);
   const [savedContacts, setSavedContacts] = useState(() => loadSavedContacts());
   const [priceLibrary, setPriceLibrary] = useState(() => loadPriceLibrary());
   const [priceLibraryMessage, setPriceLibraryMessage] = useState("");
@@ -465,10 +468,8 @@ export default function App() {
   const [bidSearchQuery, setBidSearchQuery] = useState("");
   const [bidStatusFilter, setBidStatusFilter] = useState("all");
   const [bidPriorityFilter, setBidPriorityFilter] = useState("all");
-  const [route, setRoute] = useState(() => parseRoute(window.location.pathname));
-  const [proposalDraft, setProposalDraft] = useState(() =>
-    getInitialProposalForRoute(parseRoute(window.location.pathname), loadSavedProposals(loadCompanySettings()), loadCompanySettings()),
-  );
+  const [route, setRoute] = useState(initialAppState.route);
+  const [proposalDraft, setProposalDraft] = useState(initialAppState.proposalDraft);
   const [customerPortalState, setCustomerPortalState] = useState(() => ({
     loading: false,
     proposal: null,
@@ -477,6 +478,8 @@ export default function App() {
   }));
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [proposalOpenMessage, setProposalOpenMessage] = useState("");
+  const [proposalPreviewReady, setProposalPreviewReady] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [validationNotice, setValidationNotice] = useState("");
   const [smartPasteNotes, setSmartPasteNotes] = useState("");
@@ -520,6 +523,29 @@ export default function App() {
   const permissions = getRolePermissions(permissionRole);
   const permissionRoleLabel = getPermissionRoleLabel(permissionRole, { signedIn: Boolean(authUser) });
   const proposalValidation = getProposalValidationWithPacketPdfWarnings(proposalDraft);
+
+  useEffect(() => {
+    if (!isProposalDraftView || isPrintView) {
+      setProposalPreviewReady(false);
+      return undefined;
+    }
+
+    setProposalPreviewReady(false);
+    const schedulePreview =
+      window.requestIdleCallback ||
+      ((callback) =>
+        window.setTimeout(() => {
+          callback({ didTimeout: false, timeRemaining: () => 0 });
+        }, 120));
+    const cancelPreview =
+      window.cancelIdleCallback ||
+      ((handle) => {
+        window.clearTimeout(handle);
+      });
+    const handle = schedulePreview(() => setProposalPreviewReady(true));
+
+    return () => cancelPreview(handle);
+  }, [isPrintView, isProposalDraftView, proposalDraft.id, route.path]);
 
   useEffect(() => {
     saveStoredProposals(savedProposals);
@@ -982,7 +1008,11 @@ export default function App() {
         clearTransientProposalDraftStorage();
       }
 
-      setProposalDraft(getProposalDraftForRoute(nextRoute, savedProposals, companySettings, options.proposal));
+      setProposalDraft(
+        getProposalDraftForRoute(nextRoute, savedProposals, companySettings, options.proposal, {
+          alreadyEditable: options.proposalAlreadyEditable === true,
+        }),
+      );
     }
 
     return true;
@@ -1011,7 +1041,38 @@ export default function App() {
       return;
     }
 
-    navigate(`/proposals/${proposalId}`, { proposal });
+    const nextPath = `/proposals/${proposalId}`;
+
+    if (
+      proposalDirty &&
+      isProposalRouteView(route.view) &&
+      nextPath !== route.path &&
+      !window.confirm("You have unsaved proposal changes. Leave without saving?")
+    ) {
+      return;
+    }
+
+    setProposalOpenMessage("Opening proposal details...");
+
+    const scheduleHydration = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
+    scheduleHydration(() => {
+      const editableProposal = measureDevPerformance(
+        "opening saved proposal",
+        () => createEditableProposal(proposal),
+        {
+          proposalId,
+          imageCount: countProposalImageMetadata(proposal),
+        },
+      );
+
+      const navigated = navigate(nextPath, {
+        proposal: editableProposal,
+        proposalAlreadyEditable: true,
+        skipUnsavedCheck: true,
+      });
+
+      setProposalOpenMessage(navigated ? "" : "Opening canceled.");
+    });
   }
 
   function createNewProposal() {
@@ -1297,7 +1358,11 @@ export default function App() {
         return;
       }
 
-      const proposalsResult = await loadOrMergeCloudProposals(companyRecord.id, savedProposals, proposalCloudDeps, proposalCloudStatusLabels);
+      const proposalsResult = await measureAsyncDevPerformance(
+        "cloud proposal fetch and merge",
+        () => loadOrMergeCloudProposals(companyRecord.id, savedProposals, proposalCloudDeps, proposalCloudStatusLabels),
+        { localProposalCount: savedProposals.length },
+      );
       const cloudTeamMembers = await fetchCloudTeamMembers(companyRecord.id);
       const syncedAt = new Date().toISOString();
 
@@ -1816,7 +1881,11 @@ export default function App() {
 
     try {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
-      const cloudProposals = await fetchCloudProposals(companyRecord.id, proposalCloudDeps);
+      const cloudProposals = await measureAsyncDevPerformance(
+        "cloud proposal fetch",
+        () => fetchCloudProposals(companyRecord.id, proposalCloudDeps),
+        { action: "pull" },
+      );
       const mergeResult = mergeProposalCollections(savedProposals, cloudProposals, proposalCloudDeps);
       const syncedAt = new Date().toISOString();
 
@@ -1866,7 +1935,11 @@ export default function App() {
 
     try {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
-      const cloudProposals = await fetchCloudProposals(companyRecord.id, proposalCloudDeps);
+      const cloudProposals = await measureAsyncDevPerformance(
+        "cloud proposal fetch",
+        () => fetchCloudProposals(companyRecord.id, proposalCloudDeps),
+        { action: "sync" },
+      );
       const mergeResult = mergeProposalCollections(savedProposals, cloudProposals, proposalCloudDeps);
 
       await saveCloudProposals(companyRecord.id, mergeResult.proposals, proposalCloudDeps);
@@ -2487,6 +2560,7 @@ export default function App() {
     setBackupMessage(cleanup.backupMessage);
     setSaveMessage(cleanup.saveMessage);
     setSaveState(createSaveState());
+    setProposalOpenMessage("");
     window.history.replaceState({}, "", cleanup.routePath);
     setRoute(nextRoute);
   }
@@ -5498,7 +5572,13 @@ export default function App() {
     const currentMatch = nextProposals.find((proposal) => proposal.id === proposalDraft.id);
 
     if (currentMatch) {
-      setProposalDraft(currentMatch);
+      setProposalDraft(
+        measureDevPerformance(
+          "proposal restore hydration",
+          () => createEditableProposal(currentMatch),
+          { proposalId: currentMatch.id },
+        ),
+      );
       return;
     }
 
@@ -5755,6 +5835,7 @@ export default function App() {
           backupShortcut={backupShortcut}
           cloudSync={cloudSync}
           contacts={savedContacts}
+          loadingMessage={proposalOpenMessage || (cloudSync.loading ? "Loading proposals..." : "")}
           permissions={permissions}
           proposals={savedProposals}
           searchQuery={searchQuery}
@@ -5910,7 +5991,15 @@ export default function App() {
               />
             )}
             <div className="preview-pane">
-              <ProposalPreview companySettings={companySettings} helpers={proposalPacketHelpers} proposal={proposalDraft} />
+              {isPrintView || proposalPreviewReady ? (
+                <PerformanceMeasuredProposalPreview
+                  companySettings={companySettings}
+                  helpers={proposalPacketHelpers}
+                  proposal={proposalDraft}
+                />
+              ) : (
+                <p className="empty-list-message">Loading proposal preview...</p>
+              )}
             </div>
           </div>
         </>
@@ -5918,6 +6007,19 @@ export default function App() {
       </div>
     </main>
   );
+}
+
+function PerformanceMeasuredProposalPreview(props) {
+  const stopTimer = startDevPerformanceTimer("proposal preview render", {
+    proposalId: props.proposal?.id || "",
+    route: window.location.pathname,
+  });
+
+  useEffect(() => {
+    stopTimer({ phase: "committed" });
+  });
+
+  return <ProposalPreview {...props} />;
 }
 
 function AuthLoadingScreen() {
@@ -7788,6 +7890,7 @@ function ProposalListView({
   backupShortcut,
   cloudSync,
   contacts = [],
+  loadingMessage = "",
   permissions = {},
   proposals,
   searchQuery,
@@ -7806,33 +7909,40 @@ function ProposalListView({
   onSyncProposals,
 }) {
   const [hideQaTestRecords, setHideQaTestRecords] = useState(false);
-  const filteredProposals = proposals.filter((proposal) => {
-    if (hideQaTestRecords && isQaTestRecord(proposal)) {
-      return false;
-    }
+  const proposalLookup = useMemo(
+    () => new Map((Array.isArray(proposals) ? proposals : []).filter(isPlainObject).map((proposal) => [proposal.id, proposal])),
+    [proposals],
+  );
+  const proposalSummaries = useMemo(
+    () =>
+      measureDevPerformance(
+        "proposal list render preparation",
+        () => buildProposalListSummaries(proposals, contacts),
+        {
+          contactCount: contacts.length,
+          proposalCount: Array.isArray(proposals) ? proposals.length : 0,
+        },
+      ),
+    [contacts, proposals],
+  );
+  const filteredProposals = useMemo(() => {
+    const normalizedSearchQuery = searchQuery.trim().toLowerCase();
 
-    const linkedContact = getLinkedContact(proposal, contacts);
-    const searchText = [
-      proposal.client?.companyName,
-      proposal.client?.contactName,
-      proposal.project?.name,
-      proposal.gcPrime?.contractorName,
-      linkedContact?.companyName,
-      linkedContact?.contactName,
-      linkedContact?.email,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    const matchesSearch = searchText.includes(searchQuery.trim().toLowerCase());
-    const matchesStatus =
-      statusFilter === "all" ||
-      (statusFilter === "needs_follow_up" && isFollowUpDue(proposal)) ||
-      (statusFilter === "overdue_follow_up" && isFollowUpOverdue(proposal)) ||
-      proposal.status === statusFilter;
+    return proposalSummaries.filter((proposal) => {
+      if (hideQaTestRecords && proposal.isQaTestRecord) {
+        return false;
+      }
 
-    return matchesSearch && matchesStatus;
-  });
+      const matchesSearch = !normalizedSearchQuery || proposal.searchText.includes(normalizedSearchQuery);
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "needs_follow_up" && proposal.followUpDue) ||
+        (statusFilter === "overdue_follow_up" && proposal.followUpOverdue) ||
+        proposal.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [hideQaTestRecords, proposalSummaries, searchQuery, statusFilter]);
 
   return (
     <section className="proposal-list-panel no-print">
@@ -7893,6 +8003,8 @@ function ProposalListView({
         onSyncProposals={onSyncProposals}
       />
 
+      {loadingMessage ? <p className="empty-list-message">{loadingMessage}</p> : null}
+
       <div className="proposal-table-wrap">
         <table className="proposal-list-table">
           <thead>
@@ -7912,51 +8024,47 @@ function ProposalListView({
             </tr>
           </thead>
           <tbody>
-            {filteredProposals.map((proposal) => {
-              const total = calculateProposalTotals(proposal).total;
-              const packetMode = getPacketModeLabel(proposal);
-              const linkedContact = getLinkedContact(proposal, contacts);
-              const latestPacketRecord = getLatestSubmittedPacketRecord(proposal);
-              const latestSendRecord = getLatestSendRecord(proposal);
+            {filteredProposals.map((summary) => {
+              const proposal = proposalLookup.get(summary.id) || {};
 
               return (
-                <tr key={proposal.id} onClick={() => onOpen(proposal.id)}>
+                <tr key={summary.id} onClick={() => onOpen(summary.id)}>
                   <td>
-                    <strong>{proposal.proposalNumber}</strong>
-                    <span>{proposal.revisionLabel || formatRevisionLabel(proposal.revisionNumber)}</span>
-                    {isLatestRevision(proposal, proposals) ? <Badge className="revision-latest">Latest</Badge> : null}
+                    <strong>{summary.proposalNumber}</strong>
+                    <span>{summary.revisionLabel || formatRevisionLabel(summary.revisionNumber)}</span>
+                    {summary.isLatestRevision ? <Badge className="revision-latest">Latest</Badge> : null}
                   </td>
                   <td>
-                    <strong>{proposal.client?.companyName}</strong>
-                    <span>{proposal.client?.contactName}</span>
-                    {linkedContact ? <span>Linked: {formatContactName(linkedContact)}</span> : null}
+                    <strong>{summary.clientCompanyName}</strong>
+                    <span>{summary.clientContactName}</span>
+                    {summary.linkedContactLabel ? <span>Linked: {summary.linkedContactLabel}</span> : null}
                   </td>
-                  <td>{proposal.project?.name}</td>
-                  <td>{formatOptionLabel(proposal.proposalType ?? proposal.type)}</td>
+                  <td>{summary.projectName}</td>
+                  <td>{formatOptionLabel(summary.proposalType)}</td>
                   <td>
-                    <Badge className={packetMode === "Full GC Packet" ? "packet-full" : "packet-summary"}>
-                      {packetMode}
+                    <Badge className={summary.packetMode === "Full GC Packet" ? "packet-full" : "packet-summary"}>
+                      {summary.packetMode}
                     </Badge>
                   </td>
                   <td>
-                    {latestPacketRecord ? (
+                    {summary.latestPacketRecordCreatedAt ? (
                       <>
-                        <Badge className={`packet-record-${latestPacketRecord.status}`}>
-                          {formatOptionLabel(latestPacketRecord.status)}
+                        <Badge className={`packet-record-${summary.latestPacketRecordStatus}`}>
+                          {formatOptionLabel(summary.latestPacketRecordStatus)}
                         </Badge>
-                        <Badge className={hasPacketPdfAttachment(latestPacketRecord) ? "packet-pdf-attached" : "packet-pdf-missing"}>
-                          {hasPacketPdfAttachment(latestPacketRecord) ? "PDF attached" : "PDF missing"}
+                        <Badge className={summary.latestPacketRecordHasPdf ? "packet-pdf-attached" : "packet-pdf-missing"}>
+                          {summary.latestPacketRecordHasPdf ? "PDF attached" : "PDF missing"}
                         </Badge>
-                        <span>{formatDashboardDate(latestPacketRecord.createdAt)}</span>
-                        {latestSendRecord ? <span>Sent package {formatDisplayDate(latestSendRecord.sentDate)}</span> : null}
+                        <span>{formatDashboardDate(summary.latestPacketRecordCreatedAt)}</span>
+                        {summary.latestSendRecordSentDate ? <span>Sent package {formatDisplayDate(summary.latestSendRecordSentDate)}</span> : null}
                       </>
                     ) : (
                       <Badge className="packet-record-none">No packet record</Badge>
                     )}
                   </td>
                   <td onClick={(event) => event.stopPropagation()}>
-                    <StatusBadge status={proposal.status} />
-                    <select value={proposal.status} onChange={(event) => onStatusChange(proposal, event.target.value)} disabled={!permissions.markProposalOutcome}>
+                    <StatusBadge status={summary.status} />
+                    <select value={summary.status} onChange={(event) => onStatusChange(proposal, event.target.value)} disabled={!permissions.markProposalOutcome}>
                       {PROPOSAL_STATUSES.map((status) => (
                         <option key={status} value={status}>
                           {formatOptionLabel(status)}
@@ -7964,21 +8072,21 @@ function ProposalListView({
                       ))}
                     </select>
                   </td>
-                  <td>{formatDisplayDate(proposal.sentDate) || "-"}</td>
+                  <td>{formatDisplayDate(summary.sentDate) || "-"}</td>
                   <td>
-                    {proposal.followUpDate ? (
-                      <Badge className={isFollowUpOverdue(proposal) ? "follow-up-overdue" : "follow-up-due"}>
-                        {formatDisplayDate(proposal.followUpDate)}
+                    {summary.followUpDate ? (
+                      <Badge className={summary.followUpOverdue ? "follow-up-overdue" : "follow-up-due"}>
+                        {formatDisplayDate(summary.followUpDate)}
                       </Badge>
                     ) : (
                       "-"
                     )}
                   </td>
-                  <td>{formatCurrency(total)}</td>
-                  <td>{formatDashboardDate(proposal.updatedAt || proposal.createdAt || proposal.proposalDate)}</td>
+                  <td>{formatCurrency(summary.total)}</td>
+                  <td>{formatDashboardDate(summary.updatedAt)}</td>
                   <td>
                     <div className="table-actions" onClick={(event) => event.stopPropagation()}>
-                      <button type="button" onClick={() => onOpen(proposal.id)}>
+                      <button type="button" onClick={() => onOpen(summary.id)}>
                         Open
                       </button>
                       <button type="button" title="Open the print/PDF view for this proposal." onClick={() => onPrint(proposal)}>
@@ -7999,7 +8107,7 @@ function ProposalListView({
         </table>
       </div>
 
-      {filteredProposals.length === 0 ? <p className="empty-list-message">No saved proposals match those filters.</p> : null}
+      {filteredProposals.length === 0 && !loadingMessage ? <p className="empty-list-message">No saved proposals match those filters.</p> : null}
     </section>
   );
 }
@@ -10411,7 +10519,7 @@ function ProjectPhotoEditor({ message = "", photos, onPhotoChange, onPhotoUpload
         <div className="project-photo-card" key={`project-photo-${index}`}>
           <div className="project-photo-preview">
             {getImageAssetSource(photo) ? (
-              <img src={getImageAssetSource(photo)} alt={photo.label || `Project photo ${index + 1}`} />
+              <img src={getImageAssetSource(photo)} alt={photo.label || `Project photo ${index + 1}`} loading="lazy" />
             ) : (
               <span>Photo {index + 1}</span>
             )}
@@ -10574,7 +10682,7 @@ function PlanSheetEditor({ message = "", planSheets, onAddPlanSheet, onPlanSheet
           <div className="plan-sheet-upload-row">
             <div className="plan-sheet-image-preview">
               {getImageAssetSource(sheet) ? (
-                <img src={getImageAssetSource(sheet)} alt={sheet.title || "Plan sheet preview"} />
+                <img src={getImageAssetSource(sheet)} alt={sheet.title || "Plan sheet preview"} loading="lazy" />
               ) : (
                 <span>Upload plan image</span>
               )}
@@ -11746,6 +11854,75 @@ function getAuthStatusLabel(authUser, authLoading = false) {
   return authUser ? `Signed in: ${authUser.email}` : "Signed out";
 }
 
+function isDevPerformanceLoggingEnabled() {
+  return Boolean(import.meta.env?.DEV);
+}
+
+function getPerformanceTimestamp() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function startDevPerformanceTimer(label, details = {}) {
+  if (!isDevPerformanceLoggingEnabled()) {
+    return () => {};
+  }
+
+  const startTime = getPerformanceTimestamp();
+
+  return (extraDetails = {}) => {
+    const duration = Math.round((getPerformanceTimestamp() - startTime) * 10) / 10;
+    const payload = {
+      ...details,
+      ...extraDetails,
+      durationMs: duration,
+    };
+    console.debug(`[Last Yard perf] ${label}`, payload);
+  };
+}
+
+function measureDevPerformance(label, callback, details = {}) {
+  const stopTimer = startDevPerformanceTimer(label, details);
+
+  try {
+    return callback();
+  } finally {
+    stopTimer();
+  }
+}
+
+async function measureAsyncDevPerformance(label, callback, details = {}) {
+  const stopTimer = startDevPerformanceTimer(label, details);
+
+  try {
+    return await callback();
+  } finally {
+    stopTimer();
+  }
+}
+
+function loadInitialAppState(pathname = "/proposals") {
+  return measureDevPerformance("initial app state load", () => {
+    const companySettings = loadCompanySettings();
+    const savedProposals = loadSavedProposals(companySettings);
+    const route = parseRoute(pathname);
+    const proposalDraft = measureDevPerformance(
+      "initial proposal hydration",
+      () => getInitialProposalForRoute(route, savedProposals, companySettings),
+      {
+        route: route.path,
+        proposalCount: savedProposals.length,
+      },
+    );
+
+    return {
+      companySettings,
+      proposalDraft,
+      route,
+      savedProposals,
+    };
+  });
+}
+
 function getInitialProposalForRoute(route, proposals, companySettings = getDefaultCompanySettings()) {
   if (route.view === "new") {
     if (route.blank) {
@@ -11763,11 +11940,15 @@ function getInitialProposalForRoute(route, proposals, companySettings = getDefau
     }
   }
 
-  return createEditableProposal(proposals[0] || createSeedProposal(companySettings));
+  return createSeedProposal(companySettings);
 }
 
-function getProposalDraftForRoute(route, proposals, companySettings = getDefaultCompanySettings(), proposalOverride = null) {
-  const draft = proposalOverride ? createEditableProposal(proposalOverride) : getInitialProposalForRoute(route, proposals, companySettings);
+function getProposalDraftForRoute(route, proposals, companySettings = getDefaultCompanySettings(), proposalOverride = null, options = {}) {
+  const draft = proposalOverride
+    ? options.alreadyEditable
+      ? proposalOverride
+      : createEditableProposal(proposalOverride)
+    : getInitialProposalForRoute(route, proposals, companySettings);
 
   return route.blank
     ? applyProposalModeToBlankProposal(cleanTrueBlankProposalState(draft), route.blankMode || draft.proposalMode, companySettings.proposalPdfStyle)
@@ -11775,21 +11956,56 @@ function getProposalDraftForRoute(route, proposals, companySettings = getDefault
 }
 
 function loadSavedProposals(companySettings = getDefaultCompanySettings()) {
-  try {
-    const storedValue = window.localStorage.getItem(storageKey);
+  return measureDevPerformance("local proposal collection load", () => {
+    try {
+      const storedValue = window.localStorage.getItem(storageKey);
 
-    if (storedValue) {
-      const parsedValue = JSON.parse(storedValue);
+      if (storedValue) {
+        const parsedValue = JSON.parse(storedValue);
 
-      if (Array.isArray(parsedValue) && parsedValue.length > 0) {
-        return parsedValue.map((proposal) => createEditableProposal(proposal));
+        if (Array.isArray(parsedValue) && parsedValue.length > 0) {
+          return parsedValue.filter(isPlainObject).map((proposal) => normalizeSavedProposalForCollection(proposal));
+        }
       }
+    } catch {
+      // Fall through to the seed proposal if local storage is unavailable or malformed.
     }
-  } catch {
-    // Fall through to the seed proposal if local storage is unavailable or malformed.
+
+    return [normalizeSavedProposalForCollection(createSeedProposal(companySettings))];
+  });
+}
+
+function normalizeSavedProposalForCollection(proposal = {}) {
+  const sourceProposal = isPlainObject(proposal) ? proposal : {};
+
+  return {
+    ...sourceProposal,
+    id: sourceProposal.id || createProposalId(),
+    status: sourceProposal.status || "draft",
+    customerShareToken: normalizeCustomerShareToken(sourceProposal.customerShareToken),
+  };
+}
+
+function countProposalImageMetadata(value, seen = new WeakSet()) {
+  if (Array.isArray(value)) {
+    return value.reduce((count, item) => count + countProposalImageMetadata(item, seen), 0);
   }
 
-  return [createSeedProposal(companySettings)];
+  if (!isPlainObject(value)) {
+    return 0;
+  }
+
+  if (seen.has(value)) {
+    return 0;
+  }
+
+  seen.add(value);
+
+  const imageSourceKeys = ["dataUrl", "src", "imageSrc", "publicUrl", "signedUrl", "storagePath"];
+  const hasImageSource = imageSourceKeys.some((key) => typeof value[key] === "string" && value[key].trim());
+  const nestedImageCount = Object.values(value).reduce((count, item) => count + countProposalImageMetadata(item, seen), 0);
+
+  return (hasImageSource ? 1 : 0) + nestedImageCount;
 }
 
 function normalizeProposals(proposals = [], companySettings = getDefaultCompanySettings()) {
@@ -14983,7 +15199,7 @@ function ResidentialOptionPhotosEditor({ images = [], itemLabel = "Pricing optio
             return (
               <div className="residential-option-photo-editor-card" key={image.id || `${itemLabel}-${imageIndex}`}>
                 <div className="residential-option-photo-preview">
-                  {source ? <img src={source} alt={image.caption || image.label || itemLabel} /> : <span>{image.label || "Photo reminder"}</span>}
+                  {source ? <img src={source} alt={image.caption || image.label || itemLabel} loading="lazy" /> : <span>{image.label || "Photo reminder"}</span>}
                 </div>
                 <div className="residential-option-photo-fields">
                   <span className="asset-source-badge">{source ? getImageAssetLabel(image) : "Upload reminder"}</span>

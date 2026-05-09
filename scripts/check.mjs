@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 const filesToCheck = [
   "src/proposalData.js",
   "src/App.customerPortal.test.js",
+  "src/App.performance.test.js",
   "src/supabaseClient.js",
   "src/utils/cloud/cloudSync.js",
   "src/utils/cloud/companyCloud.js",
@@ -35,6 +36,8 @@ const filesToCheck = [
   "src/utils/proposalPacket/residentialPricing.test.js",
   "src/utils/proposals/proposalDraftCleanup.js",
   "src/utils/proposals/proposalDraftCleanup.test.js",
+  "src/utils/proposals/proposalListSummary.js",
+  "src/utils/proposals/proposalListSummary.test.js",
   "src/utils/proposals/proposalModes.js",
   "src/utils/proposals/proposalModes.test.js",
   "src/proposalData.test.js",
