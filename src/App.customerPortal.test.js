@@ -38,7 +38,35 @@ test("customer portal view is read-only and hides protected app navigation", () 
 test("customer portal styling supports mobile and print-safe rendering", () => {
   assert.match(styleSource, /\.customer-portal-shell/);
   assert.match(styleSource, /\.customer-portal-option-card/);
-  assert.match(styleSource, /@media \(max-width: 760px\)/);
-  assert.match(styleSource, /@media print/);
+  assert.match(styleSource, /@media \(max-width: 768px\)/);
+  assert.match(styleSource, /@media \(max-width: 480px\)/);
+  assert.match(styleSource, /@media (?:only )?print/);
   assert.match(styleSource, /page-break-inside: avoid/);
+});
+
+test("customer portal mobile CSS prevents horizontal scroll and stacks pricing rows", () => {
+  assert.match(styleSource, /\.customer-portal-shell\s*\{[\s\S]*?overflow-x:\s*hidden/);
+  assert.match(styleSource, /\.customer-portal-page\s*\{[\s\S]*?overflow-x:\s*hidden/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*?\.customer-portal-toolbar button\s*\{[\s\S]*?width:\s*100%/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*?\.customer-portal-table-row,[\s\S]*?\.customer-portal-addon-row,[\s\S]*?\.customer-portal-notice-row\s*\{[\s\S]*?grid-template-columns:\s*1fr/);
+  assert.match(styleSource, /@media \(max-width: 480px\)[\s\S]*?\.customer-portal-document\s*\{[\s\S]*?padding:\s*10px/);
+});
+
+test("customer portal photos are responsive and non-distorting", () => {
+  assert.match(styleSource, /\.customer-portal-photo-tile img\s*\{[\s\S]*?object-fit:\s*cover/);
+  assert.match(styleSource, /\.customer-portal-photo-tile img\s*\{[\s\S]*?object-position:\s*center/);
+  assert.match(styleSource, /@media \(max-width: 768px\)[\s\S]*?\.customer-portal-photo-grid,[\s\S]*?\.customer-portal-legal-grid\s*\{[\s\S]*?grid-template-columns:\s*1fr/);
+  assert.match(styleSource, /@media \(max-width: 480px\)[\s\S]*?\.customer-portal-photo-tile img\s*\{[\s\S]*?aspect-ratio:\s*4\s*\/\s*3/);
+});
+
+test("customer portal renders simple-estimate and choose-one customer pricing content", () => {
+  assert.match(appSource, /function CustomerPortalSimpleEstimatePricing/);
+  assert.match(appSource, /Estimate Total/);
+  assert.match(appSource, /Optional Add-On:/);
+  assert.match(appSource, /Selected/);
+  assert.match(appSource, /Not Selected/);
+  assert.match(appSource, /function CustomerPortalChooseOnePricing/);
+  assert.match(appSource, /Customer to Select One/);
+  assert.match(appSource, /getCustomerSafeImageCaption/);
+  assert.match(appSource, /\.filter\(\(image\) => image\.src\)/);
 });
