@@ -2141,6 +2141,31 @@ export default function App() {
   function getProposalCloudSaveDeps() {
     return {
       ...proposalCloudDeps,
+      onLocalImageUploadDiagnostics: (stats = {}) => {
+        if (!import.meta.env.DEV) {
+          return;
+        }
+
+        const hasLocalPhotoWork =
+          Number(stats.localOnlyCount || 0) > 0 ||
+          Number(stats.uploadableLocalSourceCount || 0) > 0 ||
+          Number(stats.missingLocalSourceCount || 0) > 0 ||
+          Number(stats.attemptedUploadCount || 0) > 0;
+
+        if (!hasLocalPhotoWork) {
+          return;
+        }
+
+        console.info("[Last Yard proposals] Local proposal image upload diagnostics", {
+          attemptedUploadCount: stats.attemptedUploadCount || 0,
+          failedUploadCount: stats.failedCount || 0,
+          localOnlyPhotoCount: stats.localOnlyCount || 0,
+          missingLocalSourceCount: stats.missingLocalSourceCount || 0,
+          successfulUploadCount: stats.uploadedCount || 0,
+          uploadableLocalSourceCount: stats.uploadableLocalSourceCount || 0,
+          uploadFunctionPresent: stats.uploadFunctionPresent === true,
+        });
+      },
       uploadLocalProposalImageToStorage: (image, context = {}) =>
         uploadLocalProposalImageAssetToCloud(image, {
           area: context.area || "featured",

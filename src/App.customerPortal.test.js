@@ -49,6 +49,8 @@ test("signed-in proposal opens refresh latest cloud detail before hydration", ()
 test("editor cloud save accepts merged portal fields returned from cloud persistence", () => {
   assert.match(appSource, /const cloudSavedProposal = await saveCloudProposal\(companyRecord\.id, proposal, getProposalCloudSaveDeps\(\)\)/);
   assert.match(appSource, /uploadLocalProposalImageAssetToCloud\(image/);
+  assert.match(appSource, /onLocalImageUploadDiagnostics/);
+  assert.match(appSource, /Local proposal image upload diagnostics/);
   assert.match(appSource, /setSavedProposals\(\(currentProposals\) => upsertProposal\(currentProposals, syncedProposal\)\)/);
   assert.match(appSource, /if \(proposalDraft\.id === syncedProposal\.id\)/);
   assert.match(appSource, /formatCloudProposalSaveError\(error\)/);

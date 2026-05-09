@@ -746,8 +746,12 @@ export function getCloudProposalSaveWarning(proposal = {}) {
 export async function uploadLocalProposalImagesToStorage(companyId, proposal = {}, deps = {}) {
   if (!isPlainObject(proposal)) {
     return {
+      attemptedUploadCount: 0,
       failedCount: 0,
+      missingLocalSourceCount: 0,
       proposal,
+      uploadableLocalSourceCount: 0,
+      uploadFunctionPresent: typeof deps.uploadLocalProposalImageToStorage === "function",
       uploadedCount: 0,
       warning: "",
     };
@@ -756,8 +760,12 @@ export async function uploadLocalProposalImagesToStorage(companyId, proposal = {
   const uploadImage = typeof deps.uploadLocalProposalImageToStorage === "function" ? deps.uploadLocalProposalImageToStorage : null;
   const uploadCache = new Map();
   const stats = {
+    attemptedUploadCount: 0,
     failedCount: 0,
     localOnlyCount: 0,
+    missingLocalSourceCount: 0,
+    uploadableLocalSourceCount: 0,
+    uploadFunctionPresent: Boolean(uploadImage),
     uploadedCount: 0,
   };
   const uploadedProposal = await uploadLocalProposalImagesInValue(proposal, {
@@ -778,9 +786,25 @@ export async function uploadLocalProposalImagesToStorage(companyId, proposal = {
     warnings.push(`${failedImageCloudUploadWarning} ${stats.localOnlyCount} local-only photo${stats.localOnlyCount === 1 ? "" : "s"} could not be promoted during this save.`);
   }
 
+  if (stats.missingLocalSourceCount > 0) {
+    warnings.push(
+      `Some photos cannot be uploaded because the original local image data is missing. Remove and re-upload ${
+        stats.missingLocalSourceCount === 1 ? "the photo" : "those photos"
+      }.`,
+    );
+  }
+
+  if (typeof deps.onLocalImageUploadDiagnostics === "function") {
+    deps.onLocalImageUploadDiagnostics({ ...stats });
+  }
+
   return {
+    attemptedUploadCount: stats.attemptedUploadCount,
     failedCount: stats.failedCount,
+    missingLocalSourceCount: stats.missingLocalSourceCount,
     proposal: isPlainObject(uploadedProposal) ? uploadedProposal : proposal,
+    uploadableLocalSourceCount: stats.uploadableLocalSourceCount,
+    uploadFunctionPresent: stats.uploadFunctionPresent,
     uploadedCount: stats.uploadedCount,
     warning: warnings.join(" "),
   };
@@ -814,8 +838,20 @@ async function uploadLocalProposalImagesInValue(value, context) {
 
   const imageLike = looksLikeImageMetadataObject(value, context.currentKey, context.parentKey);
 
-  if (imageLike && shouldUploadLocalImageMetadata(value)) {
-    return uploadLocalImageMetadata(value, context);
+  if (imageLike) {
+    if (shouldUploadLocalImageMetadata(value)) {
+      return uploadLocalImageMetadata(value, context);
+    }
+
+    if (hasMissingLocalImageData(value)) {
+      context.stats.missingLocalSourceCount += 1;
+      return {
+        ...value,
+        cloudSynced: false,
+        localOnly: true,
+        uploadRequired: false,
+      };
+    }
   }
 
   const nextValue = {};
@@ -834,10 +870,13 @@ async function uploadLocalProposalImagesInValue(value, context) {
 
 async function uploadLocalImageMetadata(image, context) {
   context.stats.localOnlyCount += 1;
+  context.stats.uploadableLocalSourceCount += 1;
 
   if (!context.uploadImage) {
     return image;
   }
+
+  context.stats.attemptedUploadCount += 1;
 
   const cacheKey = getLocalImageUploadCacheKey(image);
 
@@ -897,6 +936,30 @@ function shouldUploadLocalImageMetadata(image = {}) {
 
 function hasLocalImageSource(image = {}) {
   return ["dataUrl", "src", "imageSrc", "url"].some((key) => isEmbeddedImageReference(image?.[key])) || isFileLikeCloudValue(image?.file);
+}
+
+function hasMissingLocalImageData(image = {}) {
+  return Boolean(hasLocalImageUploadIntent(image) && !hasCloudImageSource(image) && !hasLocalImageSource(image));
+}
+
+function hasLocalImageUploadIntent(image = {}) {
+  if (image.localOnly === true || image.cloudSynced === false) {
+    return true;
+  }
+
+  return image.uploadRequired === false && hasStoredImageMetadata(image);
+}
+
+function hasStoredImageMetadata(image = {}) {
+  return ["id", "fileName", "originalFileName", "fileSize", "fileType", "uploadedAt", "uploadedBy", "uploadedByEmail"].some((key) => {
+    const value = image?.[key];
+
+    if (typeof value === "number") {
+      return value > 0;
+    }
+
+    return String(value || "").trim().length > 0;
+  });
 }
 
 function getLocalImageUploadCacheKey(image = {}) {
@@ -1019,10 +1082,13 @@ function looksLikeImageMetadataObject(value = {}, currentKey = "", parentKey = "
 }
 
 function hasCloudImageSource(image = {}) {
-  return ["storagePath", "publicUrl", "signedUrl", "thumbnailUrl", "src", "imageSrc"].some((key) => {
-    const value = String(image?.[key] || "").trim();
-    return value && !isEmbeddedImageReference(value);
-  });
+  const storagePath = String(image?.storagePath || "").trim();
+
+  if (storagePath && !isEmbeddedImageReference(storagePath)) {
+    return true;
+  }
+
+  return ["publicUrl", "signedUrl", "thumbnailUrl", "src", "imageSrc", "url"].some((key) => isRemoteImageReference(image?.[key]));
 }
 
 function hasAnyImageSource(image = {}) {
@@ -1121,6 +1187,11 @@ function mergeLocalImageSourceIntoCloudImage(localImage = {}, cloudImage = {}) {
 function isEmbeddedImageReference(value = "") {
   const normalizedValue = String(value || "").trim().toLowerCase();
   return normalizedValue.startsWith("data:image/") || normalizedValue.startsWith("blob:");
+}
+
+function isRemoteImageReference(value = "") {
+  const normalizedValue = String(value || "").trim().toLowerCase();
+  return /^https?:\/\//.test(normalizedValue) || normalizedValue.startsWith("//");
 }
 
 function isFileLikeCloudValue(value) {

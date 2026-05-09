@@ -667,6 +667,106 @@ test("uploadLocalProposalImagesToStorage promotes local project option and add-o
   assert.equal(sanitized.stats.localOnlyImages, 0);
 });
 
+test("uploadLocalProposalImagesToStorage attempts upload for root pricing option photos with local data URLs", async () => {
+  const embeddedImage = `data:image/jpeg;base64,${"g".repeat(1000)}`;
+  const attempted = [];
+  const diagnostics = [];
+  const result = await uploadLocalProposalImagesToStorage(
+    "company-1",
+    {
+      id: "proposal-root-option-photo-upload",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1",
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "Broom walkway",
+              dataUrl: embeddedImage,
+              fileName: "broom walkway.jpg",
+              localOnly: true,
+              src: embeddedImage,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      onLocalImageUploadDiagnostics(stats) {
+        diagnostics.push(stats);
+      },
+      uploadLocalProposalImageToStorage: async (image, context) => {
+        attempted.push({ id: image.id, area: context.area, fileStem: context.fileStem });
+        return {
+          cloudSynced: true,
+          fileName: image.fileName,
+          fileType: "image/jpeg",
+          publicUrl: `https://cdn.example/${image.id}.jpg`,
+          src: `https://cdn.example/${image.id}.jpg`,
+          storagePath: `company/company-1/proposals/proposal-root-option-photo-upload/${context.area}/${image.id}.jpg`,
+          uploadedAt: "2026-05-09T12:00:00.000Z",
+        };
+      },
+    },
+  );
+  const sanitized = sanitizeProposalDataForCloudSave(result.proposal);
+
+  assert.deepEqual(attempted, [{ id: "option-photo-1", area: "option-photos", fileStem: "option-photo-1" }]);
+  assert.equal(result.uploadFunctionPresent, true);
+  assert.equal(result.uploadableLocalSourceCount, 1);
+  assert.equal(result.attemptedUploadCount, 1);
+  assert.equal(result.uploadedCount, 1);
+  assert.equal(result.failedCount, 0);
+  assert.equal(result.proposal.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.jpg");
+  assert.equal(JSON.stringify(sanitized.proposalData).includes("data:image/"), false);
+  assert.equal(sanitized.proposalData.pricingOptions[0].images[0].storagePath.includes("/option-photos/option-photo-1.jpg"), true);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].attemptedUploadCount, 1);
+});
+
+test("uploadLocalProposalImagesToStorage warns when a local-only photo no longer has uploadable local data", async () => {
+  let attemptedUpload = false;
+  const result = await uploadLocalProposalImagesToStorage(
+    "company-1",
+    {
+      id: "proposal-missing-local-source",
+      pricing: {
+        pricingMode: "choose_one_option",
+        pricingOptions: [
+          {
+            id: "option-1",
+            images: [
+              {
+                id: "option-photo-1",
+                caption: "Broom walkway",
+                fileName: "broom walkway.jpg",
+                localOnly: true,
+                uploadRequired: false,
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      uploadLocalProposalImageToStorage: async () => {
+        attemptedUpload = true;
+      },
+    },
+  );
+  const sanitized = sanitizeProposalDataForCloudSave(result.proposal);
+
+  assert.equal(attemptedUpload, false);
+  assert.equal(result.uploadFunctionPresent, true);
+  assert.equal(result.uploadableLocalSourceCount, 0);
+  assert.equal(result.attemptedUploadCount, 0);
+  assert.equal(result.missingLocalSourceCount, 1);
+  assert.match(result.warning, /original local image data is missing/);
+  assert.equal(result.proposal.pricing.pricingOptions[0].images[0].localOnly, true);
+  assert.equal(JSON.stringify(sanitized.proposalData).includes("data:image/"), false);
+});
+
 test("saveCloudProposal uploads local images before upserting cloud-safe proposal data", async () => {
   const embeddedImage = `data:image/png;base64,${"d".repeat(1400)}`;
   let insertPayload = null;
