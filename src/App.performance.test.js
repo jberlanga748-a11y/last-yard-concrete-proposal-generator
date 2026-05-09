@@ -27,11 +27,15 @@ test("proposal list uses lightweight summaries instead of full proposal calculat
 });
 
 test("saved proposal opening hydrates details lazily with a loading message", () => {
+  const openProposalSource = appSource.match(/function openProposal[\s\S]*?async function submitCustomerPortalSelection/)?.[0] || "";
+
   assert.match(appSource, /Opening proposal details/);
   assert.match(appSource, /requestAnimationFrame/);
   assert.match(appSource, /createEditableProposal\(proposal\)/);
   assert.match(appSource, /proposalAlreadyEditable: true/);
   assert.match(appSource, /alreadyEditable: options\.proposalAlreadyEditable === true/);
+  assert.match(openProposalSource, /try \{/);
+  assert.match(openProposalSource, /Could not open this proposal because its saved data needs review/);
 });
 
 test("proposal preview is delayed until the editor is ready", () => {

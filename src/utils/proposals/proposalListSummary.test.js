@@ -68,3 +68,108 @@ test("proposal list summary keeps commercial and GC totals lightweight", () => {
     2650,
   );
 });
+
+test("proposal list summary loads older proposals with missing new fields", () => {
+  const summaries = buildProposalListSummaries([
+    {
+      id: "old-proposal",
+      proposalNumber: "LYC-OLD",
+      project: { name: "Older Saved Proposal" },
+      client: { companyName: "Legacy Client" },
+      lineItems: [{ description: "Concrete", quantity: 1, unitPrice: 1200 }],
+    },
+  ]);
+
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].id, "old-proposal");
+  assert.equal(summaries[0].projectName, "Older Saved Proposal");
+  assert.equal(summaries[0].clientCompanyName, "Legacy Client");
+  assert.equal(summaries[0].proposalType, "");
+  assert.equal(summaries[0].customerShareEnabled, false);
+  assert.equal(summaries[0].total, 1200);
+});
+
+test("proposal list summary tolerates missing and malformed residential pricing fields", () => {
+  const summaries = buildProposalListSummaries([
+    {
+      id: "missing-pricing",
+      proposalMode: "residential",
+      project: { name: "No Pricing Object" },
+    },
+    {
+      id: "malformed-pricing",
+      proposalMode: "residential",
+      pricingMode: "base_plus_addons",
+      pricing: {
+        basePackage: "not an object",
+        optionalAddOns: { name: "not an array" },
+      },
+      pricingOptions: { name: "not an array" },
+      optionalAddOns: "not an array",
+      customerSelection: undefined,
+      residentialLegalPapers: undefined,
+    },
+  ]);
+
+  assert.equal(summaries.length, 2);
+  assert.equal(summaries[0].id, "missing-pricing");
+  assert.equal(summaries[0].total, 0);
+  assert.equal(summaries[1].id, "malformed-pricing");
+  assert.equal(summaries[1].total, 0);
+});
+
+test("one malformed proposal does not crash all proposal summaries", () => {
+  const malformedProposal = {
+    id: "bad-proposal",
+    proposalNumber: "LYC-BAD",
+    project: { name: "Needs Data Review" },
+    client: { companyName: "Bad Data Client" },
+  };
+
+  Object.defineProperty(malformedProposal, "pricing", {
+    get() {
+      throw new Error("bad pricing getter");
+    },
+  });
+
+  const summaries = buildProposalListSummaries([
+    malformedProposal,
+    {
+      id: "good-proposal",
+      proposalNumber: "LYC-GOOD",
+      project: { name: "Good Proposal" },
+      client: { companyName: "Good Client" },
+      pricing: { pricingMode: "base_plus_addons", basePackage: { total: 40000 } },
+    },
+  ]);
+
+  assert.equal(summaries.length, 2);
+  assert.equal(summaries[0].id, "bad-proposal");
+  assert.equal(summaries[0].projectName, "Needs Data Review");
+  assert.equal(summaries[0].total, 0);
+  assert.equal(summaries[1].id, "good-proposal");
+  assert.equal(summaries[1].total, 40000);
+});
+
+test("proposal list summary does not strip full proposal data needed when opening", () => {
+  const fullProposal = {
+    id: "full-residential",
+    proposalMode: "residential",
+    pricing: {
+      pricingMode: "choose_one_option",
+      pricingOptions: [{ name: "Option 1", price: 82500, images: [{ publicUrl: "https://example.test/photo.jpg" }] }],
+      optionalAddOns: [{ name: "Cantilever", amount: 8500 }],
+    },
+    residentialLegalPapers: { termsAndConditions: { status: "included" } },
+    customerSelection: { status: "submitted", selectedTotal: 91000 },
+  };
+
+  const summaries = buildProposalListSummaries([fullProposal]);
+
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].id, "full-residential");
+  assert.equal(hasHeavyProposalListFields(summaries[0]), false);
+  assert.equal(fullProposal.pricing.pricingOptions.length, 1);
+  assert.equal(fullProposal.residentialLegalPapers.termsAndConditions.status, "included");
+  assert.equal(fullProposal.customerSelection.status, "submitted");
+});

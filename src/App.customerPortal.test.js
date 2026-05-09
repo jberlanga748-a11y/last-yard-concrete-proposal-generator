@@ -106,6 +106,8 @@ test("customer portal selection API validates token and writes only customer sel
   assert.match(customerPortalApiSource, /request\.method === "POST"/);
   assert.match(customerPortalApiSource, /getCustomerShareStatus\(proposal, shareToken\)/);
   assert.match(customerPortalApiSource, /buildSubmittedCustomerSelection\(proposal, body\.selection/);
+  assert.match(customerPortalApiSource, /customerSelection,\s*\n\s*\}/);
+  assert.match(customerPortalApiSource, /updateCustomerProposalData\(supabase, data\.id, proposalWithSelection, \{ required: true \}\)/);
   assert.match(customerPortalApiSource, /customerSelection/);
   assert.doesNotMatch(customerPortalApiSource, /status:\s*"approved"/);
   assert.doesNotMatch(customerPortalApiSource, /accepted/i);

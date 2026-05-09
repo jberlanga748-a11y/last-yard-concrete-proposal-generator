@@ -4,10 +4,17 @@ import { inferProposalModeFromProposal, isGcPrimePacketMode, isResidentialPropos
 
 export function buildProposalListSummaries(proposals = [], contacts = []) {
   const safeProposals = (Array.isArray(proposals) ? proposals : []).filter(isSummaryObject);
-  const contactsById = new Map((Array.isArray(contacts) ? contacts : []).filter(isSummaryObject).map((contact) => [contact.id, contact]));
+  const contactsById = buildSummaryContactMap(contacts);
   const latestRevisionByProposalNumber = buildLatestRevisionMap(safeProposals);
 
-  return safeProposals.map((proposal) => createProposalListSummary(proposal, { contactsById, latestRevisionByProposalNumber }));
+  return safeProposals.map((proposal, index) => {
+    try {
+      return createProposalListSummary(proposal, { contactsById, latestRevisionByProposalNumber });
+    } catch (error) {
+      logProposalSummaryError(error, proposal, index);
+      return createFallbackProposalListSummary(proposal, index);
+    }
+  });
 }
 
 export function createProposalListSummary(proposal = {}, { contactsById = new Map(), latestRevisionByProposalNumber = new Map() } = {}) {
@@ -128,15 +135,78 @@ export function hasHeavyProposalListFields(summary = {}) {
 
 function buildLatestRevisionMap(proposals = []) {
   return proposals.reduce((latestMap, proposal) => {
-    const proposalNumber = cleanSummaryText(proposal.proposalNumber);
+    const proposalNumber = cleanSummaryText(safeReadSummaryValue(() => proposal.proposalNumber));
 
     if (!proposalNumber) {
       return latestMap;
     }
 
-    latestMap.set(proposalNumber, Math.max(latestMap.get(proposalNumber) ?? -1, normalizeSummaryRevisionNumber(proposal.revisionNumber)));
+    latestMap.set(
+      proposalNumber,
+      Math.max(latestMap.get(proposalNumber) ?? -1, normalizeSummaryRevisionNumber(safeReadSummaryValue(() => proposal.revisionNumber))),
+    );
     return latestMap;
   }, new Map());
+}
+
+function buildSummaryContactMap(contacts = []) {
+  const contactsById = new Map();
+
+  (Array.isArray(contacts) ? contacts : []).filter(isSummaryObject).forEach((contact) => {
+    try {
+      const contactId = cleanSummaryText(contact.id);
+
+      if (contactId) {
+        contactsById.set(contactId, contact);
+      }
+    } catch {
+      // A malformed contact should not block the proposal list.
+    }
+  });
+
+  return contactsById;
+}
+
+function createFallbackProposalListSummary(proposal = {}, index = 0) {
+  const id = cleanSummaryText(safeReadSummaryValue(() => proposal.id)) || `malformed-proposal-${index + 1}`;
+  const proposalNumber = cleanSummaryText(safeReadSummaryValue(() => proposal.proposalNumber)) || "Unavailable proposal";
+  const status = cleanSummaryText(safeReadSummaryValue(() => proposal.status)) || "draft";
+  const clientCompanyName = cleanSummaryText(safeReadSummaryValue(() => proposal.client?.companyName)) || "Review proposal data";
+  const clientContactName = cleanSummaryText(safeReadSummaryValue(() => proposal.client?.contactName));
+  const projectName = cleanSummaryText(safeReadSummaryValue(() => proposal.project?.name)) || "Could not read proposal summary";
+  const updatedAt =
+    cleanSummaryText(
+      safeReadSummaryValue(() => proposal.updatedAt || proposal.createdAt || proposal.proposalDate),
+    ) || "";
+
+  return {
+    id,
+    proposalNumber,
+    revisionLabel: cleanSummaryText(safeReadSummaryValue(() => proposal.revisionLabel)),
+    revisionNumber: normalizeSummaryRevisionNumber(safeReadSummaryValue(() => proposal.revisionNumber)),
+    isLatestRevision: true,
+    clientCompanyName,
+    clientContactName,
+    linkedContactLabel: "",
+    projectName,
+    proposalMode: cleanSummaryText(safeReadSummaryValue(() => proposal.proposalMode)),
+    proposalType: cleanSummaryText(safeReadSummaryValue(() => proposal.proposalType ?? proposal.type)),
+    packetMode: "Summary",
+    latestPacketRecordCreatedAt: "",
+    latestPacketRecordHasPdf: false,
+    latestPacketRecordStatus: "",
+    latestSendRecordSentDate: "",
+    sentDate: cleanSummaryText(safeReadSummaryValue(() => proposal.sentDate)),
+    status,
+    followUpDate: "",
+    followUpDue: false,
+    followUpOverdue: false,
+    total: 0,
+    updatedAt,
+    customerShareEnabled: false,
+    isQaTestRecord: false,
+    searchText: [proposalNumber, clientCompanyName, clientContactName, projectName].filter(Boolean).join(" ").toLowerCase(),
+  };
 }
 
 function getLatestSummaryPacketRecord(proposal = {}) {
@@ -256,4 +326,24 @@ function cleanSummaryText(value = "") {
 
 function isSummaryObject(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function safeReadSummaryValue(readValue, fallback = "") {
+  try {
+    return typeof readValue === "function" ? readValue() : readValue;
+  } catch {
+    return fallback;
+  }
+}
+
+function logProposalSummaryError(error, proposal = {}, index = 0) {
+  if (!import.meta.env?.DEV) {
+    return;
+  }
+
+  const proposalId = cleanSummaryText(safeReadSummaryValue(() => proposal.id)) || `index ${index}`;
+  console.warn("[Last Yard proposals] Could not build proposal list summary.", {
+    error: error?.message || String(error),
+    proposalId,
+  });
 }

@@ -1062,14 +1062,28 @@ export default function App() {
 
     const scheduleHydration = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
     scheduleHydration(() => {
-      const editableProposal = measureDevPerformance(
-        "opening saved proposal",
-        () => createEditableProposal(proposal),
-        {
-          proposalId,
-          imageCount: countProposalImageMetadata(proposal),
-        },
-      );
+      let editableProposal;
+
+      try {
+        editableProposal = measureDevPerformance(
+          "opening saved proposal",
+          () => createEditableProposal(proposal),
+          {
+            proposalId,
+            imageCount: countProposalImageMetadata(proposal),
+          },
+        );
+      } catch (error) {
+        if (import.meta.env?.DEV) {
+          console.warn("[Last Yard proposals] Could not hydrate saved proposal.", {
+            error: error?.message || String(error),
+            proposalId,
+          });
+        }
+
+        setProposalOpenMessage("Could not open this proposal because its saved data needs review. Other proposals remain available.");
+        return;
+      }
 
       const navigated = navigate(nextPath, {
         proposal: editableProposal,

@@ -86,7 +86,7 @@ export default async function handler(request, response) {
         customerSelection,
       };
 
-      await updateCustomerProposalData(supabase, data.id, proposalWithSelection);
+      await updateCustomerProposalData(supabase, data.id, proposalWithSelection, { required: true });
 
       response.status(200).json({
         ok: true,
@@ -122,20 +122,35 @@ export default async function handler(request, response) {
   }
 }
 
-async function updateCustomerProposalData(supabase, rowId, proposalData) {
+async function updateCustomerProposalData(supabase, rowId, proposalData, { required = false } = {}) {
   if (!rowId) {
-    return;
+    if (required) {
+      throw new Error("Missing proposal row id for customer portal update.");
+    }
+
+    return false;
   }
 
   try {
-    await supabase.from(proposalsTable).update({ proposal_data: proposalData }).eq("id", rowId);
-  } catch {
+    const { error } = await supabase.from(proposalsTable).update({ proposal_data: proposalData }).eq("id", rowId);
+
+    if (error) {
+      throw error;
+    }
+
+    return true;
+  } catch (error) {
+    if (required) {
+      throw error;
+    }
+
     // Viewing should not fail just because last-viewed tracking could not be written.
+    return false;
   }
 }
 
 async function readJsonBody(request) {
-  if (request.body && typeof request.body === "object") {
+  if (request.body && typeof request.body === "object" && typeof request.body.pipe !== "function" && typeof request.body.read !== "function") {
     return request.body;
   }
 
