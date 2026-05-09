@@ -1,4 +1,8 @@
-import { BASE_PLUS_ADDONS_PRICING_MODE, CHOOSE_ONE_PRICING_MODE } from "./proposalPacket/residentialPricing.js";
+import {
+  BASE_PLUS_ADDONS_PRICING_MODE,
+  getResidentialAddOnAmountForOption,
+  isResidentialChooseOnePricingMode,
+} from "./proposalPacket/residentialPricing.js";
 
 const customerPortalTokenPrefix = "lyp_";
 const customerPortalTokenByteLength = 18;
@@ -410,6 +414,7 @@ export function normalizeCustomerSelection(selection = {}) {
     selectedOptionName: cleanCustomerPortalText(sourceSelection.selectedOptionName),
     selectedAddOnIds: sanitizeCustomerPortalTextList(sourceSelection.selectedAddOnIds),
     selectedAddOnNames: sanitizeCustomerPortalTextList(sourceSelection.selectedAddOnNames),
+    selectedAddOnAmounts: sanitizeCustomerPortalAddOnAmounts(sourceSelection.selectedAddOnAmounts),
     selectedTotal: toCustomerPortalNumber(sourceSelection.selectedTotal),
     selectedDownPayment: toCustomerPortalNumber(sourceSelection.selectedDownPayment),
     selectedFinalPayment: toCustomerPortalNumber(sourceSelection.selectedFinalPayment),
@@ -444,6 +449,18 @@ export function normalizeCustomerApproval(approval = {}) {
     acknowledgedNotices: sourceApproval.acknowledgedNotices === true,
     customerNotes: cleanCustomerPortalLongText(sourceApproval.customerNotes),
   };
+}
+
+function sanitizeCustomerPortalAddOnAmounts(rows = []) {
+  return sanitizeCustomerPortalRows(rows)
+    .map((row) =>
+      removeEmptyCustomerPortalFields({
+        id: cleanCustomerPortalText(row.id),
+        name: cleanCustomerPortalText(row.name),
+        amount: toCustomerPortalNumber(row.amount ?? row.price ?? row.total ?? row.selectedAmount),
+      }),
+    )
+    .filter((row) => row.id || row.name || row.amount > 0);
 }
 
 export function createCustomerPortalSelectionDraft(proposal = {}) {
@@ -521,7 +538,7 @@ export function applyCustomerSelectionToProposal(
     .map((option, index) => ({ option, id: getCustomerSelectionItemId(option, index, "option") }))
     .find(({ id, option }) => id === selectedOptionId || cleanCustomerPortalText(option?.name) === selectedOptionId)?.option;
   const nextPricingOptions =
-    pricingMode === CHOOSE_ONE_PRICING_MODE
+    isResidentialChooseOnePricingMode(pricingMode)
       ? rootPricingOptions.map((option, index) => {
           const optionId = getCustomerSelectionItemId(option, index, "option");
           const isSelected = optionId === selectedOptionId || cleanCustomerPortalText(option?.name) === selectedOptionId;
@@ -536,11 +553,14 @@ export function applyCustomerSelectionToProposal(
   const nextOptionalAddOns = rootOptionalAddOns.map((addOn, index) => {
     const addOnId = getCustomerSelectionItemId(addOn, index, "addon");
     const isSelected = selectedAddOnIds.has(addOnId);
+    const selectedAmount =
+      summary.selectedAddOnAmounts.find((row) => row.id === addOnId || cleanCustomerPortalText(row.name) === cleanCustomerPortalText(addOn.name))?.amount || 0;
 
     return {
       ...addOn,
       included: isSelected,
       selected: isSelected,
+      selectedAmount: isSelected ? selectedAmount : 0,
     };
   });
   const appliedSnapshot = removeEmptyCustomerPortalFields({
@@ -550,6 +570,7 @@ export function applyCustomerSelectionToProposal(
     selectedOptionName: summary.selectedOptionName,
     selectedAddOnIds: summary.selectedAddOnIds,
     selectedAddOnNames: summary.selectedAddOnNames,
+    selectedAddOnAmounts: summary.selectedAddOnAmounts,
     selectedTotal: summary.selectedTotal,
     selectedDownPayment: summary.selectedDownPayment,
     selectedFinalPayment: summary.selectedFinalPayment,
@@ -573,6 +594,7 @@ export function applyCustomerSelectionToProposal(
     selectedOptionName: summary.selectedOptionName,
     selectedAddOnIds: summary.selectedAddOnIds,
     selectedAddOnNames: summary.selectedAddOnNames,
+    selectedAddOnAmounts: summary.selectedAddOnAmounts,
     selectedTotal: summary.selectedTotal,
     selectedDownPayment: summary.selectedDownPayment,
     selectedFinalPayment: summary.selectedFinalPayment,
@@ -684,6 +706,7 @@ export function getAppliedCustomerSelectionSummary(proposal = {}) {
       selectedOptionName: selection.selectedOptionName,
       selectedAddOnIds: selection.selectedAddOnIds,
       selectedAddOnNames: selection.selectedAddOnNames,
+      selectedAddOnAmounts: selection.selectedAddOnAmounts,
       selectedTotal: selection.appliedProposalTotal || selection.selectedTotal,
       selectedDownPayment: selection.appliedDownPayment || selection.selectedDownPayment,
       selectedFinalPayment: selection.appliedFinalPayment || selection.selectedFinalPayment,
@@ -699,16 +722,26 @@ export function calculateCustomerSelectionSummary(proposal = {}, selection = {})
   const addOns = selectCustomerPortalRows(proposal.optionalAddOns, pricing.optionalAddOns);
   const selectedAddOnIds = getSelectedCustomerAddOnIds(addOns, selection);
 
-  if (selectedPricingMode === CHOOSE_ONE_PRICING_MODE) {
+  if (isResidentialChooseOnePricingMode(selectedPricingMode)) {
     const options = selectCustomerPortalRows(proposal.pricingOptions, pricing.pricingOptions);
     const selectedOption = selectCustomerPortalOption(options, selection.selectedOptionId);
     const selectedOptionId = selectedOption ? getCustomerSelectionItemId(selectedOption.item, selectedOption.index, "option") : "";
     const selectedOptionName = selectedOption?.item?.name || "";
     const optionPrice = toCustomerPortalNumber(selectedOption?.item?.price ?? selectedOption?.item?.amount ?? selectedOption?.item?.total);
     const selectedAddOns = addOns
-      .map((addOn, index) => ({ addOn, id: getCustomerSelectionItemId(addOn, index, "addon"), index }))
-      .filter(({ addOn, id }) => selectedAddOnIds.includes(id) && doesCustomerAddOnApplyToOption(addOn, selectedOption?.item));
-    const addOnsTotal = selectedAddOns.reduce((sum, { addOn }) => sum + toCustomerPortalNumber(addOn.amount ?? addOn.price ?? addOn.total), 0);
+      .map((addOn, index) => ({
+        addOn,
+        amount: getResidentialAddOnAmountForOption(addOn, selectedOption?.item),
+        id: getCustomerSelectionItemId(addOn, index, "addon"),
+        index,
+      }))
+      .filter(({ amount, id }) => selectedAddOnIds.includes(id) && amount > 0);
+    const selectedAddOnAmounts = selectedAddOns.map(({ addOn, amount, id }) => ({
+      id,
+      name: cleanCustomerPortalText(addOn.name),
+      amount,
+    }));
+    const addOnsTotal = selectedAddOnAmounts.reduce((sum, row) => sum + toCustomerPortalNumber(row.amount), 0);
     const selectedTotal = optionPrice + addOnsTotal;
     const selectedDownPayment = toCustomerPortalNumber(selectedOption?.item?.downPayment) || optionPrice / 2;
     const selectedFinalPayment = toCustomerPortalNumber(selectedOption?.item?.finalPayment) || optionPrice / 2;
@@ -719,6 +752,7 @@ export function calculateCustomerSelectionSummary(proposal = {}, selection = {})
       selectedOptionName,
       selectedAddOnIds: selectedAddOns.map(({ id }) => id),
       selectedAddOnNames: selectedAddOns.map(({ addOn }) => cleanCustomerPortalText(addOn.name)).filter(Boolean),
+      selectedAddOnAmounts,
       selectedTotal,
       selectedDownPayment: selectedDownPayment + addOnsTotal / 2,
       selectedFinalPayment: selectedFinalPayment + addOnsTotal / 2,
@@ -739,6 +773,11 @@ export function calculateCustomerSelectionSummary(proposal = {}, selection = {})
       selectedOptionName: "",
       selectedAddOnIds: selectedAddOns.map(({ id }) => id),
       selectedAddOnNames: selectedAddOns.map(({ addOn }) => cleanCustomerPortalText(addOn.name)).filter(Boolean),
+      selectedAddOnAmounts: selectedAddOns.map(({ addOn, id }) => ({
+        id,
+        name: cleanCustomerPortalText(addOn.name),
+        amount: toCustomerPortalNumber(addOn.amount ?? addOn.price ?? addOn.total),
+      })),
       selectedTotal,
       selectedDownPayment: selectedTotal / 2,
       selectedFinalPayment: selectedTotal / 2,
@@ -753,6 +792,7 @@ export function calculateCustomerSelectionSummary(proposal = {}, selection = {})
     selectedOptionName: "",
     selectedAddOnIds: [],
     selectedAddOnNames: [],
+    selectedAddOnAmounts: [],
     selectedTotal: fallbackTotal,
     selectedDownPayment: fallbackTotal / 2,
     selectedFinalPayment: fallbackTotal / 2,
@@ -888,19 +928,6 @@ function getSelectedCustomerAddOnIds(addOns = [], selection = {}) {
     .map(({ id }) => id);
 }
 
-function doesCustomerAddOnApplyToOption(addOn = {}, option = {}) {
-  const appliesTo = sanitizeCustomerPortalTextList(addOn.appliesTo).map((value) => value.toLowerCase());
-
-  if (!option || appliesTo.length === 0) {
-    return true;
-  }
-
-  const optionId = cleanCustomerPortalText(option.id).toLowerCase();
-  const optionName = cleanCustomerPortalText(option.name).toLowerCase();
-
-  return appliesTo.some((value) => value === "all" || value === optionId || value === optionName || optionName.includes(value) || value.includes(optionName));
-}
-
 async function readCustomerPortalJsonResponse(response) {
   const contentType = response?.headers?.get?.("content-type") || "";
 
@@ -1006,6 +1033,7 @@ function sanitizeCustomerPortalOptionalAddOns(optionalAddOns = []) {
     ...sanitizeCustomerPortalObject(addOn),
     images: sanitizeCustomerPortalImages(addOn.images),
     appliesTo: sanitizeCustomerPortalTextList(addOn.appliesTo),
+    optionAmounts: sanitizeCustomerPortalRows(addOn.optionAmounts),
     optionTotals: sanitizeCustomerPortalRows(addOn.optionTotals),
     notes: sanitizeCustomerPortalTextList(addOn.notes),
   }));

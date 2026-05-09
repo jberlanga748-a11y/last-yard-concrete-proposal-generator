@@ -18,6 +18,7 @@ import {
   formatResidentialCurrency,
   formatResidentialMoneyText,
   formatResidentialMoneyTextList,
+  getResidentialAddOnAmountForOption,
   getResidentialCoverDescription,
   getResidentialCoverSchedule,
   getResidentialOptionalAddOns,
@@ -908,14 +909,15 @@ function ResidentialSimpleEstimatePage({ company, pageNumber, projectName, propo
               )}
               {addOns.map((addOn) => {
                 const selected = Boolean(addOn.selected || addOn.included);
+                const addOnPriceLabel = formatResidentialAddOnSummaryLabel(addOn, optionRows);
 
                 return (
                   <tr key={addOn.id || addOn.name}>
                     <td>Optional Add-On: {addOn.name}</td>
                     <td>{addOn.description || "Optional customer selection."}</td>
-                    <td>{formatResidentialCurrency(addOn.amount, { plus: true })}</td>
+                    <td>{addOnPriceLabel}</td>
                     <td>{selected ? 1 : "Optional"}</td>
-                    <td>{selected ? "Selected" : `Not Selected - ${formatResidentialCurrency(addOn.amount, { plus: true })}`}</td>
+                    <td>{selected ? "Selected" : `Not Selected - ${addOnPriceLabel}`}</td>
                   </tr>
                 );
               })}
@@ -950,6 +952,28 @@ function ResidentialSimpleEstimatePage({ company, pageNumber, projectName, propo
       <ResidentialPacketFooter company={company} pageNumber={pageNumber} projectName={projectName} />
     </ProposalPage>
   );
+}
+
+function getResidentialAddOnAmountRows(addOn = {}, optionRows = []) {
+  return (Array.isArray(optionRows) ? optionRows : [])
+    .map((option) => ({
+      amount: getResidentialAddOnAmountForOption(addOn, option),
+      option,
+    }))
+    .filter((row) => row.amount > 0);
+}
+
+function formatResidentialAddOnSummaryLabel(addOn = {}, optionRows = []) {
+  const amountRows = getResidentialAddOnAmountRows(addOn, optionRows);
+  const uniqueAmounts = new Set(amountRows.map((row) => row.amount));
+
+  if (amountRows.length > 1 && uniqueAmounts.size > 1) {
+    return amountRows
+      .map(({ amount, option }) => `with ${option.finishType || option.name}: ${formatResidentialCurrency(amount, { plus: true })}`)
+      .join("; ");
+  }
+
+  return formatResidentialCurrency(amountRows[0]?.amount || addOn.amount, { plus: true });
 }
 
 function ResidentialSimpleEstimateAttachmentsPage({ company, page, pageNumber, projectName }) {
@@ -1008,7 +1032,7 @@ function ResidentialPricingPage({
       <div className="structured-packet-body residential-page-body">
         <div className="structured-accent" />
         <p className="structured-packet-note">
-          Customer to select one main option. Optional add-ons are shown with each option so the total is clear before acceptance.
+          Customer to select one main option. Optional add-ons are listed separately below and added only if chosen.
         </p>
         <ResidentialPricingOptionsTable
           addOns={addOns}
@@ -1984,41 +2008,11 @@ function ResidentialPricingOptionsTable({ addOns: addOnsOverride, optionRows: op
                 <span>Final Payment:</span>
                 <strong>{formatResidentialCurrency(option.finalPayment)}</strong>
               </p>
-              {(option.addOnComparisons || []).map(({ addOn, total, downPayment, finalPayment }) => {
-                const addOnLabel = addOn?.name || "Optional Add-On";
-
-                return (
-                  <Fragment key={`${option.id || option.name}-${addOn?.id || addOnLabel}`}>
-                    <p>
-                      <span>With {addOnLabel}:</span>
-                      <strong>{formatResidentialCurrency(total)}</strong>
-                    </p>
-                    <p>
-                      <span>With add-on down:</span>
-                      <strong>{formatResidentialCurrency(downPayment)}</strong>
-                    </p>
-                    <p>
-                      <span>With add-on final:</span>
-                      <strong>{formatResidentialCurrency(finalPayment)}</strong>
-                    </p>
-                  </Fragment>
-                );
-              })}
-              {option.withAddOnTotal > 0 && (!option.addOnComparisons || option.addOnComparisons.length === 0) ? (
-                <>
-                  <p>
-                    <span>With Optional Add-On:</span>
-                    <strong>{formatResidentialCurrency(option.withAddOnTotal)}</strong>
-                  </p>
-                  <p>
-                    <span>With Add-On Down:</span>
-                    <strong>{formatResidentialCurrency(option.withAddOnDownPayment)}</strong>
-                  </p>
-                  <p>
-                    <span>With Add-On Final:</span>
-                    <strong>{formatResidentialCurrency(option.withAddOnFinalPayment)}</strong>
-                  </p>
-                </>
+              {addOns.length > 0 ? (
+                <p>
+                  <span>Optional Add-Ons:</span>
+                  <strong>Selected separately below</strong>
+                </p>
               ) : null}
             </div>
             <ResidentialOptionPhotoStrip images={option.images} getImageAssetSource={getImageAssetSource} />
@@ -2030,7 +2024,7 @@ function ResidentialPricingOptionsTable({ addOns: addOnsOverride, optionRows: op
         <div className="residential-add-on-callouts">
           {addOns.map((addOn) => (
             <div className="residential-add-on-callout" key={addOn.id || addOn.name}>
-              <strong>Optional Add-On:</strong> {addOn.name} {formatResidentialCurrency(addOn.amount, { plus: true })}
+              <strong>Optional Add-On:</strong> {addOn.name} {formatResidentialAddOnSummaryLabel(addOn, optionRows)}
               {addOn.description ? <span>{addOn.description}</span> : null}
               <ResidentialOptionPhotoStrip images={addOn.images} getImageAssetSource={getImageAssetSource} />
             </div>

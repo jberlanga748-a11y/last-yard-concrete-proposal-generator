@@ -97,11 +97,13 @@ import {
 import {
   BASE_PLUS_ADDONS_PRICING_MODE,
   CHOOSE_ONE_PRICING_MODE,
+  CHOOSE_ONE_WITH_ADDONS_PRICING_MODE,
   RESIDENTIAL_PDF_LAYOUT_OPTIONS,
   buildResidentialPaymentTermsCopy,
   buildResidentialPricingOptionRows,
   calculateResidentialSimpleEstimateTotals,
   formatResidentialCurrency,
+  getResidentialAddOnAmountForOption,
   getPrintableResidentialOptionImages,
   getResidentialOptionalAddOns,
   getResidentialOptionLineItemTotal,
@@ -110,6 +112,7 @@ import {
   hasResidentialBasePlusAddOnsPricing,
   hasResidentialChooseOnePricing,
   hasResidentialOptionBreakdowns,
+  isResidentialChooseOnePricingMode,
   normalizeResidentialPdfLayout,
   normalizeResidentialOptionImages,
   normalizeResidentialOptionLineItems,
@@ -5676,7 +5679,7 @@ export default function App() {
       },
       detectedPricing: summarizeSmartPasteDetectedPricing(nextProposal),
         detectedAlternates:
-          nextProposal.pricingMode === CHOOSE_ONE_PRICING_MODE || nextProposal.pricingMode === BASE_PLUS_ADDONS_PRICING_MODE
+          isResidentialChooseOnePricingMode(nextProposal.pricingMode) || nextProposal.pricingMode === BASE_PLUS_ADDONS_PRICING_MODE
             ? []
             : (nextProposal.pricingSections || []).map((section) => ({
                 label: section.label || section.description || "Alternate / allowance",
@@ -6994,6 +6997,8 @@ function CustomerPortalChooseOnePricing({ proposal = {}, readOnly = false, selec
   const optionalAddOns = getResidentialOptionalAddOns(proposal);
   const selectionSummary = calculateCustomerSelectionSummary(proposal, selectionDraft);
   const selectedAddOnIds = new Set(selectionSummary.selectedAddOnIds);
+  const selectedOptionRow =
+    optionRows.find((option, index) => selectionSummary.selectedOptionId === getCustomerSelectionItemId(option, index, "option")) || optionRows[0] || null;
 
   function selectOption(optionId) {
     onSelectionChange?.({
@@ -7046,13 +7051,7 @@ function CustomerPortalChooseOnePricing({ proposal = {}, readOnly = false, selec
               <span>50% Down: {formatResidentialCurrency(option.downPayment)}</span>
               <span>Final: {formatResidentialCurrency(option.finalPayment)}</span>
             </div>
-            {option.withAddOnTotal > 0 ? (
-              <div className="customer-portal-with-addon">
-                <span>With optional add-on: {formatResidentialCurrency(option.withAddOnTotal)}</span>
-                <span>Down: {formatResidentialCurrency(option.withAddOnDownPayment)}</span>
-                <span>Final: {formatResidentialCurrency(option.withAddOnFinalPayment)}</span>
-              </div>
-            ) : null}
+            <p className="customer-portal-option-note">Optional add-ons are selected below and added only if chosen.</p>
             <CustomerPortalPhotoGrid images={option.images} fallbackCaption="Finish Example" />
           </article>
         ))}
@@ -7061,23 +7060,52 @@ function CustomerPortalChooseOnePricing({ proposal = {}, readOnly = false, selec
       {optionalAddOns.length > 0 ? (
         <div className="customer-portal-addons">
           <h2>Optional Add-Ons</h2>
-          {optionalAddOns.map((addOn, index) => (
-            <article className="customer-portal-addon-row" key={addOn.id || addOn.name || `portal-option-addon-${index}`}>
-              <div>
-                <label className="customer-portal-selection-control">
-                  <input
-                    checked={selectedAddOnIds.has(getCustomerSelectionItemId(addOn, index, "addon"))}
-                    disabled={readOnly}
-                    type="checkbox"
-                    onChange={(event) => toggleAddOn(getCustomerSelectionItemId(addOn, index, "addon"), event.target.checked)}
-                  />
-                  <strong>{addOn.name}</strong>
-                </label>
-                {addOn.description ? <span>{addOn.description}</span> : null}
-              </div>
-              <strong>+{formatResidentialCurrency(addOn.amount)}</strong>
-            </article>
-          ))}
+          {optionalAddOns.map((addOn, index) => {
+            const addOnId = getCustomerSelectionItemId(addOn, index, "addon");
+            const selected = selectedAddOnIds.has(addOnId);
+            const selectedAmount = getResidentialAddOnAmountForOption(addOn, selectedOptionRow || {});
+            const optionAmounts = optionRows
+              .map((option) => ({
+                amount: getResidentialAddOnAmountForOption(addOn, option),
+                option,
+              }))
+              .filter((row) => row.amount > 0);
+            const uniqueAmounts = new Set(optionAmounts.map((row) => row.amount));
+            const showOptionSpecificAmounts = optionAmounts.length > 1 && uniqueAmounts.size > 1;
+
+            return (
+              <article className="customer-portal-addon-row" key={addOn.id || addOn.name || `portal-option-addon-${index}`}>
+                <div>
+                  <label className="customer-portal-selection-control">
+                    <input
+                      checked={selected}
+                      disabled={readOnly}
+                      type="checkbox"
+                      onChange={(event) => toggleAddOn(addOnId, event.target.checked)}
+                    />
+                    <strong>{addOn.name}</strong>
+                  </label>
+                  {addOn.description ? <span>{addOn.description}</span> : null}
+                  {showOptionSpecificAmounts ? (
+                    <div className="customer-portal-addon-price-list">
+                      {optionAmounts.map(({ amount, option }) => (
+                        <span key={`${addOnId}-${option.id || option.name}`}>
+                          with {option.finishType || option.name}: {formatResidentialCurrency(amount, { plus: true })}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <strong>
+                  {selected
+                    ? formatResidentialCurrency(selectedAmount, { plus: true })
+                    : showOptionSpecificAmounts
+                      ? "Option-specific pricing"
+                      : `Optional ${formatResidentialCurrency(selectedAmount || addOn.amount, { plus: true })}`}
+                </strong>
+              </article>
+            );
+          })}
         </div>
       ) : null}
       <div className="customer-portal-selection-total">
@@ -11096,7 +11124,7 @@ function SmartPasteSummary({ result, onApply, onClear }) {
         <li>{result.fields.length} fields detected</li>
         {result.proposalModeLabel ? <li>Proposal mode: {result.proposalModeLabel}</li> : null}
         <li>{result.lineItemCount} line items detected</li>
-          {result.pricingMode === CHOOSE_ONE_PRICING_MODE ? (
+          {isResidentialChooseOnePricingMode(result.pricingMode) ? (
             <>
               <li>Pricing mode: Customer chooses one option</li>
               <li>Pricing options detected: {(result.pricingOptions || []).length}</li>
@@ -11144,13 +11172,13 @@ function SmartPasteSummary({ result, onApply, onClear }) {
         {result.detectedProjectInfo?.projectName ? <li>Detected project: {result.detectedProjectInfo.projectName}</li> : null}
         {result.detectedProjectInfo?.clientCompany ? <li>Detected client/GC: {result.detectedProjectInfo.clientCompany}</li> : null}
         {result.detectedProjectInfo?.projectLocation ? <li>Detected location: {result.detectedProjectInfo.projectLocation}</li> : null}
-          {result.detectedPricing && result.pricingMode !== CHOOSE_ONE_PRICING_MODE && result.pricingMode !== BASE_PLUS_ADDONS_PRICING_MODE ? (
+          {result.detectedPricing && !isResidentialChooseOnePricingMode(result.pricingMode) && result.pricingMode !== BASE_PLUS_ADDONS_PRICING_MODE ? (
             <li>
               Detected pricing: base {formatCurrency(result.detectedPricing.baseTotal || 0)}, total if all accepted{" "}
               {formatCurrency(result.detectedPricing.totalIfAllAccepted || 0)}
             </li>
           ) : null}
-          {result.detectedPricing && result.pricingMode === CHOOSE_ONE_PRICING_MODE ? (
+          {result.detectedPricing && isResidentialChooseOnePricingMode(result.pricingMode) ? (
             <li>
               Detected pricing: selected/base option{" "}
               {formatResidentialCurrency(result.detectedPricing.currentTotal || result.detectedPricing.baseTotal || 0)}
@@ -16149,6 +16177,7 @@ function ResidentialPricingOptionsEditorSummary({
           <span>Residential Pricing Mode</span>
           <select value={pricingMode} onChange={(event) => handlePricingModeChange(event.target.value)}>
             <option value={CHOOSE_ONE_PRICING_MODE}>Customer Chooses One Option</option>
+            <option value={CHOOSE_ONE_WITH_ADDONS_PRICING_MODE}>Customer Chooses One Option + Add-Ons</option>
             <option value={BASE_PLUS_ADDONS_PRICING_MODE}>Base Package + Selected Add-Ons</option>
           </select>
         </label>

@@ -1,4 +1,5 @@
 export const CHOOSE_ONE_PRICING_MODE = "choose_one_option";
+export const CHOOSE_ONE_WITH_ADDONS_PRICING_MODE = "choose_one_option_with_addons";
 export const BASE_PLUS_ADDONS_PRICING_MODE = "base_plus_addons";
 export const RESIDENTIAL_SIMPLE_ESTIMATE_LAYOUT = "simple_estimate";
 export const RESIDENTIAL_PROPOSAL_WITH_PHOTOS_LAYOUT = "proposal_with_photos";
@@ -68,27 +69,27 @@ export function buildResidentialPaymentTermsCopy(proposal = {}) {
 export function buildResidentialPricingOptionRows(proposal = {}) {
   const options = getResidentialPricingOptions(proposal);
   const addOns = getResidentialOptionalAddOns(proposal);
-  const comparisonAddOn = getResidentialComparisonAddOn(addOns);
 
   return options.map((option) => {
     const basePrice = toResidentialPricingNumber(option.price);
     const addOnComparisons = addOns
       .filter((addOn) => doesResidentialAddOnApplyToOption(addOn, option))
       .map((addOn) => {
-        const addOnAmount = toResidentialPricingNumber(addOn.amount);
+        const addOnAmount = getResidentialAddOnAmountForOption(addOn, option);
         const explicitTotalRow = getResidentialExplicitAddOnOptionTotalRow(addOn, option);
         const explicitTotal = toResidentialPricingNumber(explicitTotalRow?.total);
-        const total = explicitTotal > 0 ? explicitTotal : basePrice + addOnAmount;
+        const total = explicitTotal > basePrice ? explicitTotal : basePrice + addOnAmount;
 
         return {
           addOn,
+          amount: addOnAmount,
           total,
           downPayment: toResidentialPricingNumber(explicitTotalRow?.downPayment) || total / 2,
           finalPayment: toResidentialPricingNumber(explicitTotalRow?.finalPayment) || total / 2,
         };
       })
       .filter((comparison) => comparison.total > 0);
-    const comparison = addOnComparisons.find((row) => row.addOn === comparisonAddOn) || addOnComparisons[0] || null;
+    const comparison = addOnComparisons.length === 1 ? addOnComparisons[0] : null;
 
     return {
       id: option.id,
@@ -107,7 +108,6 @@ export function buildResidentialPricingOptionRows(proposal = {}) {
       basePrice,
       downPayment: toResidentialPricingNumber(option.downPayment) || basePrice / 2,
       finalPayment: toResidentialPricingNumber(option.finalPayment) || basePrice / 2,
-      comparisonAddOn,
       addOnComparisons,
       images: normalizeResidentialOptionImages(option.images),
       withAddOnTotal: comparison?.total || 0,
@@ -651,6 +651,7 @@ export function normalizeResidentialOptionalAddOns(optionalAddOns = []) {
         description,
         amount,
         appliesTo: normalizeResidentialTextList(addOn.appliesTo),
+        optionAmounts: normalizeResidentialAddOnOptionAmounts(addOn.optionAmounts ?? addOn.optionPrices ?? addOn.pricesByOption),
         optionTotals: normalizeResidentialAddOnOptionTotals(addOn.optionTotals),
         notes,
         included: Boolean(addOn.included === true || addOn.selected === true),
@@ -659,6 +660,26 @@ export function normalizeResidentialOptionalAddOns(optionalAddOns = []) {
       };
     })
     .filter(Boolean);
+}
+
+export function normalizeResidentialAddOnOptionAmounts(optionAmounts = []) {
+  const entries = Array.isArray(optionAmounts)
+    ? optionAmounts
+    : Object.entries(optionAmounts || {}).map(([optionName, amount]) => ({ optionName, amount }));
+
+  return entries
+    .map((row) => {
+      if (!row || typeof row !== "object") {
+        return null;
+      }
+
+      return {
+        optionId: cleanResidentialText(row.optionId ?? row.id),
+        optionName: cleanResidentialText(row.optionName || row.name || row.label),
+        amount: toResidentialPricingNumber(row.amount ?? row.price ?? row.addOnAmount ?? row.total),
+      };
+    })
+    .filter((row) => (row.optionId || row.optionName) && row.amount > 0);
 }
 
 export function normalizeResidentialAddOnOptionTotals(optionTotals = []) {
@@ -704,6 +725,40 @@ export function doesResidentialAddOnApplyToOption(addOn = {}, option = {}) {
 
     return optionKeys.some((optionKey) => optionKey === targetKey || optionKey.includes(targetKey) || targetKey.includes(optionKey));
   });
+}
+
+export function getResidentialAddOnAmountForOption(addOn = {}, option = {}) {
+  if (!doesResidentialAddOnApplyToOption(addOn, option)) {
+    return 0;
+  }
+
+  const amountRow = getResidentialAddOnOptionAmountRow(addOn, option);
+
+  if (amountRow) {
+    return toResidentialPricingNumber(amountRow.amount);
+  }
+
+  const explicitTotalRow = getResidentialExplicitAddOnOptionTotalRow(addOn, option);
+  const explicitTotal = toResidentialPricingNumber(explicitTotalRow?.total);
+  const optionPrice = toResidentialPricingNumber(option.price ?? option.amount ?? option.total);
+
+  if (explicitTotal > 0) {
+    return explicitTotal > optionPrice && optionPrice > 0 ? explicitTotal - optionPrice : explicitTotal;
+  }
+
+  return toResidentialPricingNumber(addOn.amount ?? addOn.price ?? addOn.total);
+}
+
+export function getResidentialAddOnOptionAmountRow(addOn = {}, option = {}) {
+  const optionAmounts = normalizeResidentialAddOnOptionAmounts(addOn.optionAmounts);
+  const optionKeys = [normalizeResidentialKey(option.id), normalizeResidentialKey(option.name)].filter(Boolean);
+  const match = optionAmounts.find((row) => {
+    const rowKeys = [normalizeResidentialKey(row.optionId), normalizeResidentialKey(row.optionName)].filter(Boolean);
+
+    return rowKeys.some((rowKey) => optionKeys.some((optionKey) => rowKey === optionKey || rowKey.includes(optionKey) || optionKey.includes(rowKey)));
+  });
+
+  return match || null;
 }
 
 export function getResidentialExplicitAddOnOptionTotal(addOn = {}, option = {}) {
@@ -774,6 +829,8 @@ export function getResidentialOptionalAddOns(proposal = {}) {
       name: section.label || section.name || "Optional Add-On",
       description: section.description || "",
       amount: section.amount,
+      optionAmounts: section.optionAmounts,
+      optionTotals: section.optionTotals,
       included: section.included,
       selected: section.included,
     }));
@@ -798,12 +855,16 @@ export function getResidentialOptionalAddOns(proposal = {}) {
 
 export function hasResidentialChooseOnePricing(proposal = {}) {
   const pricingMode = proposal.pricingMode || proposal.pricing?.pricingMode || "";
-  return pricingMode === CHOOSE_ONE_PRICING_MODE && getResidentialPricingOptions(proposal).length > 0;
+  return isResidentialChooseOnePricingMode(pricingMode) && getResidentialPricingOptions(proposal).length > 0;
 }
 
 export function hasResidentialBasePlusAddOnsPricing(proposal = {}) {
   const pricingMode = proposal.pricingMode || proposal.pricing?.pricingMode || "";
   return pricingMode === BASE_PLUS_ADDONS_PRICING_MODE;
+}
+
+export function isResidentialChooseOnePricingMode(pricingMode = "") {
+  return [CHOOSE_ONE_PRICING_MODE, CHOOSE_ONE_WITH_ADDONS_PRICING_MODE].includes(cleanResidentialText(pricingMode));
 }
 
 export function normalizeResidentialPdfLayout(layout, proposal = {}) {
@@ -908,10 +969,14 @@ export function getResidentialSimpleEstimateAddOns(proposal = {}) {
 export function calculateResidentialSimpleEstimateTotals(proposal = {}) {
   const basePackage = getResidentialSimpleEstimateBasePackage(proposal);
   const addOns = getResidentialSimpleEstimateAddOns(proposal);
+  const pricingMode = proposal.pricingMode || proposal.pricing?.pricingMode || "";
+  const selectedOption = isResidentialChooseOnePricingMode(pricingMode)
+    ? getResidentialPricingOptions(proposal).find((option) => option.selected || option.included) || getResidentialPricingOptions(proposal)[0] || null
+    : null;
   const basePrice = toResidentialPricingNumber(basePackage.total || basePackage.price);
   const selectedAddOnsTotal = addOns
     .filter((addOn) => addOn.selected || addOn.included)
-    .reduce((sum, addOn) => sum + toResidentialPricingNumber(addOn.amount), 0);
+    .reduce((sum, addOn) => sum + (selectedOption ? getResidentialAddOnAmountForOption(addOn, selectedOption) : toResidentialPricingNumber(addOn.amount)), 0);
   const total = basePrice + selectedAddOnsTotal;
 
   return {
