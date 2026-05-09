@@ -39,6 +39,7 @@ const filesToCheck = [
   "src/utils/proposals/proposalModes.test.js",
   "src/proposalData.test.js",
   "api/ai/extract-proposal.js",
+  "api/customer-proposal.js",
 ];
 
 const missingFiles = filesToCheck.filter((file) => !existsSync(file));

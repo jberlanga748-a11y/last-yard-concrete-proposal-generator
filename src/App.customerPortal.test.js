@@ -4,6 +4,7 @@ import test from "node:test";
 
 const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
 const styleSource = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const storageCloudSource = readFileSync(new URL("./utils/cloud/storageCloud.js", import.meta.url), "utf8");
 
 test("app defines a public customer proposal route outside protected app chrome", () => {
   assert.match(appSource, /segments\[0\] === "proposal-view"/);
@@ -27,6 +28,24 @@ test("editable proposals preserve customer share fields safely", () => {
   assert.match(appSource, /customerShareCreatedAt: proposal\.customerShareCreatedAt \|\| ""/);
   assert.match(appSource, /customerShareExpiresAt: proposal\.customerShareExpiresAt \|\| ""/);
   assert.match(appSource, /customerShareLastViewedAt: proposal\.customerShareLastViewedAt \|\| ""/);
+});
+
+test("customer portal loads through server token lookup before browser Supabase fallback", () => {
+  assert.match(appSource, /fetchCustomerPortalProposalByToken\(token\)/);
+  assert.match(appSource, /portalApiResult\.available/);
+  assert.match(appSource, /fetchCloudProposalByShareToken\(token, proposalCloudDeps\)/);
+});
+
+test("editable proposals mirror residential pricing into nested pricing payload for cloud save", () => {
+  assert.match(appSource, /const sourcePricing = isPlainObject\(proposal\.pricing\) \? proposal\.pricing : \{\}/);
+  assert.match(appSource, /const normalizedResidentialPricing = normalizeResidentialPricingPayload/);
+  assert.match(appSource, /pricing: normalizedResidentialPricing/);
+  assert.match(appSource, /pricingOptions: normalizedPricingOptions/);
+  assert.match(appSource, /optionalAddOns: normalizedOptionalAddOns/);
+});
+
+test("local-only image uploads warn that images are not cloud portable", () => {
+  assert.match(storageCloudSource, /Local image only - sign in\/save to cloud for access on other devices/);
 });
 
 test("customer portal view is read-only and hides protected app navigation", () => {

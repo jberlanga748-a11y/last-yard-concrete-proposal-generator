@@ -28,14 +28,14 @@ export const imageUploadProfiles = {
 
 export function getAssetLocalStorageReason(authUser) {
   if (!isSupabaseConfigured || !supabase) {
-    return "Supabase is not configured.";
+    return "Local image only - Supabase is not configured. Sign in/save to cloud for access on other devices when cloud is available.";
   }
 
   if (!authUser?.id) {
-    return "Sign in to upload images to cloud.";
+    return "Local image only - sign in/save to cloud for access on other devices.";
   }
 
-  return "cloud storage is unavailable.";
+  return "Local image only - cloud storage is unavailable. Save to cloud before sharing from another device.";
 }
 
 export function getImageAssetSource(asset = {}) {
@@ -235,6 +235,7 @@ export async function uploadProposalAssetToCloud(file, { area, companySettings, 
   const publicUrl = getStoragePublicUrl(uploadedPath);
 
   return {
+    cloudSynced: true,
     companyId: companyRecord.id,
     dataUrl: "",
     fileName: file.name || `${safeFileStem}.${extension}`,
@@ -382,6 +383,7 @@ export async function createLocalImageAsset(file) {
   const dataUrl = await readFileAsDataUrl(file);
 
   return {
+    cloudSynced: false,
     dataUrl,
     fileName: file.name || "local-image",
     fileSize: file.size || 0,
@@ -390,6 +392,7 @@ export async function createLocalImageAsset(file) {
     signedUrl: "",
     src: dataUrl,
     storagePath: "",
+    localOnly: true,
     uploadedAt: new Date().toISOString(),
   };
 }

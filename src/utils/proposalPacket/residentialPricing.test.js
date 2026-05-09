@@ -27,6 +27,7 @@ import {
   getResidentialPricingOptions,
   hasResidentialBasePlusAddOnsPricing,
   hasResidentialChooseOnePricing,
+  normalizeResidentialOptionImages,
   normalizeResidentialPdfLayout,
   normalizeResidentialPricingOptions,
   normalizeResidentialOptionalAddOns,
@@ -202,6 +203,29 @@ test("preserves optional add-on image placeholders from Smart Paste JSON", () =>
   assert.equal(addOns[0].images.length, 1);
   assert.equal(addOns[0].images[0].label, "Cantilever stair example");
   assert.equal(addOns[0].images[0].uploadRequired, true);
+});
+
+test("residential option image metadata preserves cloud and local portability flags", () => {
+  const images = normalizeResidentialOptionImages([
+    {
+      publicUrl: "https://cdn.example/option.jpg",
+      storagePath: "company/demo/proposals/option-photos/option.jpg",
+      cloudSynced: true,
+      localOnly: false,
+      uploadedBy: "user@example.com",
+    },
+    {
+      dataUrl: "data:image/jpeg;base64,abc123",
+      localOnly: true,
+      cloudSynced: false,
+    },
+  ]);
+
+  assert.equal(images[0].cloudSynced, true);
+  assert.equal(images[0].storagePath, "company/demo/proposals/option-photos/option.jpg");
+  assert.equal(images[0].uploadedBy, "user@example.com");
+  assert.equal(images[1].localOnly, true);
+  assert.equal(images[1].dataUrl, "data:image/jpeg;base64,abc123");
 });
 
 test("generic optional add-ons apply to selected options without becoming main choices", () => {

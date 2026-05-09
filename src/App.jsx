@@ -172,6 +172,7 @@ import {
 import { getAuthGateState, getLogoutCleanupState } from "./utils/authSession.js";
 import {
   createCustomerShareToken,
+  fetchCustomerPortalProposalByToken,
   findCustomerProposalByShareToken,
   getCustomerPortalLink,
   getCustomerPortalUnavailableMessage,
@@ -679,6 +680,32 @@ export default function App() {
           proposal: null,
           reason: localResult.reason,
           message: getCustomerPortalUnavailableMessage(localResult.reason),
+        });
+        return;
+      }
+
+      const portalApiResult = await fetchCustomerPortalProposalByToken(token);
+
+      if (isCancelled) {
+        return;
+      }
+
+      if (portalApiResult.available) {
+        setCustomerPortalState({
+          loading: false,
+          proposal: createEditableProposal(portalApiResult.proposal),
+          reason: "available",
+          message: "",
+        });
+        return;
+      }
+
+      if (!["api-unavailable", "unconfigured", "load-error"].includes(portalApiResult.reason)) {
+        setCustomerPortalState({
+          loading: false,
+          proposal: null,
+          reason: portalApiResult.reason,
+          message: getCustomerPortalUnavailableMessage(portalApiResult.reason),
         });
         return;
       }
@@ -3948,6 +3975,11 @@ export default function App() {
           pricingMode: nextPricingMode,
         }),
         [collectionKey]: nextItems,
+        pricing: normalizeResidentialPricingPayload({
+          ...currentProposal,
+          pricingMode: nextPricingMode,
+          [collectionKey]: nextItems,
+        }),
         updatedAt: new Date().toISOString(),
       };
     });
@@ -4280,6 +4312,10 @@ export default function App() {
       return {
         ...currentProposal,
         [collectionKey]: items,
+        pricing: normalizeResidentialPricingPayload({
+          ...currentProposal,
+          [collectionKey]: items,
+        }),
       };
     });
   }
@@ -4300,10 +4336,15 @@ export default function App() {
     setProposalDirty(true);
     setProposalDraft((currentProposal) => {
       const normalizeItems = collectionKey === "optionalAddOns" ? normalizeOptionalAddOns : normalizePricingOptions;
+      const items = removeResidentialItemImage(normalizeItems(currentProposal[collectionKey]), itemIndex, imageIndex);
 
       return {
         ...currentProposal,
-        [collectionKey]: removeResidentialItemImage(normalizeItems(currentProposal[collectionKey]), itemIndex, imageIndex),
+        [collectionKey]: items,
+        pricing: normalizeResidentialPricingPayload({
+          ...currentProposal,
+          [collectionKey]: items,
+        }),
       };
     });
   }
@@ -14106,12 +14147,14 @@ function normalizeProjectPhoto(photo = {}, index = 0, defaultPhoto = defaultProj
     fileSize: Number.parseInt(photo.fileSize, 10) || 0,
     fileType: photo.fileType || "",
     label,
+    localOnly: photo.localOnly === true,
     originalFileName: photo.originalFileName || "",
     originalFileSize: Number.parseInt(photo.originalFileSize, 10) || 0,
     publicUrl,
     signedUrl: photo.signedUrl || "",
     storagePath: photo.storagePath || "",
     uploadedAt: photo.uploadedAt || "",
+    uploadedBy: photo.uploadedBy || photo.uploadedByEmail || photo.uploadedByUserId || "",
   };
 
   return {
@@ -15064,6 +15107,93 @@ function normalizeOptionalAddOns(optionalAddOns = []) {
     .filter((addOn) => addOn && (addOn.name || addOn.description || addOn.amount > 0 || addOn.images.length > 0 || addOn.notes.length > 0));
 }
 
+function normalizeProposalLineItemsForPersistence(lineItems = []) {
+  return (Array.isArray(lineItems) ? lineItems : []).map((item) => ({
+    ...item,
+    taxable: item?.taxable ?? true,
+  }));
+}
+
+function normalizeResidentialBasePackage(basePackage = {}) {
+  if (!isPlainObject(basePackage)) {
+    return {};
+  }
+
+  const lineItems = normalizeResidentialOptionLineItems(basePackage.lineItems ?? basePackage.items);
+  const images = normalizeResidentialOptionImages(basePackage.images || basePackage.optionPhotos || basePackage.photos);
+  const price = toEditableNumber(basePackage.price ?? basePackage.amount ?? basePackage.total);
+
+  return {
+    ...basePackage,
+    id: basePackage.id || "",
+    name: basePackage.name ?? basePackage.label ?? "",
+    description: basePackage.description ?? "",
+    scopeSummary: basePackage.scopeSummary ?? basePackage.summary ?? "",
+    quantity: toEditableNumber(basePackage.quantity ?? basePackage.qty) || 1,
+    unit: basePackage.unit ?? basePackage.uom ?? "LS",
+    price,
+    total: toEditableNumber(basePackage.total ?? basePackage.amount) || price,
+    lineItems,
+    images,
+    notes: normalizeResidentialTextList(basePackage.notes),
+  };
+}
+
+function normalizeResidentialPricingExamples(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row && typeof row === "object")
+    .map((row) => ({ ...row }));
+}
+
+function getResidentialPricingCollectionSource(primaryCollection, nestedCollection) {
+  if (Array.isArray(primaryCollection) && primaryCollection.length > 0) {
+    return primaryCollection;
+  }
+
+  if (Array.isArray(nestedCollection) && nestedCollection.length > 0) {
+    return nestedCollection;
+  }
+
+  if (Array.isArray(primaryCollection)) {
+    return primaryCollection;
+  }
+
+  return Array.isArray(nestedCollection) ? nestedCollection : [];
+}
+
+function normalizeResidentialPricingPayload(proposal = {}, normalizedCollections = {}) {
+  const sourcePricing = isPlainObject(proposal.pricing) ? proposal.pricing : {};
+  const pricingMode = normalizedCollections.pricingMode ?? proposal.pricingMode ?? sourcePricing.pricingMode ?? "";
+  const pricingOptions =
+    normalizedCollections.pricingOptions ??
+    normalizePricingOptions(getResidentialPricingCollectionSource(proposal.pricingOptions, sourcePricing.pricingOptions));
+  const optionalAddOns =
+    normalizedCollections.optionalAddOns ??
+    normalizeOptionalAddOns(getResidentialPricingCollectionSource(proposal.optionalAddOns, sourcePricing.optionalAddOns));
+  const lineItems =
+    normalizedCollections.lineItems ??
+    normalizeProposalLineItemsForPersistence(getResidentialPricingCollectionSource(proposal.lineItems, sourcePricing.lineItems));
+  const basePackage = normalizeResidentialBasePackage(sourcePricing.basePackage || proposal.basePackage);
+
+  return {
+    ...sourcePricing,
+    pricingMode,
+    baseBid: toEditableNumber(sourcePricing.baseBid ?? proposal.baseBid),
+    totalProposal: toEditableNumber(sourcePricing.totalProposal ?? sourcePricing.total ?? proposal.totalProposal),
+    basePackage,
+    lineItems,
+    pricingOptions,
+    optionalAddOns,
+    selectedAddOnIds: Array.isArray(sourcePricing.selectedAddOnIds)
+      ? sourcePricing.selectedAddOnIds
+      : Array.isArray(proposal.selectedAddOnIds)
+        ? proposal.selectedAddOnIds
+        : [],
+    pricingExamples: normalizeResidentialPricingExamples(sourcePricing.pricingExamples || proposal.pricingExamples),
+    paymentExamples: normalizeResidentialPricingExamples(sourcePricing.paymentExamples || proposal.paymentExamples),
+  };
+}
+
 function createEmptyAddendumRecord() {
   return {
     id: createProposalId(),
@@ -15150,6 +15280,23 @@ function createEditableProposal(seedProposal) {
   const revisionNumber = normalizeRevisionNumber(proposal.revisionNumber);
   const revisionLabel = proposal.revisionLabel || formatRevisionLabel(revisionNumber);
   const hasProposalTerms = Object.prototype.hasOwnProperty.call(proposal, "terms");
+  const sourcePricing = isPlainObject(proposal.pricing) ? proposal.pricing : {};
+  const normalizedLineItems = normalizeProposalLineItemsForPersistence(
+    getResidentialPricingCollectionSource(proposal.lineItems, sourcePricing.lineItems),
+  );
+  const normalizedPricingMode = proposal.pricingMode || sourcePricing.pricingMode || "";
+  const normalizedPricingOptions = normalizePricingOptions(
+    getResidentialPricingCollectionSource(proposal.pricingOptions, sourcePricing.pricingOptions),
+  );
+  const normalizedOptionalAddOns = normalizeOptionalAddOns(
+    getResidentialPricingCollectionSource(proposal.optionalAddOns, sourcePricing.optionalAddOns),
+  );
+  const normalizedResidentialPricing = normalizeResidentialPricingPayload(proposal, {
+    lineItems: normalizedLineItems,
+    optionalAddOns: normalizedOptionalAddOns,
+    pricingMode: normalizedPricingMode,
+    pricingOptions: normalizedPricingOptions,
+  });
 
   const editableProposal = {
     ...proposal,
@@ -15224,14 +15371,12 @@ function createEditableProposal(seedProposal) {
     terms: {
       ...(hasProposalTerms ? proposal.terms || {} : SEED_PROPOSAL.terms),
     },
-    lineItems: (proposal.lineItems || []).map((item) => ({
-      ...item,
-      taxable: item.taxable ?? true,
-    })),
+    lineItems: normalizedLineItems,
     pricingSections: normalizePricingSections(proposal.pricingSections),
-    pricingMode: proposal.pricingMode || "",
-    pricingOptions: normalizePricingOptions(proposal.pricingOptions),
-    optionalAddOns: normalizeOptionalAddOns(proposal.optionalAddOns),
+    pricing: normalizedResidentialPricing,
+    pricingMode: normalizedPricingMode,
+    pricingOptions: normalizedPricingOptions,
+    optionalAddOns: normalizedOptionalAddOns,
     residentialLegalPapers: isResidentialProposalMode(proposalMode)
       ? normalizeResidentialLegalPapers(proposal.residentialLegalPapers, {
           includeTermsByDefault: shouldDefaultIncludeResidentialTerms(proposal),
