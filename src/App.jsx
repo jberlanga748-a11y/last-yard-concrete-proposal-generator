@@ -74,6 +74,7 @@ import {
   proposalAssetsBucket,
   sanitizeStoragePathSegment,
   uploadLegalAttachmentPdfToCloud,
+  uploadLocalProposalImageAssetToCloud,
   uploadProposalAssetToCloud,
   uploadSubmittedPacketPdfToCloud,
   validatePdfUploadFile,
@@ -2136,6 +2137,21 @@ export default function App() {
     }));
   }
 
+  function getProposalCloudSaveDeps() {
+    return {
+      ...proposalCloudDeps,
+      uploadLocalProposalImageToStorage: (image, context = {}) =>
+        uploadLocalProposalImageAssetToCloud(image, {
+          area: context.area || "featured",
+          companyDeps: companyCloudDeps,
+          companySettings,
+          companyUser: authUser,
+          fileStem: context.fileStem || image?.id || image?.fileName || "proposal-photo",
+          proposalId: context.proposalId || proposalDraft.id,
+        }),
+    };
+  }
+
   async function syncSingleProposalToCloud(proposal, successMessage = "Proposal synced to Supabase.") {
     if (!canUseCloudSync(authUser)) {
       setCloudSync((currentSync) => ({
@@ -2148,7 +2164,7 @@ export default function App() {
 
     try {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
-      const cloudSavedProposal = await saveCloudProposal(companyRecord.id, proposal, proposalCloudDeps);
+      const cloudSavedProposal = await saveCloudProposal(companyRecord.id, proposal, getProposalCloudSaveDeps());
       const cloudSaveWarning = getCloudProposalSaveWarning(cloudSavedProposal);
       const syncedProposal = cloudSavedProposal ? createEditableProposal(cloudSavedProposal) : proposal;
 
@@ -2227,7 +2243,7 @@ export default function App() {
 
     try {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
-      const cloudSavedProposals = await saveCloudProposals(companyRecord.id, proposals, proposalCloudDeps);
+      const cloudSavedProposals = await saveCloudProposals(companyRecord.id, proposals, getProposalCloudSaveDeps());
       const cloudSaveWarnings = cloudSavedProposals.map(getCloudProposalSaveWarning).filter(Boolean);
       const syncedProposals = cloudSavedProposals.length > 0 ? cloudSavedProposals.map((proposal) => createEditableProposal(proposal)) : proposals;
 
@@ -2394,7 +2410,7 @@ export default function App() {
       const cloudLoadWarning = getCloudProposalLoadWarning(cloudProposals);
       const mergeResult = mergeProposalCollections(savedProposals, cloudProposals, proposalCloudDeps);
 
-      const cloudSavedProposals = await saveCloudProposals(companyRecord.id, mergeResult.proposals, proposalCloudDeps);
+      const cloudSavedProposals = await saveCloudProposals(companyRecord.id, mergeResult.proposals, getProposalCloudSaveDeps());
       const cloudSaveWarnings = cloudSavedProposals.map(getCloudProposalSaveWarning).filter(Boolean);
       const syncedProposals = cloudSavedProposals.length > 0 ? cloudSavedProposals.map((proposal) => createEditableProposal(proposal)) : mergeResult.proposals;
 

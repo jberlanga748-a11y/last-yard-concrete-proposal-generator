@@ -11,6 +11,7 @@ import {
   mergeCloudPortalFieldsForSave,
   sanitizeProposalDataForCloudSave,
   saveCloudProposal,
+  uploadLocalProposalImagesToStorage,
 } from "./proposalCloud.js";
 
 function createProposalRow(proposalData = {}, row = {}) {
@@ -492,6 +493,149 @@ test("sanitizeProposalDataForCloudSave removes embedded project and residential 
   assert.match(sanitized.warning, /Some photos are stored locally only until uploaded to cloud storage/);
   assert.equal(sanitized.stats.localOnlyImages, 2);
   assert.equal(sanitized.stats.removedEmbeddedImageStrings >= 4, true);
+});
+
+test("uploadLocalProposalImagesToStorage promotes local project option and add-on photos before sanitizing cloud save", async () => {
+  const embeddedImage = `data:image/jpeg;base64,${"c".repeat(1000)}`;
+  const uploaded = [];
+  const proposal = {
+    id: "proposal-upload-local-images",
+    projectPhotos: [{ id: "project-photo-1", caption: "Existing Area", dataUrl: embeddedImage, src: embeddedImage, fileName: "existing.jpg" }],
+    pricing: {
+      pricingMode: "choose_one_option",
+      basePackage: {
+        id: "base-package",
+        images: [{ id: "base-photo-1", dataUrl: embeddedImage, fileName: "base.jpg" }],
+      },
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Broom",
+          images: [{ id: "option-photo-1", dataUrl: embeddedImage, fileName: "option.jpg" }],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "addon-1",
+          name: "Walls",
+          images: [{ id: "addon-photo-1", dataUrl: embeddedImage, fileName: "addon.jpg" }],
+        },
+      ],
+    },
+  };
+
+  const result = await uploadLocalProposalImagesToStorage("company-1", proposal, {
+    uploadLocalProposalImageToStorage: async (image, context) => {
+      uploaded.push({ id: image.id, area: context.area, fileStem: context.fileStem });
+      return {
+        cloudSynced: true,
+        dataUrl: "",
+        fileName: image.fileName,
+        fileType: "image/jpeg",
+        publicUrl: `https://cdn.example/${image.id}.jpg`,
+        src: `https://cdn.example/${image.id}.jpg`,
+        storagePath: `company/company-1/proposals/proposal-upload-local-images/${context.area}/${image.id}.jpg`,
+        uploadedAt: "2026-05-09T12:00:00.000Z",
+      };
+    },
+  });
+  const sanitized = sanitizeProposalDataForCloudSave(result.proposal);
+  const payloadJson = JSON.stringify(sanitized.proposalData);
+
+  assert.equal(result.uploadedCount, 4);
+  assert.equal(result.failedCount, 0);
+  assert.equal(result.warning, "");
+  assert.deepEqual(
+    uploaded.map((item) => item.area),
+    ["featured", "option-photos", "option-photos", "option-photos"],
+  );
+  assert.equal(result.proposal.projectPhotos[0].publicUrl, "https://cdn.example/project-photo-1.jpg");
+  assert.equal(result.proposal.pricing.basePackage.images[0].storagePath.includes("/option-photos/base-photo-1.jpg"), true);
+  assert.equal(result.proposal.pricing.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.jpg");
+  assert.equal(result.proposal.pricing.optionalAddOns[0].images[0].publicUrl, "https://cdn.example/addon-photo-1.jpg");
+  assert.equal(payloadJson.includes("data:image/"), false);
+  assert.equal(payloadJson.includes("blob:"), false);
+  assert.equal(sanitized.stats.localOnlyImages, 0);
+});
+
+test("saveCloudProposal uploads local images before upserting cloud-safe proposal data", async () => {
+  const embeddedImage = `data:image/png;base64,${"d".repeat(1400)}`;
+  let insertPayload = null;
+  const uploadCalls = [];
+
+  const savedProposal = await saveCloudProposal(
+    "company-1",
+    {
+      id: "proposal-upload-before-save",
+      status: "draft",
+      projectPhotos: [{ id: "project-photo-1", caption: "Existing", dataUrl: embeddedImage, fileName: "existing.png" }],
+      pricing: {
+        pricingMode: "base_plus_addons",
+        optionalAddOns: [
+          {
+            id: "walls",
+            name: "Walls",
+            images: [{ id: "walls-photo-1", caption: "Walls", dataUrl: embeddedImage, fileName: "walls.png" }],
+          },
+        ],
+      },
+      updatedAt: "2026-05-08T12:00:00.000Z",
+    },
+    {
+      ...cloudDeps,
+      supabaseClient: createFakeSupabase({
+        onInsert(payload) {
+          insertPayload = payload;
+        },
+      }),
+      uploadLocalProposalImageToStorage: async (image, context) => {
+        uploadCalls.push({ id: image.id, area: context.area });
+        return {
+          fileName: image.fileName,
+          fileType: "image/png",
+          publicUrl: `https://cdn.example/${image.id}.png`,
+          src: `https://cdn.example/${image.id}.png`,
+          storagePath: `company/company-1/proposals/proposal-upload-before-save/${context.area}/${image.id}.png`,
+          uploadedAt: "2026-05-09T12:00:00.000Z",
+        };
+      },
+    },
+  );
+
+  const proposalJson = JSON.stringify(insertPayload.proposal_data);
+
+  assert.deepEqual(uploadCalls, [
+    { id: "project-photo-1", area: "featured" },
+    { id: "walls-photo-1", area: "option-photos" },
+  ]);
+  assert.equal(proposalJson.includes("data:image/"), false);
+  assert.equal(insertPayload.proposal_data.projectPhotos[0].publicUrl, "https://cdn.example/project-photo-1.png");
+  assert.equal(insertPayload.proposal_data.pricing.optionalAddOns[0].images[0].storagePath.includes("/option-photos/walls-photo-1.png"), true);
+  assert.equal(getCloudProposalSaveWarning(savedProposal), "");
+});
+
+test("uploadLocalProposalImagesToStorage keeps local draft safe and warns when upload fails", async () => {
+  const embeddedImage = `data:image/png;base64,${"e".repeat(900)}`;
+  const result = await uploadLocalProposalImagesToStorage(
+    "company-1",
+    {
+      id: "proposal-upload-fails",
+      projectPhotos: [{ id: "project-photo-1", caption: "Existing", dataUrl: embeddedImage, fileName: "existing.png" }],
+    },
+    {
+      uploadLocalProposalImageToStorage: async () => {
+        throw new Error("Storage unavailable");
+      },
+    },
+  );
+  const sanitized = sanitizeProposalDataForCloudSave(result.proposal);
+
+  assert.equal(result.uploadedCount, 0);
+  assert.equal(result.failedCount, 1);
+  assert.match(result.warning, /Some photos could not be uploaded to cloud storage yet/);
+  assert.equal(result.proposal.projectPhotos[0].dataUrl, embeddedImage);
+  assert.equal(JSON.stringify(sanitized.proposalData).includes("data:image/"), false);
+  assert.equal(sanitized.proposalData.projectPhotos[0].localOnly, true);
 });
 
 test("saveCloudProposal upserts sanitized image metadata instead of raw base64 image data", async () => {

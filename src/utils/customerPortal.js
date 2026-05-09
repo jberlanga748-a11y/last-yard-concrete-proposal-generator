@@ -1042,7 +1042,11 @@ function sanitizeCustomerPortalOptionalAddOns(optionalAddOns = []) {
 function sanitizeCustomerPortalImages(images = []) {
   return sanitizeCustomerPortalRows(images)
     .map((image) => {
-      const src = cleanCustomerPortalText(image.publicUrl || image.signedUrl || image.src || image.imageSrc || image.dataUrl || image.storagePath);
+      const publicUrl = cleanCustomerPortalText(image.publicUrl);
+      const signedUrl = cleanCustomerPortalText(image.signedUrl);
+      const storagePath = cleanCustomerPortalText(image.storagePath);
+      const safeSrc = getCustomerPortalCloudImageSource(image);
+      const src = publicUrl || signedUrl || safeSrc || storagePath;
 
       if (!src && image.uploadRequired === true) {
         return {
@@ -1057,17 +1061,40 @@ function sanitizeCustomerPortalImages(images = []) {
         id: cleanCustomerPortalText(image.id),
         label: cleanCustomerPortalText(image.label),
         caption: getCustomerSafeImageCaption(image, ""),
-        dataUrl: cleanCustomerPortalText(image.dataUrl),
-        imageSrc: cleanCustomerPortalText(image.imageSrc),
-        publicUrl: cleanCustomerPortalText(image.publicUrl),
-        signedUrl: cleanCustomerPortalText(image.signedUrl),
+        imageSrc: safeSrc,
+        publicUrl,
+        signedUrl,
         src,
-        storagePath: cleanCustomerPortalText(image.storagePath),
+        storagePath,
         uploadedAt: cleanCustomerPortalText(image.uploadedAt),
         uploadRequired: image.uploadRequired === true,
       });
     })
-    .filter((image) => image.src || image.publicUrl || image.signedUrl || image.dataUrl || image.storagePath || image.uploadRequired);
+    .filter((image) => image.src || image.publicUrl || image.signedUrl || image.storagePath || image.uploadRequired);
+}
+
+function getCustomerPortalCloudImageSource(image = {}) {
+  if (image.localOnly === true && !image.publicUrl && !image.signedUrl && !image.storagePath) {
+    return "";
+  }
+
+  const src = cleanCustomerPortalText(image.src);
+  const imageSrc = cleanCustomerPortalText(image.imageSrc);
+
+  if (src && !isCustomerPortalEmbeddedImageReference(src)) {
+    return src;
+  }
+
+  if (imageSrc && !isCustomerPortalEmbeddedImageReference(imageSrc)) {
+    return imageSrc;
+  }
+
+  return "";
+}
+
+function isCustomerPortalEmbeddedImageReference(value = "") {
+  const normalizedValue = cleanCustomerPortalText(value).toLowerCase();
+  return normalizedValue.startsWith("data:image/") || normalizedValue.startsWith("blob:");
 }
 
 function sanitizeCustomerPortalRows(rows = []) {

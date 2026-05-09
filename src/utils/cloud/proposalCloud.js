@@ -41,6 +41,7 @@ const defaultCloudProposalPageSize = 25;
 const retryCloudProposalPageSize = 10;
 const maxCloudProposalPayloadBytes = 2 * 1024 * 1024;
 const localOnlyImageCloudSaveWarning = "Some photos are stored locally only until uploaded to cloud storage.";
+const failedImageCloudUploadWarning = "Some photos could not be uploaded to cloud storage yet. They may not appear for customers until uploaded.";
 const cloudSaveBlockedLargePayloadMessage =
   "Cloud save blocked because this proposal contains too much embedded image data. Local draft is still saved. Upload photos to cloud storage or remove/compress photos.";
 const cloudSaveNetworkFailureMessage = "Cloud save failed before Supabase returned details. Your local draft is still saved.";
@@ -235,7 +236,8 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
         sourceUpdatedAt,
       })
     : normalizedProposal;
-  const cloudSaveSanitization = sanitizeProposalDataForCloudSave(proposalToSave);
+  const imageUploadResult = await uploadLocalProposalImagesToStorage(companyId, proposalToSave, deps);
+  const cloudSaveSanitization = sanitizeProposalDataForCloudSave(imageUploadResult.proposal);
   const row = createCloudProposalRow(companyId, cloudSaveSanitization.proposalData, deps);
   assertCloudProposalPayloadSize(row.proposal_data, deps);
   const targetRowId = row.id || existingRow?.id || "";
@@ -250,7 +252,7 @@ export async function saveCloudProposal(companyId, proposal, deps = {}) {
     await writeCloudProposalRow(client, createCompatibleCloudProposalRow(row), targetRowId);
   }
 
-  return attachCloudProposalSaveWarning(proposalToSave, cloudSaveSanitization.warning);
+  return attachCloudProposalSaveWarning(imageUploadResult.proposal, [imageUploadResult.warning, cloudSaveSanitization.warning].filter(Boolean).join(" "));
 }
 
 async function writeCloudProposalRow(client, row, targetRowId = "") {
@@ -471,6 +473,197 @@ export function sanitizeProposalDataForCloudSave(proposal = {}) {
 
 export function getCloudProposalSaveWarning(proposal = {}) {
   return proposal?.cloudSaveWarning || "";
+}
+
+export async function uploadLocalProposalImagesToStorage(companyId, proposal = {}, deps = {}) {
+  if (!isPlainObject(proposal)) {
+    return {
+      failedCount: 0,
+      proposal,
+      uploadedCount: 0,
+      warning: "",
+    };
+  }
+
+  const uploadImage = typeof deps.uploadLocalProposalImageToStorage === "function" ? deps.uploadLocalProposalImageToStorage : null;
+  const uploadCache = new Map();
+  const stats = {
+    failedCount: 0,
+    localOnlyCount: 0,
+    uploadedCount: 0,
+  };
+  const uploadedProposal = await uploadLocalProposalImagesInValue(proposal, {
+    companyId,
+    currentKey: "",
+    parentKey: "",
+    path: [],
+    proposalId: proposal.id || "",
+    stats,
+    uploadCache,
+    uploadImage,
+  });
+  const warnings = [];
+
+  if (stats.failedCount > 0) {
+    warnings.push(`${failedImageCloudUploadWarning} ${stats.failedCount} photo${stats.failedCount === 1 ? "" : "s"} remained local-only.`);
+  } else if (!uploadImage && stats.localOnlyCount > 0) {
+    warnings.push(`${failedImageCloudUploadWarning} ${stats.localOnlyCount} local-only photo${stats.localOnlyCount === 1 ? "" : "s"} could not be promoted during this save.`);
+  }
+
+  return {
+    failedCount: stats.failedCount,
+    proposal: isPlainObject(uploadedProposal) ? uploadedProposal : proposal,
+    uploadedCount: stats.uploadedCount,
+    warning: warnings.join(" "),
+  };
+}
+
+async function uploadLocalProposalImagesInValue(value, context) {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    const uploadedItems = [];
+
+    for (let index = 0; index < value.length; index += 1) {
+      uploadedItems.push(
+        await uploadLocalProposalImagesInValue(value[index], {
+          ...context,
+          currentKey: "",
+          parentKey: context.currentKey,
+          path: [...context.path, index],
+        }),
+      );
+    }
+
+    return uploadedItems;
+  }
+
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const imageLike = looksLikeImageMetadataObject(value, context.currentKey, context.parentKey);
+
+  if (imageLike && shouldUploadLocalImageMetadata(value)) {
+    return uploadLocalImageMetadata(value, context);
+  }
+
+  const nextValue = {};
+
+  for (const [key, entryValue] of Object.entries(value)) {
+    nextValue[key] = await uploadLocalProposalImagesInValue(entryValue, {
+      ...context,
+      currentKey: key,
+      parentKey: context.currentKey,
+      path: [...context.path, key],
+    });
+  }
+
+  return nextValue;
+}
+
+async function uploadLocalImageMetadata(image, context) {
+  context.stats.localOnlyCount += 1;
+
+  if (!context.uploadImage) {
+    return image;
+  }
+
+  const cacheKey = getLocalImageUploadCacheKey(image);
+
+  if (cacheKey && context.uploadCache.has(cacheKey)) {
+    context.stats.uploadedCount += 1;
+    return mergeUploadedImageMetadata(image, context.uploadCache.get(cacheKey), context);
+  }
+
+  try {
+    const uploadedImage = await context.uploadImage(image, {
+      area: getCloudImageUploadArea(context.path),
+      companyId: context.companyId,
+      fileStem: getCloudImageUploadFileStem(image, context.path),
+      path: context.path,
+      proposalId: context.proposalId,
+    });
+
+    if (cacheKey) {
+      context.uploadCache.set(cacheKey, uploadedImage);
+    }
+
+    context.stats.uploadedCount += 1;
+    return mergeUploadedImageMetadata(image, uploadedImage, context);
+  } catch {
+    context.stats.failedCount += 1;
+    return {
+      ...image,
+      cloudSynced: false,
+      localOnly: true,
+    };
+  }
+}
+
+function mergeUploadedImageMetadata(image = {}, uploadedImage = {}, context = {}) {
+  const publicSource = uploadedImage.publicUrl || uploadedImage.signedUrl || uploadedImage.src || uploadedImage.imageSrc || "";
+  const isPlanImage = getCloudImageUploadArea(context.path) === "plans";
+
+  return {
+    ...image,
+    ...uploadedImage,
+    cloudSynced: true,
+    dataUrl: "",
+    imageSrc: isPlanImage ? publicSource : uploadedImage.imageSrc || "",
+    localOnly: false,
+    publicUrl: uploadedImage.publicUrl || image.publicUrl || "",
+    signedUrl: uploadedImage.signedUrl || image.signedUrl || "",
+    src: publicSource || image.src || "",
+    storagePath: uploadedImage.storagePath || image.storagePath || "",
+    uploadedAt: uploadedImage.uploadedAt || image.uploadedAt || new Date().toISOString(),
+    url: publicSource || "",
+  };
+}
+
+function shouldUploadLocalImageMetadata(image = {}) {
+  return hasLocalImageSource(image) && !hasCloudImageSource(image);
+}
+
+function hasLocalImageSource(image = {}) {
+  return ["dataUrl", "src", "imageSrc", "url"].some((key) => isEmbeddedImageReference(image?.[key])) || isFileLikeCloudValue(image?.file);
+}
+
+function getLocalImageUploadCacheKey(image = {}) {
+  return ["storagePath", "publicUrl", "signedUrl", "dataUrl", "src", "imageSrc", "fileName", "id"]
+    .map((key) => String(image?.[key] || "").trim())
+    .filter(Boolean)
+    .join("|");
+}
+
+function getCloudImageUploadArea(path = []) {
+  const pathText = path.map((part) => String(part).toLowerCase()).join(".");
+
+  if (/plansheets|plan_sheets|plan/.test(pathText)) {
+    return "plans";
+  }
+
+  if (/pricingoptions|optionaladdons|basepackage|option|add.?on/.test(pathText)) {
+    return "option-photos";
+  }
+
+  return "featured";
+}
+
+function getCloudImageUploadFileStem(image = {}, path = []) {
+  return (
+    image.id ||
+    image.fileName ||
+    image.label ||
+    image.caption ||
+    path
+      .map((part) => String(part))
+      .filter(Boolean)
+      .join("-") ||
+    "proposal-photo"
+  );
 }
 
 function sanitizeCloudProposalValue(value, { currentKey = "", parentKey = "", stats, seen }) {

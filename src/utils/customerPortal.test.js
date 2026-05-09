@@ -129,6 +129,11 @@ test("customer-safe proposal payload preserves residential cloud fields and stri
           images: [{ fileName: "IMG_1111.jpg", publicUrl: "https://cdn.example/option.jpg", caption: "Broom finish example" }],
           scheduleOfValues: [{ item: "Concrete", amount: 82500 }],
         },
+        {
+          name: "Local Only Option",
+          price: 90000,
+          images: [{ id: "local-option", localOnly: true, dataUrl: "data:image/png;base64,abc", caption: "Local only" }],
+        },
       ],
       optionalAddOns: [
         {
@@ -142,7 +147,10 @@ test("customer-safe proposal payload preserves residential cloud fields and stri
       pricingExamples: [{ label: "Example", amount: 91000 }],
       paymentExamples: [{ label: "Down", amount: 45500 }],
     },
-    projectPhotos: [{ fileName: "IMG_5474.png", publicUrl: "https://cdn.example/project.jpg", caption: "IMG_5474.png" }],
+    projectPhotos: [
+      { fileName: "IMG_5474.png", publicUrl: "https://cdn.example/project.jpg", caption: "IMG_5474.png" },
+      { id: "local-project-photo", localOnly: true, dataUrl: "data:image/jpeg;base64,abc", caption: "Local only" },
+    ],
     residentialLegalPapers: {
       termsAndConditions: {
         status: "included",
@@ -155,10 +163,16 @@ test("customer-safe proposal payload preserves residential cloud fields and stri
   assert.equal(payload.residentialPdfLayout, "simple_estimate");
   assert.equal(payload.pricing.pricingMode, "base_plus_addons");
   assert.equal(payload.pricing.pricingOptions[0].price, 82500);
+  assert.equal(payload.pricing.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option.jpg");
+  assert.equal(payload.pricing.pricingOptions[1].images.length, 0);
   assert.equal(payload.pricing.optionalAddOns[0].selected, true);
   assert.equal(payload.pricing.selectedAddOnIds[0], "addon-1");
   assert.equal(payload.pricing.basePackage.images[0].publicUrl, "https://cdn.example/base.jpg");
+  assert.equal(payload.pricing.basePackage.images[0].dataUrl, undefined);
+  assert.equal(payload.pricing.optionalAddOns[0].images[0].storagePath, "company/demo/option-photos/cantilever.jpg");
   assert.equal(payload.projectPhotos[0].caption || "", "");
+  assert.equal(payload.projectPhotos.length, 1);
+  assert.equal(payload.projectPhotos[0].dataUrl, undefined);
   assert.equal(payload.residentialLegalPapers.termsAndConditions.status, "included");
   assert.equal(payload.customerSelection.status, "none");
   assert.equal("smartPasteNotes" in payload, false);

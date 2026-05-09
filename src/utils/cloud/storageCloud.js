@@ -249,6 +249,14 @@ export async function uploadProposalAssetToCloud(file, { area, companySettings, 
   };
 }
 
+export async function uploadLocalProposalImageAssetToCloud(asset = {}, options = {}) {
+  const file = await createFileFromLocalImageAsset(asset, {
+    fallbackName: options.fileStem || asset.fileName || asset.label || asset.id || "proposal-photo",
+  });
+
+  return uploadProposalAssetToCloud(file, options);
+}
+
 function getProposalAssetArea(area) {
   if (area === "plans") {
     return "plans";
@@ -395,6 +403,88 @@ export async function createLocalImageAsset(file) {
     localOnly: true,
     uploadedAt: new Date().toISOString(),
   };
+}
+
+async function createFileFromLocalImageAsset(asset = {}, { fallbackName = "proposal-photo" } = {}) {
+  if (isUploadableFileLike(asset.file)) {
+    return asset.file;
+  }
+
+  if (isUploadableFileLike(asset)) {
+    return asset;
+  }
+
+  const source =
+    getLocalImageSource(asset.dataUrl) ||
+    getLocalImageSource(asset.src) ||
+    getLocalImageSource(asset.imageSrc) ||
+    getLocalImageSource(asset.url);
+
+  if (!source) {
+    throw new Error("No local image data is available to upload.");
+  }
+
+  const fallbackFileName = asset.fileName || asset.originalFileName || `${sanitizeStoragePathSegment(fallbackName)}.${getImageExtensionFromSource(source, asset.fileType)}`;
+  const fileType = asset.fileType || getMimeTypeFromDataUrl(source) || "image/jpeg";
+  const blob = source.startsWith("data:") ? createBlobFromDataUrl(source, fileType) : await createBlobFromObjectUrl(source, fileType);
+
+  return createFileFromBlob(blob, fallbackFileName, fileType);
+}
+
+function getLocalImageSource(value = "") {
+  const source = String(value || "").trim();
+  return source.startsWith("data:image/") || source.startsWith("blob:") ? source : "";
+}
+
+function getMimeTypeFromDataUrl(source = "") {
+  const match = String(source || "").match(/^data:([^;,]+)[;,]/i);
+  return match?.[1] || "";
+}
+
+function getImageExtensionFromSource(source = "", fallbackType = "") {
+  const mimeType = getMimeTypeFromDataUrl(source) || fallbackType || "image/jpeg";
+  const extension = String(mimeType).split("/").pop()?.toLowerCase() || "jpg";
+  return extension === "jpeg" ? "jpg" : extension;
+}
+
+function createBlobFromDataUrl(dataUrl = "", fallbackType = "image/jpeg") {
+  const [header = "", base64 = ""] = String(dataUrl).split(",");
+  const mimeType = getMimeTypeFromDataUrl(header) || fallbackType || "image/jpeg";
+  const binaryString = typeof atob === "function" ? atob(base64) : Buffer.from(base64, "base64").toString("binary");
+  const bytes = new Uint8Array(binaryString.length);
+
+  for (let index = 0; index < binaryString.length; index += 1) {
+    bytes[index] = binaryString.charCodeAt(index);
+  }
+
+  return new Blob([bytes], { type: mimeType });
+}
+
+async function createBlobFromObjectUrl(objectUrl = "", fallbackType = "image/jpeg") {
+  if (typeof fetch !== "function") {
+    throw new Error("This local image cannot be uploaded outside the current browser session.");
+  }
+
+  const response = await fetch(objectUrl);
+
+  if (!response.ok) {
+    throw new Error("Unable to read local image preview for cloud upload.");
+  }
+
+  const blob = await response.blob();
+  return blob.type ? blob : new Blob([blob], { type: fallbackType || "image/jpeg" });
+}
+
+function isUploadableFileLike(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  if ((typeof File !== "undefined" && value instanceof File) || (typeof Blob !== "undefined" && value instanceof Blob)) {
+    return true;
+  }
+
+  return typeof value.name === "string" && typeof value.size === "number" && typeof value.type === "string" && typeof value.arrayBuffer === "function";
 }
 
 function getImageUploadProfile(kind) {
