@@ -105,7 +105,7 @@
   gap: 22px;
   padding: 28px;
   border-radius: 8px;
-  background: #16202a;
+  background: linear-gradient(135deg, #062b45 0%, #041d2f 100%);
   color: #ffffff;
 }
 
@@ -118,7 +118,9 @@
 .customer-portal-brand img {
   width: 58px;
   height: 58px;
-  object-fit: cover;
+  padding: 7px;
+  object-fit: contain;
+  object-position: center;
   border-radius: 999px;
   background: #ffffff;
 }
@@ -712,6 +714,9 @@
   .customer-portal-brand img {
     width: 48px;
     height: 48px;
+    padding: 6px;
+    object-fit: contain;
+    object-position: center;
   }
 
   .customer-portal-brand strong {
@@ -7427,6 +7432,19 @@ h4 {
   text-transform: uppercase;
 }
 
+.simple-estimate-selection-note {
+  break-inside: avoid;
+  margin: 0 0 8px;
+  border: 1px solid rgba(202, 162, 75, 0.42);
+  background: #fffaf0;
+  padding: 8px 10px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  page-break-inside: avoid;
+}
+
 .simple-estimate-table {
   width: 100%;
   border-collapse: collapse;
@@ -7453,6 +7471,18 @@ h4 {
 
 .simple-estimate-table tbody tr:nth-child(even) {
   background: #f8fafc;
+}
+
+.simple-estimate-table tr,
+.simple-estimate-final-row {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.simple-estimate-final-base-row td:first-child,
+.simple-estimate-final-row td:first-child {
+  color: var(--blue);
+  font-weight: 950;
 }
 
 .simple-estimate-total-section {
@@ -9174,6 +9204,28 @@ h4 {
 
   .proposal-page.residential-simple-estimate-page .simple-estimate-hero {
     padding: 12px 14px;
+  }
+
+  .proposal-page.residential-simple-estimate-page {
+    height: auto;
+    min-height: 11in;
+    max-height: none;
+    overflow: visible;
+    break-inside: auto;
+    page-break-inside: auto;
+  }
+
+  .proposal-page.residential-simple-estimate-page .simple-estimate-pricing-section,
+  .proposal-page.residential-simple-estimate-page .simple-estimate-selection-note,
+  .proposal-page.residential-simple-estimate-page .simple-estimate-total-section,
+  .proposal-page.residential-simple-estimate-page .simple-estimate-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .proposal-page.residential-simple-estimate-page .simple-estimate-table {
+    break-inside: auto;
+    page-break-inside: auto;
   }
 
   .proposal-page.residential-simple-estimate-page .simple-estimate-hero h3 {

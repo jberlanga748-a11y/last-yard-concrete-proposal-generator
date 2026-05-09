@@ -47,7 +47,10 @@ test("signed-in proposal opens refresh latest cloud detail before hydration", ()
 });
 
 test("editor cloud save accepts merged portal fields returned from cloud persistence", () => {
-  assert.match(appSource, /const cloudSavedProposal = await saveCloudProposal\(companyRecord\.id, proposal, proposalCloudDeps\)/);
+  assert.match(appSource, /const cloudSavedProposal = await saveCloudProposal\(companyRecord\.id, proposal, getProposalCloudSaveDeps\(\)\)/);
+  assert.match(appSource, /uploadLocalProposalImageAssetToCloud\(image/);
+  assert.match(appSource, /onLocalImageUploadDiagnostics/);
+  assert.match(appSource, /Local proposal image upload diagnostics/);
   assert.match(appSource, /setSavedProposals\(\(currentProposals\) => upsertProposal\(currentProposals, syncedProposal\)\)/);
   assert.match(appSource, /if \(proposalDraft\.id === syncedProposal\.id\)/);
   assert.match(appSource, /formatCloudProposalSaveError\(error\)/);
@@ -56,6 +59,7 @@ test("editor cloud save accepts merged portal fields returned from cloud persist
 
 test("editable proposals mirror residential pricing into nested pricing payload for cloud save", () => {
   assert.match(appSource, /const sourcePricing = isPlainObject\(proposal\.pricing\) \? proposal\.pricing : \{\}/);
+  assert.match(appSource, /function mergeResidentialPricingCollectionSources/);
   assert.match(appSource, /const normalizedResidentialPricing = normalizeResidentialPricingPayload/);
   assert.match(appSource, /pricing: normalizedResidentialPricing/);
   assert.match(appSource, /pricingOptions: normalizedPricingOptions/);
@@ -64,6 +68,22 @@ test("editable proposals mirror residential pricing into nested pricing payload 
 
 test("local-only image uploads warn that images are not cloud portable", () => {
   assert.match(storageCloudSource, /Local image only - sign in\/save to cloud for access on other devices/);
+  assert.match(appSource, /function isEditorOnlyCustomerHiddenImage/);
+  assert.match(appSource, /This photo is visible in the editor only\. Save\/sync photo to cloud before sharing with customer/);
+});
+
+test("proposal photo uploads attach local previews before cloud sync", () => {
+  const projectPhotoUploadSource = appSource.match(/async function uploadProjectPhoto[\s\S]*?function updateResidentialPricingOptions/)?.[0] || "";
+  const optionPhotoUploadSource = appSource.match(/async function uploadResidentialOptionImage[\s\S]*?function updatePlanSheet/)?.[0] || "";
+  const attachOptionImageSource = appSource.match(/function attachResidentialOptionImageToProposal[\s\S]*?function formatUploadResultMessage/)?.[0] || "";
+
+  assert.match(projectPhotoUploadSource, /const asset = await createLocalImageAsset\(uploadFile\)/);
+  assert.match(optionPhotoUploadSource, /const asset = await createLocalImageAsset\(uploadFile\)/);
+  assert.doesNotMatch(projectPhotoUploadSource, /uploadProposalAssetToCloud\(uploadFile/);
+  assert.doesNotMatch(optionPhotoUploadSource, /uploadProposalAssetToCloud\(uploadFile/);
+  assert.match(attachOptionImageSource, /\.\.\.placeholder,[\s\S]*?\.\.\.asset/);
+  assert.match(attachOptionImageSource, /uploadRequired:\s*false/);
+  assert.match(appSource, /Cloud photo upload will retry on Save Draft/);
 });
 
 test("customer portal view is read-only and hides protected app navigation", () => {
@@ -132,6 +152,11 @@ test("signed-in editor can review, apply, and send customer selection for approv
 
 test("customer portal supports final approval without exposing editor controls", () => {
   assert.match(appSource, /Final Selection for Approval/);
+  assert.match(appSource, /function CustomerPortalFinalSelectionPricing/);
+  assert.match(appSource, /showFinalSelection/);
+  assert.match(appSource, /getAppliedCustomerSelectionSummary\(proposal\)/);
+  assert.match(appSource, /Selected Base Option/);
+  assert.match(appSource, /Original options were provided for selection\. This view reflects the option\/add-ons currently applied by Last Yard Concrete/);
   assert.match(appSource, /Approve and Sign/);
   assert.match(appSource, /Typed Signature/);
   assert.match(appSource, /approval confirms the reviewed selection only/i);

@@ -54,8 +54,10 @@ import {
   fetchCloudProposalByShareToken,
   fetchCloudProposals,
   getCloudProposalLoadWarning,
+  getCloudProposalSaveWarning,
   formatCloudProposalSaveError,
   loadOrMergeCloudProposals,
+  mergeLocalImageSourcesIntoCloudSyncedProposal,
   mergeProposalCollections,
   saveCloudProposal,
   saveCloudProposals,
@@ -73,6 +75,7 @@ import {
   proposalAssetsBucket,
   sanitizeStoragePathSegment,
   uploadLegalAttachmentPdfToCloud,
+  uploadLocalProposalImageAssetToCloud,
   uploadProposalAssetToCloud,
   uploadSubmittedPacketPdfToCloud,
   validatePdfUploadFile,
@@ -636,6 +639,7 @@ export default function App() {
   const [cloudSync, setCloudSync] = useState(() => createCloudSyncState());
   const [saveState, setSaveState] = useState(() => createSaveState());
   const lastProposalSyncErrorRef = useRef("");
+  const lastProposalSyncWarningRef = useRef("");
   const [teamMembers, setTeamMembers] = useState([]);
   const [teamMessage, setTeamMessage] = useState("");
   const [proposalDirty, setProposalDirty] = useState(false);
@@ -1207,7 +1211,7 @@ export default function App() {
         );
 
         if (cloudProposal) {
-          proposal = createEditableProposal(cloudProposal);
+          proposal = createEditableProposal(mergeLocalImageSourcesIntoCloudSyncedProposal(proposal, cloudProposal));
           setSavedProposals((currentProposals) => upsertProposal(currentProposals, proposal));
           setCloudSync((currentSync) => ({
             ...currentSync,
@@ -2134,6 +2138,46 @@ export default function App() {
     }));
   }
 
+  function getProposalCloudSaveDeps() {
+    return {
+      ...proposalCloudDeps,
+      onLocalImageUploadDiagnostics: (stats = {}) => {
+        if (!import.meta.env.DEV) {
+          return;
+        }
+
+        const hasLocalPhotoWork =
+          Number(stats.localOnlyCount || 0) > 0 ||
+          Number(stats.uploadableLocalSourceCount || 0) > 0 ||
+          Number(stats.missingLocalSourceCount || 0) > 0 ||
+          Number(stats.attemptedUploadCount || 0) > 0;
+
+        if (!hasLocalPhotoWork) {
+          return;
+        }
+
+        console.info("[Last Yard proposals] Local proposal image upload diagnostics", {
+          attemptedUploadCount: stats.attemptedUploadCount || 0,
+          failedUploadCount: stats.failedCount || 0,
+          localOnlyPhotoCount: stats.localOnlyCount || 0,
+          missingLocalSourceCount: stats.missingLocalSourceCount || 0,
+          successfulUploadCount: stats.uploadedCount || 0,
+          uploadableLocalSourceCount: stats.uploadableLocalSourceCount || 0,
+          uploadFunctionPresent: stats.uploadFunctionPresent === true,
+        });
+      },
+      uploadLocalProposalImageToStorage: (image, context = {}) =>
+        uploadLocalProposalImageAssetToCloud(image, {
+          area: context.area || "featured",
+          companyDeps: companyCloudDeps,
+          companySettings,
+          companyUser: authUser,
+          fileStem: context.fileStem || image?.id || image?.fileName || "proposal-photo",
+          proposalId: context.proposalId || proposalDraft.id,
+        }),
+    };
+  }
+
   async function syncSingleProposalToCloud(proposal, successMessage = "Proposal synced to Supabase.") {
     if (!canUseCloudSync(authUser)) {
       setCloudSync((currentSync) => ({
@@ -2146,8 +2190,12 @@ export default function App() {
 
     try {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
-      const cloudSavedProposal = await saveCloudProposal(companyRecord.id, proposal, proposalCloudDeps);
-      const syncedProposal = cloudSavedProposal ? createEditableProposal(cloudSavedProposal) : proposal;
+      const cloudSavedProposal = await saveCloudProposal(companyRecord.id, proposal, getProposalCloudSaveDeps());
+      const cloudSaveWarning = getCloudProposalSaveWarning(cloudSavedProposal);
+      const mergedCloudSavedProposal = cloudSavedProposal
+        ? mergeLocalImageSourcesIntoCloudSyncedProposal(proposal, cloudSavedProposal)
+        : proposal;
+      const syncedProposal = mergedCloudSavedProposal ? createEditableProposal(mergedCloudSavedProposal) : proposal;
 
       setSavedProposals((currentProposals) => upsertProposal(currentProposals, syncedProposal));
 
@@ -2161,10 +2209,13 @@ export default function App() {
         currentRole: companyRecord.role || currentSync.currentRole || "owner",
         lastError: "",
         lastSyncedAt: new Date().toISOString(),
-        message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
+        message: cloudSaveWarning
+          ? `${successMessage} ${cloudSaveWarning}`
+          : `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
       lastProposalSyncErrorRef.current = "";
+      lastProposalSyncWarningRef.current = cloudSaveWarning;
       setSaveState((currentState) => ({
         ...currentState,
         lastCloudSavedAt: new Date().toISOString(),
@@ -2176,6 +2227,7 @@ export default function App() {
       const safeErrorMessage = formattedError.message;
 
       lastProposalSyncErrorRef.current = safeErrorMessage;
+      lastProposalSyncWarningRef.current = "";
 
       if (import.meta.env.DEV) {
         console.error("Proposal cloud save failed:", {
@@ -2220,8 +2272,15 @@ export default function App() {
 
     try {
       const companyRecord = await ensureCloudCompany(authUser, companySettings, companyCloudDeps);
-      const cloudSavedProposals = await saveCloudProposals(companyRecord.id, proposals, proposalCloudDeps);
-      const syncedProposals = cloudSavedProposals.length > 0 ? cloudSavedProposals.map((proposal) => createEditableProposal(proposal)) : proposals;
+      const cloudSavedProposals = await saveCloudProposals(companyRecord.id, proposals, getProposalCloudSaveDeps());
+      const cloudSaveWarnings = cloudSavedProposals.map(getCloudProposalSaveWarning).filter(Boolean);
+      const syncedProposals =
+        cloudSavedProposals.length > 0
+          ? cloudSavedProposals.map((cloudProposal) => {
+              const localProposal = proposals.find((proposal) => proposal?.id === cloudProposal?.id) || {};
+              return createEditableProposal(mergeLocalImageSourcesIntoCloudSyncedProposal(localProposal, cloudProposal));
+            })
+          : proposals;
 
       if (cloudSavedProposals.length > 0) {
         setSavedProposals(syncedProposals);
@@ -2242,10 +2301,13 @@ export default function App() {
         lastError: "",
         lastSyncedAt: new Date().toISOString(),
         loading: false,
-        message: `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
+        message: cloudSaveWarnings[0]
+          ? `${successMessage} ${cloudSaveWarnings[0]}`
+          : `${successMessage} Legacy data URL images may still make cloud sync slower until they are replaced.`,
         proposalStatus: cloudSyncedLabel,
       }));
       lastProposalSyncErrorRef.current = "";
+      lastProposalSyncWarningRef.current = cloudSaveWarnings.join(" ");
       setSaveState((currentState) => ({
         ...currentState,
         lastCloudSavedAt: new Date().toISOString(),
@@ -2257,6 +2319,7 @@ export default function App() {
       const safeErrorMessage = formattedError.message;
 
       lastProposalSyncErrorRef.current = safeErrorMessage;
+      lastProposalSyncWarningRef.current = "";
 
       if (import.meta.env.DEV) {
         console.error("Proposal cloud sync failed:", {
@@ -2382,8 +2445,15 @@ export default function App() {
       const cloudLoadWarning = getCloudProposalLoadWarning(cloudProposals);
       const mergeResult = mergeProposalCollections(savedProposals, cloudProposals, proposalCloudDeps);
 
-      const cloudSavedProposals = await saveCloudProposals(companyRecord.id, mergeResult.proposals, proposalCloudDeps);
-      const syncedProposals = cloudSavedProposals.length > 0 ? cloudSavedProposals.map((proposal) => createEditableProposal(proposal)) : mergeResult.proposals;
+      const cloudSavedProposals = await saveCloudProposals(companyRecord.id, mergeResult.proposals, getProposalCloudSaveDeps());
+      const cloudSaveWarnings = cloudSavedProposals.map(getCloudProposalSaveWarning).filter(Boolean);
+      const syncedProposals =
+        cloudSavedProposals.length > 0
+          ? cloudSavedProposals.map((cloudProposal) => {
+              const localProposal = mergeResult.proposals.find((proposal) => proposal?.id === cloudProposal?.id) || {};
+              return createEditableProposal(mergeLocalImageSourcesIntoCloudSyncedProposal(localProposal, cloudProposal));
+            })
+          : mergeResult.proposals;
 
       setSavedProposals(syncedProposals);
       syncDraftAfterProposalRestore(syncedProposals);
@@ -2397,15 +2467,19 @@ export default function App() {
         message:
           `${cloudLoadWarning ? `${cloudLoadWarning} ` : ""}${
             mergeResult.warning || "Cloud and local proposals are synced."
-          } Legacy data URL images may still make cloud sync slower until they are replaced.`.trim(),
+          } ${
+            cloudSaveWarnings[0] || "Legacy data URL images may still make cloud sync slower until they are replaced."
+          }`.trim(),
         proposalStatus: cloudLoadWarning ? cloudNeedsSyncLabel : cloudSyncedLabel,
       }));
       lastProposalSyncErrorRef.current = "";
+      lastProposalSyncWarningRef.current = cloudSaveWarnings.join(" ");
     } catch (error) {
       const formattedError = formatCloudProposalSaveError(error);
       const safeErrorMessage = formattedError.message;
 
       lastProposalSyncErrorRef.current = safeErrorMessage;
+      lastProposalSyncWarningRef.current = "";
 
       if (import.meta.env.DEV) {
         console.error("Proposal cloud sync failed:", {
@@ -2427,6 +2501,7 @@ export default function App() {
 
   function clearCloudSyncMessage() {
     lastProposalSyncErrorRef.current = "";
+    lastProposalSyncWarningRef.current = "";
     setCloudSync((currentSync) => ({
       ...currentSync,
       lastError: "",
@@ -3127,7 +3202,8 @@ export default function App() {
         status: synced ? "Saved locally and synced to cloud" : "Saved locally. Cloud sync failed",
       }));
       if (synced) {
-        setSaveMessage(cloudSuccessMessage);
+        const cloudWarning = lastProposalSyncWarningRef.current;
+        setSaveMessage(cloudWarning ? `${cloudSuccessMessage} ${cloudWarning}` : cloudSuccessMessage);
       } else {
         setSaveMessage(`Saved locally. Cloud sync failed: ${lastProposalSyncErrorRef.current || "See Settings for details."}`);
       }
@@ -3201,7 +3277,7 @@ export default function App() {
       const synced = await syncSingleProposalToCloud(proposalToSave, "Customer portal link synced to Supabase.");
       setSaveMessage(
         synced
-          ? `${message} Link is ready to share.`
+          ? `${message} Link is ready to share.${lastProposalSyncWarningRef.current ? ` ${lastProposalSyncWarningRef.current}` : ""}`
           : `${message} Saved locally, but cloud sync failed: ${lastProposalSyncErrorRef.current || "Cloud save did not complete."} Resolve cloud sync before sharing the public link.`,
       );
     } else {
@@ -3906,7 +3982,7 @@ export default function App() {
         status: synced ? "Saved locally and synced to cloud" : "Saved locally. Cloud sync failed",
       }));
       if (synced) {
-        setSaveMessage(cloudMessage);
+        setSaveMessage(lastProposalSyncWarningRef.current ? `${cloudMessage} ${lastProposalSyncWarningRef.current}` : cloudMessage);
       }
     }
   }
@@ -4517,21 +4593,12 @@ export default function App() {
       }));
       setAssetUploadMessage(
         canUseCloudSync(authUser)
-          ? `Uploading to cloud... ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
+          ? `Preparing preview and cloud upload... ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
           : `Saved locally only. Reason: ${localReason} ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(uploadFile)}${preparationMessage ? ` ${preparationMessage}` : ""}`,
       );
 
       try {
-        const asset = canUseCloudSync(authUser)
-          ? await uploadProposalAssetToCloud(uploadFile, {
-              area: "featured",
-              companySettings,
-              companyUser: authUser,
-              companyDeps: companyCloudDeps,
-              fileStem: `photo-${targetIndex + 1}`,
-              proposalId: proposalDraft.id,
-            })
-          : await createLocalImageAsset(uploadFile);
+        const asset = await createLocalImageAsset(uploadFile);
         const safeAsset = withImageSafetyMetadata(asset, file, preparedImage);
         const existingPhoto = workingPhotos[targetIndex] || {};
         workingPhotos[targetIndex] = normalizeProjectPhoto(
@@ -4544,52 +4611,17 @@ export default function App() {
           targetIndex,
         );
         uploadedPaths.push(safeAsset.storagePath || safeAsset.fileName || file.name || `photo-${targetIndex + 1}`);
-
-        if (canUseCloudSync(authUser)) {
-          setStorageDiagnostics((currentDiagnostics) => ({
-            ...currentDiagnostics,
-            companyId: safeAsset.companyId || currentDiagnostics.companyId,
-            errorMessage: "",
-            lastAttemptedAt: attemptedAt,
-            lastFileName: file.name || safeAsset.fileName || `photo-${targetIndex + 1}`,
-            lastFileSize: file.size || 0,
-            lastProcessedFileSize: uploadFile.size || file.size || 0,
-            lastPublicUrl: safeAsset.publicUrl || "",
-            lastStatus: "success",
-            lastStoragePath: safeAsset.storagePath || "",
-            lastSuccessfulImageUploadPath: safeAsset.storagePath || currentDiagnostics.lastSuccessfulImageUploadPath,
-            lastUploadType: uploadType,
-          }));
-        }
       } catch (error) {
-        console.error("Cloud image upload failed:", error);
+        console.error("Local image preview failed:", error);
         const errorMessage = formatStorageUploadError(error);
-        try {
-          const localAsset = withImageSafetyMetadata(await createLocalImageAsset(uploadFile), file, preparedImage);
-          const existingPhoto = workingPhotos[targetIndex] || {};
-          workingPhotos[targetIndex] = normalizeProjectPhoto(
-            {
-              ...existingPhoto,
-              ...localAsset,
-              caption: getCleanUploadedImageCaption(existingPhoto.caption || existingPhoto.label, existingPhoto.label),
-              label: getCleanUploadedImageCaption(existingPhoto.label, getImageCaptionFromFile(file.name) || `Photo ${targetIndex + 1}`),
-            },
-            targetIndex,
-          );
-          uploadedPaths.push(localAsset.fileName || file.name || `photo-${targetIndex + 1}`);
-          failures.push(`${file.name || `Photo ${fileIndex + 1}`}: cloud upload failed; saved locally.`);
-          recordActivity({
-            action: "Image upload failed",
-            entityType: "storage",
-            entityId: proposalDraft.id,
-            entityLabel: uploadType,
-            notes: errorMessage,
-          });
-        } catch (localError) {
-          console.error("Local image fallback failed:", localError);
-          const localErrorMessage = formatStorageUploadError(localError);
-          failures.push(`${file.name || `Photo ${fileIndex + 1}`}: ${errorMessage}. Local fallback failed: ${localErrorMessage}`);
-        }
+        failures.push(`${file.name || `Photo ${fileIndex + 1}`}: ${errorMessage}`);
+        recordActivity({
+          action: "Image upload failed",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: errorMessage,
+        });
       }
     }
 
@@ -4604,17 +4636,22 @@ export default function App() {
       setProposalDraft(nextProposal);
       setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
 
+      let cloudSyncSucceeded = false;
+
       if (canUseCloudSync(authUser)) {
-        await syncSingleProposalToCloud(nextProposal, `${uploadedPaths.length} photo${uploadedPaths.length === 1 ? "" : "s"} uploaded to Supabase Storage and proposal synced.`);
+        cloudSyncSucceeded = await syncSingleProposalToCloud(
+          nextProposal,
+          `${uploadedPaths.length} photo${uploadedPaths.length === 1 ? "" : "s"} uploaded to Supabase Storage and proposal synced.`,
+        );
         setStorageDiagnostics((currentDiagnostics) => ({
           ...currentDiagnostics,
           companyId: currentDiagnostics.companyId,
-          errorMessage: "",
+          errorMessage: cloudSyncSucceeded ? "" : "Saved locally. Cloud photo upload will retry on Save Draft.",
           lastAttemptedAt: attemptedAt,
           lastFailedUploadError: failures.join(" "),
-          lastStatus: "success",
-          lastStoragePath: uploadedPaths.at(-1) || "",
-          lastSuccessfulImageUploadPath: uploadedPaths.at(-1) || currentDiagnostics.lastSuccessfulImageUploadPath,
+          lastStatus: cloudSyncSucceeded ? "success" : "local fallback",
+          lastStoragePath: cloudSyncSucceeded ? uploadedPaths.at(-1) || "" : "",
+          lastSuccessfulImageUploadPath: cloudSyncSucceeded ? uploadedPaths.at(-1) || currentDiagnostics.lastSuccessfulImageUploadPath : currentDiagnostics.lastSuccessfulImageUploadPath,
           lastUploadType: uploadType,
         }));
       }
@@ -4630,7 +4667,13 @@ export default function App() {
         }));
       }
 
-      setAssetUploadMessage(formatImageBatchResultMessage(uploadedPaths.length, failures, canUseCloudSync(authUser) ? "Uploaded to Supabase Storage" : `Saved locally only. Reason: ${localReason}`));
+      const uploadPrefix =
+        canUseCloudSync(authUser) && cloudSyncSucceeded
+          ? "Uploaded to Supabase Storage"
+          : canUseCloudSync(authUser)
+            ? "Saved locally. Cloud photo upload will retry on Save Draft"
+            : `Saved locally only. Reason: ${localReason}`;
+      setAssetUploadMessage(formatImageBatchResultMessage(uploadedPaths.length, failures, uploadPrefix));
       recordActivity({
         action: "Image upload succeeded",
         entityType: "storage",
@@ -5119,45 +5162,26 @@ export default function App() {
       }));
       setAssetUploadMessage(
         canUseCloudSync(authUser)
-          ? `Uploading to cloud... ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
+          ? `Preparing option preview and cloud upload... ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(file)}${preparationMessage ? ` ${preparationMessage}` : ""}`
           : `Saved locally only. Reason: ${localReason} ${fileIndex + 1}/${imageFiles.length} ${formatSelectedFileLabel(uploadFile)}${preparationMessage ? ` ${preparationMessage}` : ""}`,
       );
 
       try {
-        const asset = canUseCloudSync(authUser)
-          ? await uploadProposalAssetToCloud(uploadFile, {
-              area: "option-photos",
-              companySettings,
-              companyUser: authUser,
-              companyDeps: companyCloudDeps,
-              fileStem: `${fileStem}-${fileIndex + 1}`,
-              proposalId: proposalDraft.id,
-            })
-          : await createLocalImageAsset(uploadFile);
+        const asset = await createLocalImageAsset(uploadFile);
         const safeAsset = withImageSafetyMetadata(asset, file, preparedImage);
         workingProposal = attachResidentialOptionImageToProposal(workingProposal, collectionKey, itemIndex, safeAsset, authUser?.email || "");
         uploadedPaths.push(safeAsset.storagePath || safeAsset.fileName || file.name || `${fileStem}-${fileIndex + 1}`);
       } catch (error) {
-        console.error("Option photo upload failed:", error);
+        console.error("Option photo preview failed:", error);
         const errorMessage = formatStorageUploadError(error);
-
-        try {
-          const localAsset = withImageSafetyMetadata(await createLocalImageAsset(uploadFile), file, preparedImage);
-          workingProposal = attachResidentialOptionImageToProposal(workingProposal, collectionKey, itemIndex, localAsset, authUser?.email || "");
-          uploadedPaths.push(localAsset.fileName || file.name || `${fileStem}-${fileIndex + 1}`);
-          failures.push(`${file.name || `Photo ${fileIndex + 1}`}: cloud upload failed; saved locally.`);
-          recordActivity({
-            action: "Image upload failed",
-            entityType: "storage",
-            entityId: proposalDraft.id,
-            entityLabel: uploadType,
-            notes: errorMessage,
-          });
-        } catch (localError) {
-          console.error("Local option photo fallback failed:", localError);
-          const localErrorMessage = formatStorageUploadError(localError);
-          failures.push(`${file.name || `Photo ${fileIndex + 1}`}: ${errorMessage}. Local fallback failed: ${localErrorMessage}`);
-        }
+        failures.push(`${file.name || `Photo ${fileIndex + 1}`}: ${errorMessage}`);
+        recordActivity({
+          action: "Image upload failed",
+          entityType: "storage",
+          entityId: proposalDraft.id,
+          entityLabel: uploadType,
+          notes: errorMessage,
+        });
       }
     }
 
@@ -5167,21 +5191,39 @@ export default function App() {
       setProposalDraft(nextProposal);
       setSavedProposals((currentProposals) => upsertProposal(currentProposals, nextProposal));
 
+      let cloudSyncSucceeded = false;
+
       if (canUseCloudSync(authUser)) {
-        await syncSingleProposalToCloud(nextProposal, `${uploadedPaths.length} option photo${uploadedPaths.length === 1 ? "" : "s"} uploaded to Supabase Storage and proposal synced.`);
+        cloudSyncSucceeded = await syncSingleProposalToCloud(
+          nextProposal,
+          `${uploadedPaths.length} option photo${uploadedPaths.length === 1 ? "" : "s"} uploaded to Supabase Storage and proposal synced.`,
+        );
       }
 
       setStorageDiagnostics((currentDiagnostics) => ({
         ...currentDiagnostics,
-        errorMessage: failures.length > 0 ? failures.join(" ") : canUseCloudSync(authUser) ? "" : `Saved locally only. Reason: ${localReason}`,
+        errorMessage:
+          failures.length > 0
+            ? failures.join(" ")
+            : canUseCloudSync(authUser) && !cloudSyncSucceeded
+              ? "Saved locally. Cloud photo upload will retry on Save Draft."
+              : canUseCloudSync(authUser)
+                ? ""
+                : `Saved locally only. Reason: ${localReason}`,
         lastAttemptedAt: attemptedAt,
         lastFailedUploadError: failures.join(" "),
-        lastStatus: failures.length > 0 ? "local fallback" : canUseCloudSync(authUser) ? "success" : "local fallback",
-        lastStoragePath: canUseCloudSync(authUser) ? uploadedPaths.at(-1) || "" : "",
-        lastSuccessfulImageUploadPath: uploadedPaths.at(-1) || currentDiagnostics.lastSuccessfulImageUploadPath,
+        lastStatus: failures.length > 0 ? "local fallback" : canUseCloudSync(authUser) && cloudSyncSucceeded ? "success" : "local fallback",
+        lastStoragePath: canUseCloudSync(authUser) && cloudSyncSucceeded ? uploadedPaths.at(-1) || "" : "",
+        lastSuccessfulImageUploadPath: canUseCloudSync(authUser) && cloudSyncSucceeded ? uploadedPaths.at(-1) || currentDiagnostics.lastSuccessfulImageUploadPath : currentDiagnostics.lastSuccessfulImageUploadPath,
         lastUploadType: uploadType,
       }));
-      setAssetUploadMessage(formatImageBatchResultMessage(uploadedPaths.length, failures, canUseCloudSync(authUser) ? "Uploaded to Supabase Storage" : `Saved locally only. Reason: ${localReason}`));
+      const uploadPrefix =
+        canUseCloudSync(authUser) && cloudSyncSucceeded
+          ? "Uploaded to Supabase Storage"
+          : canUseCloudSync(authUser)
+            ? "Saved locally. Cloud photo upload will retry on Save Draft"
+            : `Saved locally only. Reason: ${localReason}`;
+      setAssetUploadMessage(formatImageBatchResultMessage(uploadedPaths.length, failures, uploadPrefix));
       recordActivity({
         action: "Image upload succeeded",
         entityType: "storage",
@@ -7019,6 +7061,17 @@ function CustomerPortalHero({ company = {}, projectAddress = "", proposal = {} }
 }
 
 function CustomerPortalPricing({ proposal = {}, readOnly = false, selectionDraft = {}, onSelectionChange }) {
+  const customerSelection = normalizeCustomerSelection(proposal.customerSelection);
+  const showFinalSelection = [
+    CUSTOMER_SELECTION_STATUS_APPLIED,
+    CUSTOMER_SELECTION_STATUS_APPROVAL_SENT,
+    CUSTOMER_SELECTION_STATUS_APPROVED_SIGNED,
+  ].includes(customerSelection.status);
+
+  if (showFinalSelection) {
+    return <CustomerPortalFinalSelectionPricing proposal={proposal} selection={customerSelection} />;
+  }
+
   if (hasResidentialChooseOnePricing(proposal)) {
     return <CustomerPortalChooseOnePricing proposal={proposal} readOnly={readOnly} selectionDraft={selectionDraft} onSelectionChange={onSelectionChange} />;
   }
@@ -7049,6 +7102,45 @@ function CustomerPortalPricing({ proposal = {}, readOnly = false, selectionDraft
       ) : (
         <p>Proposal total: {formatCurrency(totals.total)}</p>
       )}
+    </section>
+  );
+}
+
+function CustomerPortalFinalSelectionPricing({ proposal = {}, selection = {} }) {
+  const selectionSummary = getAppliedCustomerSelectionSummary(proposal);
+  const addOns = Array.isArray(selectionSummary.selectedAddOnAmounts) ? selectionSummary.selectedAddOnAmounts : [];
+  const addOnsTotal = addOns.reduce((sum, addOn) => sum + Number(addOn.amount || 0), 0);
+  const baseTotal = Math.max(0, Number(selectionSummary.selectedTotal || 0) - addOnsTotal);
+  const selectedBaseLabel = selection.selectedOptionName || selectionSummary.selectedOptionName || "Selected base package";
+
+  return (
+    <section className="customer-portal-section customer-portal-final-pricing">
+      <div className="customer-portal-section-heading">
+        <span>Final Selection for Approval</span>
+        <strong>{formatResidentialCurrency(selectionSummary.selectedTotal)}</strong>
+      </div>
+      <p className="customer-portal-submitted-note">
+        Original options were provided for selection. This view reflects the option/add-ons currently applied by Last Yard Concrete.
+      </p>
+      <div className="customer-portal-table">
+        <div className="customer-portal-table-row customer-portal-table-row-primary">
+          <span>Selected Base Option</span>
+          <span>{selectedBaseLabel}</span>
+          <strong>{formatResidentialCurrency(baseTotal)}</strong>
+        </div>
+        {addOns.map((addOn, index) => (
+          <div className="customer-portal-table-row" key={addOn.id || addOn.name || `final-addon-${index}`}>
+            <span>Selected Add-On</span>
+            <span>{addOn.name || `Add-On ${index + 1}`}</span>
+            <strong>{formatResidentialCurrency(addOn.amount, { plus: true })}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="customer-portal-payment-mini">
+        <span>Estimate Total: {formatResidentialCurrency(selectionSummary.selectedTotal)}</span>
+        <span>50% Down: {formatResidentialCurrency(selectionSummary.selectedDownPayment)}</span>
+        <span>Final Payment: {formatResidentialCurrency(selectionSummary.selectedFinalPayment)}</span>
+      </div>
     </section>
   );
 }
@@ -11998,6 +12090,11 @@ function ProjectPhotoEditor({ message = "", photos, onPhotoChange, onPhotoUpload
               {photo.fileName} {photo.fileSize ? `| ${formatAssetFileSize(photo.fileSize)}` : ""}
             </span>
           ) : null}
+          {isEditorOnlyCustomerHiddenImage(photo) ? (
+            <span className="asset-upload-detail">
+              This photo is visible in the editor only. Save/sync photo to cloud before sharing with customer.
+            </span>
+          ) : null}
           <PhotoCaptionField
             label={`Photo ${index + 1} Caption`}
             value={photo.label}
@@ -13292,6 +13389,13 @@ function withImageSafetyMetadata(asset = {}, originalFile = {}, preparedImage = 
     originalFileName: originalFile.name || asset.originalFileName || asset.fileName || "",
     originalFileSize: originalFile.size || asset.originalFileSize || asset.fileSize || 0,
   };
+}
+
+function isEditorOnlyCustomerHiddenImage(asset = {}) {
+  const hasLocalPreview = hasTextValue(asset.dataUrl) || isDataUrl(asset.src) || isDataUrl(asset.imageSrc);
+  const hasCloudVisibleSource = hasTextValue(asset.publicUrl) || hasTextValue(asset.signedUrl) || hasTextValue(asset.storagePath);
+
+  return Boolean((asset.localOnly === true || hasLocalPreview) && !hasCloudVisibleSource);
 }
 
   function attachResidentialOptionImageToProposal(proposal = {}, collectionKey, itemIndex, asset = {}, uploadedBy = "") {
@@ -16825,17 +16929,23 @@ function ResidentialOptionPhotosEditor({ images = [], itemLabel = "Pricing optio
         <div className="residential-option-photo-list">
           {normalizedImages.map((image, imageIndex) => {
             const source = getImageAssetSource(image);
+            const emptyPhotoLabel = image.uploadRequired === true ? image.label || "Upload reminder" : "Photo not synced";
 
             return (
               <div className="residential-option-photo-editor-card" key={image.id || `${itemLabel}-${imageIndex}`}>
                 <div className="residential-option-photo-preview">
-                  {source ? <img src={source} alt={image.caption || image.label || itemLabel} loading="lazy" /> : <span>{image.label || "Photo reminder"}</span>}
+                  {source ? <img src={source} alt={image.caption || image.label || itemLabel} loading="lazy" /> : <span>{emptyPhotoLabel}</span>}
                 </div>
                 <div className="residential-option-photo-fields">
                   <span className="asset-source-badge">{source ? getImageAssetLabel(image) : "Upload reminder"}</span>
                   {image.fileName ? (
                     <span className="asset-upload-detail">
                       {image.fileName} {image.fileSize ? `| ${formatAssetFileSize(image.fileSize)}` : ""}
+                    </span>
+                  ) : null}
+                  {isEditorOnlyCustomerHiddenImage(image) ? (
+                    <span className="asset-upload-detail">
+                      This photo is visible in the editor only. Save/sync photo to cloud before sharing with customer.
                     </span>
                   ) : null}
                   <PhotoCaptionField
@@ -17008,19 +17118,122 @@ function normalizeResidentialPricingExamples(rows = []) {
 }
 
 function getResidentialPricingCollectionSource(primaryCollection, nestedCollection) {
-  if (Array.isArray(primaryCollection) && primaryCollection.length > 0) {
-    return primaryCollection;
+  const primaryRows = Array.isArray(primaryCollection) ? primaryCollection : [];
+  const nestedRows = Array.isArray(nestedCollection) ? nestedCollection : [];
+
+  if (primaryRows.length > 0 && nestedRows.length > 0) {
+    return mergeResidentialPricingCollectionSources(primaryRows, nestedRows);
   }
 
-  if (Array.isArray(nestedCollection) && nestedCollection.length > 0) {
-    return nestedCollection;
+  if (primaryRows.length > 0) {
+    return primaryRows;
   }
 
-  if (Array.isArray(primaryCollection)) {
-    return primaryCollection;
+  if (nestedRows.length > 0) {
+    return nestedRows;
   }
 
-  return Array.isArray(nestedCollection) ? nestedCollection : [];
+  return Array.isArray(primaryCollection) ? primaryRows : nestedRows;
+}
+
+function mergeResidentialPricingCollectionSources(primaryRows = [], nestedRows = []) {
+  const usedNestedIndexes = new Set();
+  const mergedRows = primaryRows.map((row, index) => {
+    const nestedIndex = findMatchingResidentialPricingRowIndex(nestedRows, row, index, usedNestedIndexes);
+
+    if (nestedIndex < 0) {
+      return row;
+    }
+
+    usedNestedIndexes.add(nestedIndex);
+    return mergeResidentialPricingRowSources(row, nestedRows[nestedIndex]);
+  });
+
+  nestedRows.forEach((row, index) => {
+    if (!usedNestedIndexes.has(index)) {
+      mergedRows.push(row);
+    }
+  });
+
+  return mergedRows;
+}
+
+function findMatchingResidentialPricingRowIndex(rows = [], row = {}, preferredIndex = 0, usedIndexes = new Set()) {
+  const rowKeys = getResidentialPricingRowMergeKeys(row);
+
+  if (rowKeys.length > 0) {
+    const matchingIndex = rows.findIndex((candidate, index) => {
+      if (usedIndexes.has(index)) {
+        return false;
+      }
+
+      const candidateKeys = new Set(getResidentialPricingRowMergeKeys(candidate));
+      return rowKeys.some((key) => candidateKeys.has(key));
+    });
+
+    if (matchingIndex >= 0) {
+      return matchingIndex;
+    }
+  }
+
+  return usedIndexes.has(preferredIndex) || preferredIndex >= rows.length ? -1 : preferredIndex;
+}
+
+function getResidentialPricingRowMergeKeys(row = {}) {
+  return [row?.id, row?.optionId, row?.addOnId, row?.name, row?.label]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function mergeResidentialPricingRowSources(primaryRow = {}, nestedRow = {}) {
+  if (!isPlainObject(primaryRow) || !isPlainObject(nestedRow)) {
+    return primaryRow;
+  }
+
+  const mergedRow = {
+    ...nestedRow,
+    ...primaryRow,
+  };
+
+  [
+    "images",
+    "optionPhotos",
+    "photos",
+    "lineItems",
+    "items",
+    "scheduleOfValues",
+    "sov",
+    "breakdown",
+    "optionBreakdown",
+    "includedScope",
+    "excludedScope",
+    "inclusions",
+    "exclusions",
+    "notes",
+    "optionNotes",
+    "addOnNotes",
+    "appliesTo",
+    "optionTotals",
+  ].forEach((key) => {
+    mergedRow[key] = mergeResidentialPricingArraySource(primaryRow[key], nestedRow[key]);
+  });
+
+  return mergedRow;
+}
+
+function mergeResidentialPricingArraySource(primaryValue, nestedValue) {
+  const primaryRows = Array.isArray(primaryValue) ? primaryValue : [];
+  const nestedRows = Array.isArray(nestedValue) ? nestedValue : [];
+
+  if (primaryRows.length === 0) {
+    return nestedRows;
+  }
+
+  if (nestedRows.length === 0) {
+    return primaryRows;
+  }
+
+  return primaryRows;
 }
 
 function normalizeResidentialPricingPayload(proposal = {}, normalizedCollections = {}) {

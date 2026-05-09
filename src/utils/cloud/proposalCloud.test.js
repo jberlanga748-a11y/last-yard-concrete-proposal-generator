@@ -4,11 +4,19 @@ import test from "node:test";
 import {
   fetchCloudProposals,
   fetchCloudProposalById,
+  fetchCloudProposalByShareToken,
   formatCloudProposalSaveError,
   getCloudProposalRowStatus,
   getCloudProposalLoadWarning,
+  getCloudProposalSaveWarning,
+  isCloudProposalListSummaryOnly,
+  mergeLocalImageSourcesIntoCloudSyncedProposal,
   mergeCloudPortalFieldsForSave,
+  mergeProposalCollections,
+  saveCloudProposals,
+  sanitizeProposalDataForCloudSave,
   saveCloudProposal,
+  uploadLocalProposalImagesToStorage,
 } from "./proposalCloud.js";
 
 function createProposalRow(proposalData = {}, row = {}) {
@@ -29,6 +37,7 @@ function createFakeSupabase({
   rows = [],
   onUpdate = () => {},
   onInsert = () => {},
+  onSelect = () => {},
   onUpsert = () => {},
   onRange = () => {},
   updateResults = [],
@@ -46,7 +55,8 @@ function createFakeSupabase({
       assert.equal(tableName, "proposals");
 
       return {
-        select() {
+        select(columns = "") {
+          onSelect(columns);
           const filters = {};
           const applyFilters = () =>
             rows.filter((row) => {
@@ -58,7 +68,15 @@ function createFakeSupabase({
                 return false;
               }
 
+              if (filters.customer_share_token && row.customer_share_token !== filters.customer_share_token) {
+                return false;
+              }
+
               if (filters["proposal_data->>id"] && row.proposal_data?.id !== filters["proposal_data->>id"]) {
+                return false;
+              }
+
+              if (filters["proposal_data->>customerShareToken"] && row.proposal_data?.customerShareToken !== filters["proposal_data->>customerShareToken"]) {
                 return false;
               }
 
@@ -168,6 +186,95 @@ test("fetchCloudProposals loads proposal collections with paginated range querie
   assert.equal(proposals[0].proposalNumber, "LYC-1");
 });
 
+test("fetchCloudProposals uses lightweight summary columns without selecting proposal_data", async () => {
+  const selectedColumns = [];
+  const rows = [
+    {
+      id: "11111111-1111-4111-8111-111111111111",
+      company_id: "company-1",
+      created_at: "2026-05-08T08:00:00.000Z",
+      updated_at: "2026-05-08T09:00:00.000Z",
+      status: "sent",
+      proposal_number: "LYC-100",
+      proposal_type: "estimate",
+      packet_mode: "summary",
+      project_name: "Residential Patio",
+      client_name: "Homeowner",
+      proposal_mode: "residential",
+      pricing_mode: "base_plus_addons",
+      total_amount: 50000,
+      customer_share_enabled: true,
+      customer_share_token: "lyp_public",
+      customer_selection_status: "submitted",
+      customer_approval_status: "none",
+      proposal_status: "customer_selection_submitted",
+    },
+  ];
+
+  const proposals = await fetchCloudProposals("company-1", {
+    ...cloudDeps,
+    supabaseClient: createFakeSupabase({
+      rows,
+      onSelect(columns) {
+        selectedColumns.push(columns);
+      },
+    }),
+  });
+
+  assert.equal(selectedColumns.length, 1);
+  assert.equal(selectedColumns[0].includes("proposal_data"), false);
+  assert.equal(selectedColumns[0].includes("project_name"), true);
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0].project.name, "Residential Patio");
+  assert.equal(proposals[0].client.companyName, "Homeowner");
+  assert.equal(proposals[0].pricing.pricingMode, "base_plus_addons");
+  assert.equal(proposals[0].totalProposal, 50000);
+  assert.equal(proposals[0].customerSelection.status, "submitted");
+  assert.equal(isCloudProposalListSummaryOnly(proposals[0]), true);
+});
+
+test("fetchCloudProposals retries minimal summary columns when optional summary columns are missing", async () => {
+  const selectedColumns = [];
+  const rows = [
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      company_id: "company-1",
+      created_at: "2026-05-08T08:00:00.000Z",
+      updated_at: "2026-05-08T09:00:00.000Z",
+      status: "draft",
+      proposal_number: "LYC-BASIC",
+      proposal_type: "estimate",
+      packet_mode: "summary",
+    },
+  ];
+
+  const proposals = await fetchCloudProposals("company-1", {
+    ...cloudDeps,
+    supabaseClient: createFakeSupabase({
+      rows,
+      onSelect(columns) {
+        selectedColumns.push(columns);
+      },
+      rangeResults: [
+        {
+          data: null,
+          error: {
+            code: "PGRST204",
+            message: "Could not find the 'customer_share_token' column of 'proposals' in the schema cache",
+          },
+        },
+        { data: rows, error: null },
+      ],
+    }),
+  });
+
+  assert.equal(selectedColumns[0].includes("customer_share_token"), true);
+  assert.equal(selectedColumns[1].includes("customer_share_token"), false);
+  assert.equal(selectedColumns[1].includes("proposal_data"), false);
+  assert.equal(proposals.length, 1);
+  assert.match(getCloudProposalLoadWarning(proposals), /summary columns are missing/);
+});
+
 test("fetchCloudProposals retries statement timeout with a smaller page size", async () => {
   const ranges = [];
   const rows = [
@@ -224,7 +331,7 @@ test("fetchCloudProposals returns partial results if a later page times out afte
   });
 
   assert.equal(proposals.length, 2);
-  assert.match(getCloudProposalLoadWarning(proposals), /Cloud proposal load timed out after 2 proposals/);
+  assert.match(getCloudProposalLoadWarning(proposals), /Cloud proposal list timed out because full proposal data is too large/);
 });
 
 test("cloud save merge preserves newer public customer selection from portal writes", () => {
@@ -418,11 +525,662 @@ test("saveCloudProposal does not wipe portal fields while persisting residential
   assert.equal(updatePayload.proposal_data.customerSelection.status, "submitted");
   assert.equal(updatePayload.proposal_data.proposalListSummary.proposalMode, "residential");
   assert.equal(updatePayload.proposal_data.proposalListSummary.projectName || "", "");
+  assert.equal(updatePayload.proposal_mode, "residential");
+  assert.equal(updatePayload.pricing_mode, "base_plus_addons");
+  assert.equal(updatePayload.customer_share_enabled, true);
+  assert.equal(updatePayload.customer_share_token, "lyp_public");
+  assert.equal(updatePayload.customer_selection_status, "submitted");
   assert.equal(updatePayload.status, "draft");
   assert.ok(updatePayload.updated_at);
 });
 
+test("sanitizeProposalDataForCloudSave removes embedded project and residential option image data", () => {
+  const embeddedImage = `data:image/jpeg;base64,${"a".repeat(1200)}`;
+  const sanitized = sanitizeProposalDataForCloudSave({
+    id: "proposal-images",
+    projectPhotos: [
+      {
+        id: "project-photo-1",
+        caption: "Existing patio",
+        dataUrl: embeddedImage,
+        fileName: "patio.jpg",
+        fileSize: 1200,
+        fileType: "image/jpeg",
+        src: embeddedImage,
+      },
+    ],
+    pricing: {
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Broom Finish",
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "Broom finish example",
+              dataUrl: embeddedImage,
+              fileName: "broom.jpg",
+              thumbnailUrl: "blob:http://localhost/preview",
+            },
+          ],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "cantilever",
+          name: "Cantilever-Style Stair Upgrade",
+          images: [
+            {
+              id: "addon-photo-1",
+              caption: "Cantilever example",
+              dataUrl: embeddedImage,
+              fileName: "cantilever.jpg",
+              publicUrl: "https://cdn.example/cantilever.jpg",
+              src: "https://cdn.example/cantilever.jpg",
+              storagePath: "company/company-1/proposals/proposal-images/option-photos/cantilever.jpg",
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  const payloadJson = JSON.stringify(sanitized.proposalData);
+
+  assert.equal(payloadJson.includes("data:image/"), false);
+  assert.equal(payloadJson.includes("blob:"), false);
+  assert.equal(sanitized.proposalData.projectPhotos[0].caption, "Existing patio");
+  assert.equal(sanitized.proposalData.projectPhotos[0].fileName, "patio.jpg");
+  assert.equal(sanitized.proposalData.projectPhotos[0].localOnly, true);
+  assert.equal(sanitized.proposalData.pricing.pricingOptions[0].images[0].localOnly, true);
+  assert.equal(sanitized.proposalData.pricing.optionalAddOns[0].images[0].publicUrl, "https://cdn.example/cantilever.jpg");
+  assert.equal(
+    sanitized.proposalData.pricing.optionalAddOns[0].images[0].storagePath,
+    "company/company-1/proposals/proposal-images/option-photos/cantilever.jpg",
+  );
+  assert.match(sanitized.warning, /Some photos are stored locally only until uploaded to cloud storage/);
+  assert.equal(sanitized.stats.localOnlyImages, 2);
+  assert.equal(sanitized.stats.removedEmbeddedImageStrings >= 4, true);
+});
+
+test("uploadLocalProposalImagesToStorage promotes local project option and add-on photos before sanitizing cloud save", async () => {
+  const embeddedImage = `data:image/jpeg;base64,${"c".repeat(1000)}`;
+  const uploaded = [];
+  const proposal = {
+    id: "proposal-upload-local-images",
+    projectPhotos: [{ id: "project-photo-1", caption: "Existing Area", dataUrl: embeddedImage, src: embeddedImage, fileName: "existing.jpg" }],
+    pricing: {
+      pricingMode: "choose_one_option",
+      basePackage: {
+        id: "base-package",
+        images: [{ id: "base-photo-1", dataUrl: embeddedImage, fileName: "base.jpg" }],
+      },
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Broom",
+          images: [{ id: "option-photo-1", dataUrl: embeddedImage, fileName: "option.jpg" }],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "addon-1",
+          name: "Walls",
+          images: [{ id: "addon-photo-1", dataUrl: embeddedImage, fileName: "addon.jpg" }],
+        },
+      ],
+    },
+  };
+
+  const result = await uploadLocalProposalImagesToStorage("company-1", proposal, {
+    uploadLocalProposalImageToStorage: async (image, context) => {
+      uploaded.push({ id: image.id, area: context.area, fileStem: context.fileStem });
+      return {
+        cloudSynced: true,
+        dataUrl: "",
+        fileName: image.fileName,
+        fileType: "image/jpeg",
+        publicUrl: `https://cdn.example/${image.id}.jpg`,
+        src: `https://cdn.example/${image.id}.jpg`,
+        storagePath: `company/company-1/proposals/proposal-upload-local-images/${context.area}/${image.id}.jpg`,
+        uploadedAt: "2026-05-09T12:00:00.000Z",
+      };
+    },
+  });
+  const sanitized = sanitizeProposalDataForCloudSave(result.proposal);
+  const payloadJson = JSON.stringify(sanitized.proposalData);
+
+  assert.equal(result.uploadedCount, 4);
+  assert.equal(result.failedCount, 0);
+  assert.equal(result.warning, "");
+  assert.deepEqual(
+    uploaded.map((item) => item.area),
+    ["featured", "option-photos", "option-photos", "option-photos"],
+  );
+  assert.equal(result.proposal.projectPhotos[0].publicUrl, "https://cdn.example/project-photo-1.jpg");
+  assert.equal(result.proposal.pricing.basePackage.images[0].storagePath.includes("/option-photos/base-photo-1.jpg"), true);
+  assert.equal(result.proposal.pricing.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.jpg");
+  assert.equal(result.proposal.pricing.optionalAddOns[0].images[0].publicUrl, "https://cdn.example/addon-photo-1.jpg");
+  assert.equal(payloadJson.includes("data:image/"), false);
+  assert.equal(payloadJson.includes("blob:"), false);
+  assert.equal(sanitized.stats.localOnlyImages, 0);
+});
+
+test("uploadLocalProposalImagesToStorage attempts upload for root pricing option photos with local data URLs", async () => {
+  const embeddedImage = `data:image/jpeg;base64,${"g".repeat(1000)}`;
+  const attempted = [];
+  const diagnostics = [];
+  const result = await uploadLocalProposalImagesToStorage(
+    "company-1",
+    {
+      id: "proposal-root-option-photo-upload",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1",
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "Broom walkway",
+              dataUrl: embeddedImage,
+              fileName: "broom walkway.jpg",
+              localOnly: true,
+              src: embeddedImage,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      onLocalImageUploadDiagnostics(stats) {
+        diagnostics.push(stats);
+      },
+      uploadLocalProposalImageToStorage: async (image, context) => {
+        attempted.push({ id: image.id, area: context.area, fileStem: context.fileStem });
+        return {
+          cloudSynced: true,
+          fileName: image.fileName,
+          fileType: "image/jpeg",
+          publicUrl: `https://cdn.example/${image.id}.jpg`,
+          src: `https://cdn.example/${image.id}.jpg`,
+          storagePath: `company/company-1/proposals/proposal-root-option-photo-upload/${context.area}/${image.id}.jpg`,
+          uploadedAt: "2026-05-09T12:00:00.000Z",
+        };
+      },
+    },
+  );
+  const sanitized = sanitizeProposalDataForCloudSave(result.proposal);
+
+  assert.deepEqual(attempted, [{ id: "option-photo-1", area: "option-photos", fileStem: "option-photo-1" }]);
+  assert.equal(result.uploadFunctionPresent, true);
+  assert.equal(result.uploadableLocalSourceCount, 1);
+  assert.equal(result.attemptedUploadCount, 1);
+  assert.equal(result.uploadedCount, 1);
+  assert.equal(result.failedCount, 0);
+  assert.equal(result.proposal.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.jpg");
+  assert.equal(JSON.stringify(sanitized.proposalData).includes("data:image/"), false);
+  assert.equal(sanitized.proposalData.pricingOptions[0].images[0].storagePath.includes("/option-photos/option-photo-1.jpg"), true);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].attemptedUploadCount, 1);
+});
+
+test("uploadLocalProposalImagesToStorage warns when a local-only photo no longer has uploadable local data", async () => {
+  let attemptedUpload = false;
+  const result = await uploadLocalProposalImagesToStorage(
+    "company-1",
+    {
+      id: "proposal-missing-local-source",
+      pricing: {
+        pricingMode: "choose_one_option",
+        pricingOptions: [
+          {
+            id: "option-1",
+            images: [
+              {
+                id: "option-photo-1",
+                caption: "Broom walkway",
+                fileName: "broom walkway.jpg",
+                localOnly: true,
+                uploadRequired: false,
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      uploadLocalProposalImageToStorage: async () => {
+        attemptedUpload = true;
+      },
+    },
+  );
+  const sanitized = sanitizeProposalDataForCloudSave(result.proposal);
+
+  assert.equal(attemptedUpload, false);
+  assert.equal(result.uploadFunctionPresent, true);
+  assert.equal(result.uploadableLocalSourceCount, 0);
+  assert.equal(result.attemptedUploadCount, 0);
+  assert.equal(result.missingLocalSourceCount, 1);
+  assert.match(result.warning, /original local image data is missing/);
+  assert.equal(result.proposal.pricing.pricingOptions[0].images[0].localOnly, true);
+  assert.equal(JSON.stringify(sanitized.proposalData).includes("data:image/"), false);
+});
+
+test("saveCloudProposal uploads local images before upserting cloud-safe proposal data", async () => {
+  const embeddedImage = `data:image/png;base64,${"d".repeat(1400)}`;
+  let insertPayload = null;
+  const uploadCalls = [];
+
+  const savedProposal = await saveCloudProposal(
+    "company-1",
+    {
+      id: "proposal-upload-before-save",
+      status: "draft",
+      projectPhotos: [{ id: "project-photo-1", caption: "Existing", dataUrl: embeddedImage, fileName: "existing.png" }],
+      pricing: {
+        pricingMode: "base_plus_addons",
+        optionalAddOns: [
+          {
+            id: "walls",
+            name: "Walls",
+            images: [{ id: "walls-photo-1", caption: "Walls", dataUrl: embeddedImage, fileName: "walls.png" }],
+          },
+        ],
+      },
+      updatedAt: "2026-05-08T12:00:00.000Z",
+    },
+    {
+      ...cloudDeps,
+      supabaseClient: createFakeSupabase({
+        onInsert(payload) {
+          insertPayload = payload;
+        },
+      }),
+      uploadLocalProposalImageToStorage: async (image, context) => {
+        uploadCalls.push({ id: image.id, area: context.area });
+        return {
+          fileName: image.fileName,
+          fileType: "image/png",
+          publicUrl: `https://cdn.example/${image.id}.png`,
+          src: `https://cdn.example/${image.id}.png`,
+          storagePath: `company/company-1/proposals/proposal-upload-before-save/${context.area}/${image.id}.png`,
+          uploadedAt: "2026-05-09T12:00:00.000Z",
+        };
+      },
+    },
+  );
+
+  const proposalJson = JSON.stringify(insertPayload.proposal_data);
+
+  assert.deepEqual(uploadCalls, [
+    { id: "project-photo-1", area: "featured" },
+    { id: "walls-photo-1", area: "option-photos" },
+  ]);
+  assert.equal(proposalJson.includes("data:image/"), false);
+  assert.equal(insertPayload.proposal_data.projectPhotos[0].publicUrl, "https://cdn.example/project-photo-1.png");
+  assert.equal(insertPayload.proposal_data.pricing.optionalAddOns[0].images[0].storagePath.includes("/option-photos/walls-photo-1.png"), true);
+  assert.equal(getCloudProposalSaveWarning(savedProposal), "");
+});
+
+test("saveCloudProposal keeps customer-visible photos in root and nested residential pricing structures", async () => {
+  const embeddedImage = `data:image/png;base64,${"f".repeat(1400)}`;
+  let insertPayload = null;
+
+  const savedProposal = await saveCloudProposal(
+    "company-1",
+    {
+      id: "proposal-root-nested-images",
+      status: "draft",
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1",
+          price: 40000,
+          images: [{ id: "option-photo-1", caption: "broom walkway", dataUrl: embeddedImage, fileName: "broom.png" }],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "walls",
+          name: "Walls",
+          amount: 10000,
+          images: [{ id: "walls-photo-1", caption: "Walls", dataUrl: embeddedImage, fileName: "walls.png" }],
+        },
+      ],
+      pricing: {
+        pricingMode: "choose_one_option",
+        pricingOptions: [{ id: "option-1", name: "Proposal 1", price: 40000, images: [] }],
+        optionalAddOns: [{ id: "walls", name: "Walls", amount: 10000, images: [] }],
+      },
+      updatedAt: "2026-05-08T12:00:00.000Z",
+    },
+    {
+      ...cloudDeps,
+      supabaseClient: createFakeSupabase({
+        onInsert(payload) {
+          insertPayload = payload;
+        },
+      }),
+      uploadLocalProposalImageToStorage: async (image, context) => ({
+        cloudSynced: true,
+        fileName: image.fileName,
+        fileType: "image/png",
+        publicUrl: `https://cdn.example/${image.id}.png`,
+        src: `https://cdn.example/${image.id}.png`,
+        storagePath: `company/company-1/proposals/proposal-root-nested-images/${context.area}/${image.id}.png`,
+        uploadedAt: "2026-05-09T12:00:00.000Z",
+      }),
+    },
+  );
+
+  const proposalJson = JSON.stringify(insertPayload.proposal_data);
+
+  assert.equal(proposalJson.includes("data:image/"), false);
+  assert.equal(savedProposal.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.png");
+  assert.equal(savedProposal.pricing.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.png");
+  assert.equal(insertPayload.proposal_data.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.png");
+  assert.equal(insertPayload.proposal_data.pricing.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.png");
+  assert.equal(insertPayload.proposal_data.optionalAddOns[0].images[0].storagePath.includes("/option-photos/walls-photo-1.png"), true);
+  assert.equal(insertPayload.proposal_data.pricing.optionalAddOns[0].images[0].storagePath.includes("/option-photos/walls-photo-1.png"), true);
+});
+
+test("uploadLocalProposalImagesToStorage keeps local draft safe and warns when upload fails", async () => {
+  const embeddedImage = `data:image/png;base64,${"e".repeat(900)}`;
+  const result = await uploadLocalProposalImagesToStorage(
+    "company-1",
+    {
+      id: "proposal-upload-fails",
+      projectPhotos: [{ id: "project-photo-1", caption: "Existing", dataUrl: embeddedImage, fileName: "existing.png" }],
+    },
+    {
+      uploadLocalProposalImageToStorage: async () => {
+        throw new Error("Storage unavailable");
+      },
+    },
+  );
+  const sanitized = sanitizeProposalDataForCloudSave(result.proposal);
+
+  assert.equal(result.uploadedCount, 0);
+  assert.equal(result.failedCount, 1);
+  assert.match(result.warning, /Some photos could not be uploaded to cloud storage yet/);
+  assert.equal(result.proposal.projectPhotos[0].dataUrl, embeddedImage);
+  assert.equal(JSON.stringify(sanitized.proposalData).includes("data:image/"), false);
+  assert.equal(sanitized.proposalData.projectPhotos[0].localOnly, true);
+});
+
+test("mergeLocalImageSourcesIntoCloudSyncedProposal keeps option photo previews when cloud row is local-only metadata", () => {
+  const embeddedImage = `data:image/jpeg;base64,${"p".repeat(120)}`;
+  const localProposal = {
+    id: "proposal-photo-preview",
+    projectPhotos: [{ id: "project-photo-1", dataUrl: embeddedImage, src: embeddedImage, fileName: "existing.jpg" }],
+    pricing: {
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1",
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "broom walkway",
+              dataUrl: embeddedImage,
+              fileName: "broom walkway.jpg",
+              src: embeddedImage,
+              uploadRequired: false,
+            },
+          ],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "addon-1",
+          name: "Cantilever",
+          images: [{ id: "addon-photo-1", dataUrl: embeddedImage, fileName: "cantilever.jpg", src: embeddedImage }],
+        },
+      ],
+    },
+    pricingOptions: [
+      {
+        id: "option-1",
+        name: "Proposal 1",
+        images: [{ id: "option-photo-1", dataUrl: embeddedImage, fileName: "broom walkway.jpg", src: embeddedImage }],
+      },
+    ],
+    optionalAddOns: [
+      {
+        id: "addon-1",
+        name: "Cantilever",
+        images: [{ id: "addon-photo-1", dataUrl: embeddedImage, fileName: "cantilever.jpg", src: embeddedImage }],
+      },
+    ],
+  };
+  const cloudProposal = {
+    id: "proposal-photo-preview",
+    projectPhotos: [{ id: "project-photo-1", caption: "Existing", fileName: "existing.jpg", localOnly: true, uploadRequired: false }],
+    pricing: {
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1",
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "broom walkway",
+              fileName: "broom walkway.jpg",
+              fileSize: 528179,
+              localOnly: true,
+              uploadRequired: true,
+            },
+          ],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "addon-1",
+          name: "Cantilever",
+          images: [{ id: "addon-photo-1", caption: "Cantilever", fileName: "cantilever.jpg", localOnly: true }],
+        },
+      ],
+    },
+    pricingOptions: [
+      {
+        id: "option-1",
+        name: "Proposal 1",
+        images: [{ id: "option-photo-1", caption: "broom walkway", fileName: "broom walkway.jpg", localOnly: true, uploadRequired: true }],
+      },
+    ],
+    optionalAddOns: [
+      {
+        id: "addon-1",
+        name: "Cantilever",
+        images: [{ id: "addon-photo-1", caption: "Cantilever", fileName: "cantilever.jpg", localOnly: true }],
+      },
+    ],
+  };
+
+  const merged = mergeLocalImageSourcesIntoCloudSyncedProposal(localProposal, cloudProposal);
+
+  assert.equal(merged.projectPhotos[0].dataUrl, embeddedImage);
+  assert.equal(merged.projectPhotos[0].src, embeddedImage);
+  assert.equal(merged.pricing.pricingOptions[0].images[0].dataUrl, embeddedImage);
+  assert.equal(merged.pricing.pricingOptions[0].images[0].src, embeddedImage);
+  assert.equal(merged.pricing.pricingOptions[0].images[0].uploadRequired, false);
+  assert.equal(merged.pricing.pricingOptions[0].images[0].cloudSynced, false);
+  assert.equal(merged.pricing.pricingOptions[0].images[0].localOnly, true);
+  assert.equal(merged.pricing.optionalAddOns[0].images[0].dataUrl, embeddedImage);
+  assert.equal(merged.pricingOptions[0].images[0].dataUrl, embeddedImage);
+  assert.equal(merged.optionalAddOns[0].images[0].dataUrl, embeddedImage);
+
+  const cloudPayload = sanitizeProposalDataForCloudSave(merged);
+  assert.equal(JSON.stringify(cloudPayload.proposalData).includes("data:image/"), false);
+});
+
+test("mergeLocalImageSourcesIntoCloudSyncedProposal keeps cloud storage source when upload succeeded", () => {
+  const embeddedImage = `data:image/jpeg;base64,${"q".repeat(120)}`;
+  const merged = mergeLocalImageSourcesIntoCloudSyncedProposal(
+    {
+      pricingOptions: [{ id: "option-1", images: [{ id: "option-photo-1", dataUrl: embeddedImage, src: embeddedImage }] }],
+    },
+    {
+      pricingOptions: [
+        {
+          id: "option-1",
+          images: [
+            {
+              id: "option-photo-1",
+              publicUrl: "https://cdn.example/option-photo-1.jpg",
+              storagePath: "company/demo/proposals/proposal-1/option-photos/option-photo-1.jpg",
+              uploadRequired: true,
+            },
+          ],
+        },
+      ],
+    },
+  );
+
+  assert.equal(merged.pricingOptions[0].images[0].dataUrl, undefined);
+  assert.equal(merged.pricingOptions[0].images[0].publicUrl, "https://cdn.example/option-photo-1.jpg");
+  assert.equal(merged.pricingOptions[0].images[0].uploadRequired, false);
+});
+
+test("mergeProposalCollections preserves local-only image previews when cloud proposal is newer sanitized metadata", () => {
+  const embeddedImage = `data:image/jpeg;base64,${"r".repeat(120)}`;
+  const mergeResult = mergeProposalCollections(
+    [
+      {
+        id: "proposal-merge-photo",
+        updatedAt: "2026-05-08T10:00:00.000Z",
+        pricingOptions: [
+          {
+            id: "option-1",
+            images: [{ id: "option-photo-1", dataUrl: embeddedImage, src: embeddedImage, fileName: "broom walkway.jpg" }],
+          },
+        ],
+      },
+    ],
+    [
+      {
+        id: "proposal-merge-photo",
+        updatedAt: "2026-05-08T10:05:00.000Z",
+        pricingOptions: [
+          {
+            id: "option-1",
+            images: [{ id: "option-photo-1", fileName: "broom walkway.jpg", localOnly: true }],
+          },
+        ],
+      },
+    ],
+  );
+
+  assert.equal(mergeResult.proposals.length, 1);
+  assert.equal(mergeResult.proposals[0].pricingOptions[0].images[0].dataUrl, embeddedImage);
+  assert.equal(mergeResult.proposals[0].pricingOptions[0].images[0].src, embeddedImage);
+});
+
+test("saveCloudProposal upserts sanitized image metadata instead of raw base64 image data", async () => {
+  const embeddedImage = `data:image/png;base64,${"b".repeat(1500)}`;
+  let insertPayload = null;
+
+  const savedProposal = await saveCloudProposal(
+    "company-1",
+    {
+      id: "proposal-local-image-save",
+      status: "draft",
+      projectPhotos: [
+        {
+          id: "project-photo-1",
+          caption: "Existing area",
+          dataUrl: embeddedImage,
+          fileName: "existing.png",
+          src: embeddedImage,
+        },
+      ],
+      pricing: {
+        pricingMode: "base_plus_addons",
+        basePackage: {
+          name: "Base Package",
+          price: 40000,
+          images: [
+            {
+              id: "base-photo-1",
+              caption: "Base package example",
+              dataUrl: embeddedImage,
+              fileName: "base.png",
+            },
+          ],
+        },
+        optionalAddOns: [
+          {
+            id: "walls",
+            name: "Walls",
+            amount: 10000,
+            images: [
+              {
+                id: "walls-photo-1",
+                caption: "Walls example",
+                storagePath: "company/company-1/proposals/proposal-local-image-save/option-photos/walls.png",
+                publicUrl: "https://cdn.example/walls.png",
+              },
+            ],
+          },
+        ],
+      },
+      updatedAt: "2026-05-08T12:00:00.000Z",
+    },
+    {
+      ...cloudDeps,
+      supabaseClient: createFakeSupabase({
+        onInsert(payload) {
+          insertPayload = payload;
+        },
+      }),
+    },
+  );
+
+  const proposalJson = JSON.stringify(insertPayload.proposal_data);
+
+  assert.equal(proposalJson.includes("data:image/"), false);
+  assert.equal(insertPayload.proposal_data.projectPhotos[0].localOnly, true);
+  assert.equal(insertPayload.proposal_data.pricing.basePackage.images[0].fileName, "base.png");
+  assert.equal(insertPayload.proposal_data.pricing.basePackage.images[0].dataUrl, undefined);
+  assert.equal(insertPayload.proposal_data.pricing.optionalAddOns[0].images[0].publicUrl, "https://cdn.example/walls.png");
+  assert.match(getCloudProposalSaveWarning(savedProposal), /Some photos are stored locally only until uploaded to cloud storage/);
+});
+
+test("saveCloudProposal blocks oversized sanitized proposal payload before cloud upsert", async () => {
+  let insertAttempted = false;
+
+  await assert.rejects(
+    () =>
+      saveCloudProposal(
+        "company-1",
+        {
+          id: "proposal-too-large",
+          status: "draft",
+          internalNotes: "x".repeat(2000),
+          updatedAt: "2026-05-08T12:00:00.000Z",
+        },
+        {
+          ...cloudDeps,
+          maxCloudProposalPayloadBytes: 500,
+          supabaseClient: createFakeSupabase({
+            onInsert() {
+              insertAttempted = true;
+            },
+          }),
+        },
+      ),
+    /Cloud save blocked because this proposal contains too much embedded image data/,
+  );
+
+  assert.equal(insertAttempted, false);
+});
+
 test("fetchCloudProposalById hydrates full customer portal data for signed-in proposal opens", async () => {
+  const selectedColumns = [];
   const row = createProposalRow({
     customerSelection: {
       status: "submitted",
@@ -447,14 +1205,78 @@ test("fetchCloudProposalById hydrates full customer portal data for signed-in pr
 
   const proposal = await fetchCloudProposalById("company-1", "proposal-1", {
     ...cloudDeps,
-    supabaseClient: createFakeSupabase({ rows: [row] }),
+    supabaseClient: createFakeSupabase({
+      rows: [row],
+      onSelect(columns) {
+        selectedColumns.push(columns);
+      },
+    }),
   });
 
+  assert.equal(selectedColumns.every((columns) => columns.includes("proposal_data")), true);
   assert.equal(proposal.id, "proposal-1");
   assert.equal(proposal.customerSelection.status, "submitted");
   assert.equal(proposal.customerApproval.status, "approved_signed");
   assert.equal(proposal.pricing.optionalAddOns[0].amount, 10000);
   assert.equal(proposal.residentialLegalPapers.informationNoticeToOwner.status, "needs_review");
+});
+
+test("fetchCloudProposalByShareToken uses indexed customer_share_token column before JSON fallback", async () => {
+  const row = createProposalRow({
+    id: "proposal-share-token",
+    customerShareEnabled: true,
+    customerShareToken: "",
+    proposalMode: "residential",
+  });
+  row.company_id = "company-1";
+  row.customer_share_token = "lyp_indexed";
+
+  const proposal = await fetchCloudProposalByShareToken("lyp_indexed", {
+    ...cloudDeps,
+    supabaseClient: createFakeSupabase({ rows: [row] }),
+  });
+
+  assert.equal(proposal.id, "proposal-share-token");
+});
+
+test("saveCloudProposals skips lightweight summary rows so they cannot overwrite full proposal data", async () => {
+  const rows = [
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      company_id: "company-1",
+      created_at: "2026-05-08T08:00:00.000Z",
+      updated_at: "2026-05-08T09:00:00.000Z",
+      status: "draft",
+      proposal_number: "LYC-SUMMARY",
+      project_name: "Summary Only",
+      client_name: "Homeowner",
+      total_amount: 50000,
+    },
+  ];
+  let wroteProposal = false;
+  const summaries = await fetchCloudProposals("company-1", {
+    ...cloudDeps,
+    supabaseClient: createFakeSupabase({ rows }),
+  });
+
+  const saved = await saveCloudProposals("company-1", summaries, {
+    ...cloudDeps,
+    supabaseClient: createFakeSupabase({
+      onInsert() {
+        wroteProposal = true;
+      },
+      onUpdate() {
+        wroteProposal = true;
+      },
+      onUpsert() {
+        wroteProposal = true;
+      },
+    }),
+  });
+
+  assert.equal(saved.length, 1);
+  assert.equal(wroteProposal, false);
+  assert.equal(isCloudProposalListSummaryOnly(saved[0]), true);
 });
 
 test("cloud proposal row status keeps workflow status inside proposal data while using compatible row status", () => {
@@ -542,7 +1364,7 @@ test("formatCloudProposalSaveError returns safe actionable reasons", () => {
     formatCloudProposalSaveError({ message: "canceling statement due to statement timeout", code: "57014" }),
     {
       code: "57014",
-      message: "Cloud proposal load timed out. Try loading fewer proposals or contact support.",
+      message: "Cloud proposal list timed out because full proposal data is too large. Local drafts are still safe.",
       reason: "statement-timeout",
     },
   );
@@ -553,5 +1375,25 @@ test("formatCloudProposalSaveError returns safe actionable reasons", () => {
   assert.equal(
     formatCloudProposalSaveError({ message: "Request Entity Too Large", status: 413 }).reason,
     "json-too-large",
+  );
+  assert.deepEqual(formatCloudProposalSaveError(new TypeError("Failed to fetch")), {
+    code: "",
+    message: "Cloud save failed before Supabase returned details. Your local draft is still saved.",
+    reason: "cloud-save-network-origin-failure",
+  });
+  assert.equal(formatCloudProposalSaveError({ message: "Cloudflare origin failure", status: 520 }).reason, "cloud-save-network-origin-failure");
+  assert.deepEqual(
+    formatCloudProposalSaveError({
+      message:
+        "Cloud save blocked because this proposal contains too much embedded image data. Local draft is still saved. Upload photos to cloud storage or remove/compress photos.",
+      code: "PAYLOAD_TOO_LARGE",
+      reason: "cloud-payload-too-large",
+    }),
+    {
+      code: "PAYLOAD_TOO_LARGE",
+      message:
+        "Cloud save blocked because this proposal contains too much embedded image data. Local draft is still saved. Upload photos to cloud storage or remove/compress photos.",
+      reason: "cloud-payload-too-large",
+    },
   );
 });

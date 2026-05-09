@@ -805,8 +805,8 @@ export function getCustomerSelectionItemId(item = {}, index = 0, prefix = "item"
 
 export function createCustomerSafeProposalPayload(proposal = {}) {
   const pricing = isCustomerPortalObject(proposal.pricing) ? proposal.pricing : {};
-  const pricingOptions = sanitizeCustomerPortalPricingOptions(selectCustomerPortalRows(proposal.pricingOptions, pricing.pricingOptions));
-  const optionalAddOns = sanitizeCustomerPortalOptionalAddOns(selectCustomerPortalRows(proposal.optionalAddOns, pricing.optionalAddOns));
+  const pricingOptions = sanitizeCustomerPortalPricingOptions(mergeCustomerPortalRows(proposal.pricingOptions, pricing.pricingOptions));
+  const optionalAddOns = sanitizeCustomerPortalOptionalAddOns(mergeCustomerPortalRows(proposal.optionalAddOns, pricing.optionalAddOns));
   const lineItems = sanitizeCustomerPortalRows(selectCustomerPortalRows(proposal.lineItems, pricing.lineItems));
   const pricingMode = cleanCustomerPortalText(proposal.pricingMode || pricing.pricingMode);
 
@@ -1042,32 +1042,50 @@ function sanitizeCustomerPortalOptionalAddOns(optionalAddOns = []) {
 function sanitizeCustomerPortalImages(images = []) {
   return sanitizeCustomerPortalRows(images)
     .map((image) => {
-      const src = cleanCustomerPortalText(image.publicUrl || image.signedUrl || image.src || image.imageSrc || image.dataUrl || image.storagePath);
-
-      if (!src && image.uploadRequired === true) {
-        return {
-          id: cleanCustomerPortalText(image.id),
-          label: cleanCustomerPortalText(image.label),
-          caption: cleanCustomerPortalText(image.caption),
-          uploadRequired: true,
-        };
-      }
+      const publicUrl = cleanCustomerPortalText(image.publicUrl);
+      const signedUrl = cleanCustomerPortalText(image.signedUrl);
+      const storagePath = cleanCustomerPortalText(image.storagePath);
+      const safeSrc = getCustomerPortalCloudImageSource(image);
+      const src = publicUrl || signedUrl || safeSrc;
 
       return removeEmptyCustomerPortalFields({
         id: cleanCustomerPortalText(image.id),
         label: cleanCustomerPortalText(image.label),
         caption: getCustomerSafeImageCaption(image, ""),
-        dataUrl: cleanCustomerPortalText(image.dataUrl),
-        imageSrc: cleanCustomerPortalText(image.imageSrc),
-        publicUrl: cleanCustomerPortalText(image.publicUrl),
-        signedUrl: cleanCustomerPortalText(image.signedUrl),
+        imageSrc: safeSrc,
+        publicUrl,
+        signedUrl,
         src,
-        storagePath: cleanCustomerPortalText(image.storagePath),
+        storagePath,
         uploadedAt: cleanCustomerPortalText(image.uploadedAt),
-        uploadRequired: image.uploadRequired === true,
+        uploadRequired: false,
       });
     })
-    .filter((image) => image.src || image.publicUrl || image.signedUrl || image.dataUrl || image.storagePath || image.uploadRequired);
+    .filter((image) => image.src || image.publicUrl || image.signedUrl || image.storagePath);
+}
+
+function getCustomerPortalCloudImageSource(image = {}) {
+  if (image.localOnly === true && !image.publicUrl && !image.signedUrl && !image.storagePath) {
+    return "";
+  }
+
+  const src = cleanCustomerPortalText(image.src);
+  const imageSrc = cleanCustomerPortalText(image.imageSrc);
+
+  if (src && !isCustomerPortalEmbeddedImageReference(src)) {
+    return src;
+  }
+
+  if (imageSrc && !isCustomerPortalEmbeddedImageReference(imageSrc)) {
+    return imageSrc;
+  }
+
+  return "";
+}
+
+function isCustomerPortalEmbeddedImageReference(value = "") {
+  const normalizedValue = cleanCustomerPortalText(value).toLowerCase();
+  return normalizedValue.startsWith("data:image/") || normalizedValue.startsWith("blob:");
 }
 
 function sanitizeCustomerPortalRows(rows = []) {
@@ -1086,6 +1104,109 @@ function selectCustomerPortalRows(primaryRows, fallbackRows) {
   }
 
   return Array.isArray(primaryRows) ? primaryRows : Array.isArray(fallbackRows) ? fallbackRows : [];
+}
+
+function mergeCustomerPortalRows(primaryRows, fallbackRows) {
+  const primary = Array.isArray(primaryRows) ? primaryRows.filter(isCustomerPortalObject) : [];
+  const fallback = Array.isArray(fallbackRows) ? fallbackRows.filter(isCustomerPortalObject) : [];
+
+  if (primary.length === 0) {
+    return fallback;
+  }
+
+  if (fallback.length === 0) {
+    return primary;
+  }
+
+  const usedFallbackIndexes = new Set();
+  const merged = primary.map((row, index) => {
+    const fallbackIndex = findMatchingCustomerPortalRowIndex(fallback, row, index, usedFallbackIndexes);
+
+    if (fallbackIndex < 0) {
+      return row;
+    }
+
+    usedFallbackIndexes.add(fallbackIndex);
+    return mergeCustomerPortalRow(row, fallback[fallbackIndex]);
+  });
+
+  fallback.forEach((row, index) => {
+    if (!usedFallbackIndexes.has(index)) {
+      merged.push(row);
+    }
+  });
+
+  return merged;
+}
+
+function findMatchingCustomerPortalRowIndex(rows = [], row = {}, preferredIndex = 0, usedIndexes = new Set()) {
+  const rowKeys = getCustomerPortalRowMergeKeys(row);
+
+  if (rowKeys.length > 0) {
+    const matchingIndex = rows.findIndex((candidate, index) => {
+      if (usedIndexes.has(index)) {
+        return false;
+      }
+
+      const candidateKeys = new Set(getCustomerPortalRowMergeKeys(candidate));
+      return rowKeys.some((key) => candidateKeys.has(key));
+    });
+
+    if (matchingIndex >= 0) {
+      return matchingIndex;
+    }
+  }
+
+  return usedIndexes.has(preferredIndex) || preferredIndex >= rows.length ? -1 : preferredIndex;
+}
+
+function getCustomerPortalRowMergeKeys(row = {}) {
+  return ["id", "optionId", "addOnId", "name", "label"]
+    .map((key) => cleanCustomerPortalText(row[key]).toLowerCase())
+    .filter(Boolean);
+}
+
+function mergeCustomerPortalRow(primary = {}, fallback = {}) {
+  const merged = {
+    ...fallback,
+    ...primary,
+  };
+
+  ["images", "lineItems", "scheduleOfValues", "includedScope", "excludedScope", "notes", "appliesTo", "optionAmounts", "optionTotals"].forEach((key) => {
+    merged[key] = mergeCustomerPortalArrayField(primary[key], fallback[key]);
+  });
+
+  return merged;
+}
+
+function mergeCustomerPortalArrayField(primaryValue, fallbackValue) {
+  const primary = Array.isArray(primaryValue) ? primaryValue : [];
+  const fallback = Array.isArray(fallbackValue) ? fallbackValue : [];
+
+  if (primary.length === 0) {
+    return fallback;
+  }
+
+  if (fallback.length === 0) {
+    return primary;
+  }
+
+  if (primary.every(isCustomerPortalObject) && fallback.every(isCustomerPortalObject)) {
+    return mergeCustomerPortalRows(primary, fallback);
+  }
+
+  const values = [...primary];
+  const valueKeys = new Set(primary.map((value) => JSON.stringify(value)));
+
+  fallback.forEach((value) => {
+    const key = JSON.stringify(value);
+
+    if (!valueKeys.has(key)) {
+      values.push(value);
+    }
+  });
+
+  return values;
 }
 
 function sanitizeCustomerPortalObject(value = {}, allowedKeys = null) {

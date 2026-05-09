@@ -833,8 +833,15 @@ function ResidentialSimpleEstimatePage({ company, pageNumber, projectName, propo
   ].filter(Boolean);
   const fromLines = [company.name, company.phone, company.email, company.license, ...(Array.isArray(company.credentials) ? company.credentials : [])].filter(Boolean);
   const addOns = estimateTotals.addOns || [];
+  const selectedAddOns = Array.isArray(estimateTotals.selectedAddOns) ? estimateTotals.selectedAddOns : [];
   const optionRows = buildResidentialPricingOptionRows(proposal);
   const hasChooseOneOptions = optionRows.length > 0;
+  const hasAppliedSelection = estimateTotals.hasAppliedCustomerSelection === true;
+  const hasPendingSelection = estimateTotals.hasPendingCustomerSelection === true;
+  const appliedBaseDescription = [basePackage.name, basePackage.description]
+    .map((value) => String(value || "").trim())
+    .filter((value, index, values) => value && values.indexOf(value) === index)
+    .join(" - ");
 
   return (
     <ProposalPage className="structured-packet-page residential-simple-estimate-page">
@@ -873,6 +880,16 @@ function ResidentialSimpleEstimatePage({ company, pageNumber, projectName, propo
 
         <section className="simple-estimate-pricing-section">
           <h3>Estimate Items</h3>
+          {hasAppliedSelection ? (
+            <p className="simple-estimate-selection-note">
+              Original options were provided for selection. This estimate reflects the selected option/add-ons currently applied by Last Yard Concrete.
+            </p>
+          ) : null}
+          {hasPendingSelection ? (
+            <p className="simple-estimate-selection-note">
+              Customer selection submitted - pending Last Yard review. Final estimate will update after selection is applied.
+            </p>
+          ) : null}
           <table className="simple-estimate-table">
             <thead>
               <tr>
@@ -884,7 +901,26 @@ function ResidentialSimpleEstimatePage({ company, pageNumber, projectName, propo
               </tr>
             </thead>
             <tbody>
-              {hasChooseOneOptions ? (
+              {hasAppliedSelection ? (
+                <>
+                  <tr className="simple-estimate-final-row simple-estimate-final-base-row">
+                    <td>Selected Base Option</td>
+                    <td>{appliedBaseDescription || "Applied customer selection."}</td>
+                    <td>{formatResidentialCurrency(estimateTotals.basePrice)}</td>
+                    <td>1</td>
+                    <td>{formatResidentialCurrency(estimateTotals.basePrice)}</td>
+                  </tr>
+                  {selectedAddOns.map((addOn, index) => (
+                    <tr className="simple-estimate-final-row" key={addOn.id || addOn.name || `selected-addon-${index}`}>
+                      <td>Selected Add-On: {addOn.name}</td>
+                      <td>{addOn.description || "Applied optional add-on."}</td>
+                      <td>{formatResidentialCurrency(addOn.amount, { plus: true })}</td>
+                      <td>1</td>
+                      <td>{formatResidentialCurrency(addOn.amount, { plus: true })}</td>
+                    </tr>
+                  ))}
+                </>
+              ) : hasChooseOneOptions ? (
                 optionRows.map((option) => {
                   const selected = Boolean(option.selected || option.included);
 

@@ -13,6 +13,7 @@ import {
 } from "../src/utils/customerPortal.js";
 
 const proposalsTable = "proposals";
+const customerPortalFullSelectColumns = "id,proposal_data,created_at,updated_at";
 const customerPortalConfigError = {
   ok: false,
   error: "Customer portal is not configured. Please contact Last Yard Concrete.",
@@ -62,16 +63,7 @@ export async function handleCustomerProposalRequest(
 
   try {
     const supabase = createCustomerPortalSupabaseClient(serverConfig, { createClientImpl });
-    const { data, error } = await supabase
-      .from(proposalsTable)
-      .select("id,proposal_data,created_at,updated_at")
-      .filter("proposal_data->>customerShareToken", "eq", shareToken)
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
+    const data = await findCustomerProposalRowByShareToken(supabase, shareToken);
 
     if (!data?.proposal_data) {
       response.status(404).json({ ok: false, available: false, reason: "not-found" });
@@ -261,6 +253,54 @@ export function createCustomerPortalSupabaseClient({ supabaseUrl, serviceRoleKey
   });
 }
 
+async function findCustomerProposalRowByShareToken(supabase, shareToken) {
+  let row = null;
+
+  try {
+    row = await findCustomerProposalRowByShareTokenColumn(supabase, shareToken);
+  } catch (error) {
+    if (!isMissingCustomerPortalSummaryColumnError(error)) {
+      throw error;
+    }
+  }
+
+  if (!row) {
+    row = await findCustomerProposalRowByShareTokenJson(supabase, shareToken);
+  }
+
+  return row;
+}
+
+async function findCustomerProposalRowByShareTokenColumn(supabase, shareToken) {
+  const { data, error } = await supabase
+    .from(proposalsTable)
+    .select(customerPortalFullSelectColumns)
+    .eq("customer_share_token", shareToken)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data || null;
+}
+
+async function findCustomerProposalRowByShareTokenJson(supabase, shareToken) {
+  const { data, error } = await supabase
+    .from(proposalsTable)
+    .select(customerPortalFullSelectColumns)
+    .filter("proposal_data->>customerShareToken", "eq", shareToken)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return data || null;
+}
+
 export function getCustomerPortalConfigErrorPayload() {
   return { ...customerPortalConfigError };
 }
@@ -301,17 +341,34 @@ async function updateCustomerProposalData(supabase, rowId, proposalData, { requi
   }
 
   try {
+    const updatePayload = {
+      ...createCustomerPortalSummaryColumns(proposalData),
+      proposal_data: proposalData,
+      status: getCustomerPortalRowStatus(proposalData.status),
+      updated_at: proposalData.updatedAt || new Date().toISOString(),
+    };
     const { error } = await supabase
       .from(proposalsTable)
-      .update({
-        proposal_data: proposalData,
-        status: getCustomerPortalRowStatus(proposalData.status),
-        updated_at: proposalData.updatedAt || new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq("id", rowId);
 
     if (error) {
-      throw error;
+      if (!isMissingCustomerPortalSummaryColumnError(error)) {
+        throw error;
+      }
+
+      const { error: compatibleError } = await supabase
+        .from(proposalsTable)
+        .update({
+          proposal_data: proposalData,
+          status: getCustomerPortalRowStatus(proposalData.status),
+          updated_at: proposalData.updatedAt || new Date().toISOString(),
+        })
+        .eq("id", rowId);
+
+      if (compatibleError) {
+        throw compatibleError;
+      }
     }
 
     return true;
@@ -323,6 +380,77 @@ async function updateCustomerProposalData(supabase, rowId, proposalData, { requi
     // Viewing should not fail just because last-viewed tracking could not be written.
     return false;
   }
+}
+
+function createCustomerPortalSummaryColumns(proposalData = {}) {
+  const pricing = isPlainObject(proposalData.pricing) ? proposalData.pricing : {};
+  const project = isPlainObject(proposalData.project) ? proposalData.project : {};
+  const client = isPlainObject(proposalData.client) ? proposalData.client : {};
+
+  return {
+    client_name: client.companyName || client.contactName || "",
+    customer_approval_status: proposalData.customerApproval?.status || "none",
+    customer_selection_status: proposalData.customerSelection?.status || "none",
+    customer_share_enabled: proposalData.customerShareEnabled === true,
+    customer_share_expires_at: proposalData.customerShareExpiresAt || null,
+    customer_share_token: normalizeCustomerShareToken(proposalData.customerShareToken) || null,
+    packet_mode: proposalData.packetMode || "summary",
+    pricing_mode: proposalData.pricingMode || pricing.pricingMode || "",
+    project_name: project.name || "",
+    proposal_mode: proposalData.proposalMode || "",
+    proposal_number: proposalData.proposalNumber || "",
+    proposal_status: proposalData.status || "draft",
+    proposal_type: proposalData.proposalType || proposalData.type || "",
+    total_amount: getCustomerPortalSummaryTotal(proposalData),
+  };
+}
+
+function getCustomerPortalSummaryTotal(proposalData = {}) {
+  const pricing = isPlainObject(proposalData.pricing) ? proposalData.pricing : {};
+  const selectionStatus = String(proposalData.customerSelection?.status || "").trim();
+  const appliedSelectionStatuses = new Set(["applied_to_proposal", "approval_sent", "approved_signed"]);
+  const appliedSelectionTotal = toCustomerPortalSummaryNumber(proposalData.customerSelection?.selectedTotal);
+
+  if (appliedSelectionStatuses.has(selectionStatus) && appliedSelectionTotal > 0) {
+    return appliedSelectionTotal;
+  }
+
+  const explicitTotal = toCustomerPortalSummaryNumber(
+    proposalData.revisedTotal ?? proposalData.totalAmount ?? proposalData.totalProposal ?? pricing.selectedTotal ?? pricing.totalProposal ?? pricing.total,
+  );
+
+  if (explicitTotal > 0) {
+    return explicitTotal;
+  }
+
+  if (isPlainObject(pricing.basePackage)) {
+    const basePackageTotal = toCustomerPortalSummaryNumber(pricing.basePackage.total ?? pricing.basePackage.price ?? pricing.baseBid);
+    const selectedAddOnsTotal = (Array.isArray(pricing.optionalAddOns) ? pricing.optionalAddOns : [])
+      .filter((addOn) => addOn?.selected || addOn?.included)
+      .reduce((sum, addOn) => sum + toCustomerPortalSummaryNumber(addOn.amount ?? addOn.price ?? addOn.total), 0);
+
+    return basePackageTotal + selectedAddOnsTotal;
+  }
+
+  return toCustomerPortalSummaryNumber(pricing.baseBid);
+}
+
+function toCustomerPortalSummaryNumber(value) {
+  const numericValue = Number.parseFloat(String(value ?? 0).replace(/[$,%\s,]/g, ""));
+  return Number.isFinite(numericValue) ? numericValue : 0;
+}
+
+function isMissingCustomerPortalSummaryColumnError(error = {}) {
+  const combined = [error?.message, error?.details, error?.hint, error?.code, error?.status, error?.statusCode].filter(Boolean).join(" ");
+  return (
+    /(project_name|client_name|proposal_mode|pricing_mode|total_amount|customer_share_enabled|customer_share_token|customer_share_expires_at|customer_selection_status|customer_approval_status|proposal_status)/i.test(
+      combined,
+    ) && /(column|schema cache|pgrst204|42703)/i.test(combined)
+  );
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 async function readJsonBody(request) {

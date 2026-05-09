@@ -35,7 +35,21 @@ function createMockResponse() {
   };
 }
 
-function createMockSupabase({ row, selectError = null, updateError = null, onUpdate = () => {} } = {}) {
+function createMockSupabase({
+  row,
+  rows,
+  selectError = null,
+  selectResults = [],
+  updateError = null,
+  updateResults = [],
+  onFilter = () => {},
+  onSelect = () => {},
+  onUpdate = () => {},
+} = {}) {
+  const availableRows = Array.isArray(rows) ? rows : row ? [row] : [];
+  let selectCount = 0;
+  let updateCount = 0;
+
   return {
     from(tableName) {
       assert.equal(tableName, "proposals");
@@ -43,26 +57,50 @@ function createMockSupabase({ row, selectError = null, updateError = null, onUpd
       return {
         select(columns) {
           assert.equal(columns, "id,proposal_data,created_at,updated_at");
+          onSelect(columns);
+          const filters = {};
+          const applyFilters = () =>
+            availableRows.filter((candidate) => {
+              if (filters.customer_share_token && candidate.customer_share_token !== filters.customer_share_token) {
+                return false;
+              }
 
-          return {
+              if (filters["proposal_data->>customerShareToken"] && candidate.proposal_data?.customerShareToken !== filters["proposal_data->>customerShareToken"]) {
+                return false;
+              }
+
+              return true;
+            });
+          const builder = {
+            eq(column, value) {
+              onFilter(column, value);
+              filters[column] = value;
+              return builder;
+            },
             filter(column, operator, value) {
-              assert.equal(column, "proposal_data->>customerShareToken");
               assert.equal(operator, "eq");
               assert.equal(value.startsWith("lyp_"), true);
+              onFilter(column, value);
+              filters[column] = value;
 
-              return {
-                limit(limitCount) {
-                  assert.equal(limitCount, 1);
+              return builder;
+            },
+            limit(limitCount) {
+              assert.equal(limitCount, 1);
+              return builder;
+            },
+            async maybeSingle() {
+              const result = selectResults[selectCount++];
 
-                  return {
-                    async maybeSingle() {
-                      return { data: row || null, error: selectError };
-                    },
-                  };
-                },
-              };
+              if (result) {
+                return result;
+              }
+
+              return { data: applyFilters()[0] || null, error: selectError };
             },
           };
+
+          return builder;
         },
         update(payload) {
           onUpdate(payload);
@@ -70,9 +108,9 @@ function createMockSupabase({ row, selectError = null, updateError = null, onUpd
           return {
             async eq(column, rowId) {
               assert.equal(column, "id");
-              assert.equal(rowId, row?.id);
+              assert.equal(rowId, row?.id || availableRows[0]?.id);
 
-              return { error: updateError };
+              return updateResults[updateCount++] || { error: updateError };
             },
           };
         },
@@ -214,6 +252,148 @@ test("customer proposal API valid token lookup returns customer-safe payload", a
   assert.equal(updatePayload.proposal_data.customerShareLastViewedAt.length > 0, true);
 });
 
+test("customer proposal API returns cloud-visible option and add-on photos from nested pricing data", async () => {
+  const response = createMockResponse();
+  const row = createEnabledProposal({
+    pricingMode: "choose_one_option",
+    pricingOptions: [
+      {
+        id: "option-1",
+        name: "Proposal 1 - Broom",
+        price: 40000,
+        images: [],
+      },
+    ],
+    optionalAddOns: [{ id: "walls", name: "Walls", amount: 10000, images: [] }],
+    pricing: {
+      pricingMode: "choose_one_option",
+      pricingOptions: [
+        {
+          id: "option-1",
+          name: "Proposal 1 - Broom",
+          price: 40000,
+          images: [
+            {
+              id: "option-photo-1",
+              caption: "broom walkway",
+              publicUrl: "https://cdn.example/broom.jpg",
+              storagePath: "company/demo/proposals/proposal-1/option-photos/broom.jpg",
+            },
+          ],
+        },
+      ],
+      optionalAddOns: [
+        {
+          id: "walls",
+          name: "Walls",
+          amount: 10000,
+          images: [
+            {
+              id: "walls-photo-1",
+              caption: "Walls example",
+              storagePath: "company/demo/proposals/proposal-1/option-photos/walls.jpg",
+            },
+          ],
+        },
+      ],
+    },
+  });
+
+  await handleCustomerProposalRequest(
+    {
+      method: "GET",
+      query: { shareToken: "lyp_public" },
+      url: "/api/customer-proposal?shareToken=lyp_public",
+      headers: {},
+    },
+    response,
+    {
+      env: { SUPABASE_URL: "https://project.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "server-service-role" },
+      createClientImpl: createClientFactory(createMockSupabase({ row })),
+      logger: { error() {} },
+    },
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.proposal.pricingOptions[0].images[0].publicUrl, "https://cdn.example/broom.jpg");
+  assert.equal(response.body.proposal.pricing.pricingOptions[0].images[0].publicUrl, "https://cdn.example/broom.jpg");
+  assert.equal(response.body.proposal.optionalAddOns[0].images[0].storagePath, "company/demo/proposals/proposal-1/option-photos/walls.jpg");
+  assert.equal(response.body.proposal.optionalAddOns[0].images[0].src, undefined);
+});
+
+test("customer proposal API uses customer_share_token column when available", async () => {
+  const response = createMockResponse();
+  const filterColumns = [];
+  const row = createEnabledProposal();
+  row.customer_share_token = "lyp_indexed";
+  row.proposal_data.customerShareToken = "lyp_indexed";
+
+  await handleCustomerProposalRequest(
+    {
+      method: "GET",
+      query: { shareToken: "lyp_indexed" },
+      url: "/api/customer-proposal?shareToken=lyp_indexed",
+      headers: {},
+    },
+    response,
+    {
+      env: { SUPABASE_URL: "https://project.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "server-service-role" },
+      createClientImpl: createClientFactory(
+        createMockSupabase({
+          row,
+          onFilter(column) {
+            filterColumns.push(column);
+          },
+        }),
+      ),
+      logger: { error() {} },
+    },
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.proposal.id, "proposal-1");
+  assert.deepEqual(filterColumns.slice(0, 1), ["customer_share_token"]);
+});
+
+test("customer proposal API falls back to JSON token lookup when summary column is missing", async () => {
+  const response = createMockResponse();
+  const row = createEnabledProposal();
+
+  await handleCustomerProposalRequest(
+    {
+      method: "GET",
+      query: { shareToken: "lyp_public" },
+      url: "/api/customer-proposal?shareToken=lyp_public",
+      headers: {},
+    },
+    response,
+    {
+      env: { SUPABASE_URL: "https://project.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "server-service-role" },
+      createClientImpl: createClientFactory(
+        createMockSupabase({
+          row,
+          selectResults: [
+            {
+              data: null,
+              error: {
+                code: "PGRST204",
+                message: "Could not find the 'customer_share_token' column of 'proposals' in the schema cache",
+              },
+            },
+          ],
+        }),
+      ),
+      logger: { error() {} },
+    },
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.ok, true);
+  assert.equal(response.body.proposal.customerShareToken, "lyp_public");
+});
+
 test("customer proposal API rejects invalid, disabled, and expired share tokens safely", async () => {
   const env = { SUPABASE_URL: "https://project.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "server-service-role" };
   const invalidResponse = createMockResponse();
@@ -289,6 +469,10 @@ test("customer proposal API selection submit writes only customerSelection state
   assert.equal(Boolean(updatedProposal.updatedAt), true);
   assert.equal(updatePayload.status, "sent");
   assert.equal(updatePayload.updated_at, updatedProposal.updatedAt);
+  assert.equal(updatePayload.customer_selection_status, "submitted");
+  assert.equal(updatePayload.customer_share_token, "lyp_public");
+  assert.equal(updatePayload.proposal_status, "customer_selection_submitted");
+  assert.equal(updatePayload.total_amount, 40000);
   assert.equal(updatedProposal.pricing.basePackage.price, 40000);
   assert.deepEqual(updatedProposal.scopeSections, [{ title: "Original Scope", bullets: ["Keep me"] }]);
   assert.equal(updatedProposal.residentialLegalPapers.informationNoticeToOwner.status, "needs_review");

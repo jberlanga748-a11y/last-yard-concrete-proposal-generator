@@ -94,6 +94,25 @@ test("residential simple estimate can summarize choose-one options without custo
   assert.doesNotMatch(simpleEstimateSource, /Schedule of Values/);
 });
 
+test("residential simple estimate renders applied customer selection as final estimate rows", () => {
+  const simpleEstimateSource = source.match(/function ResidentialSimpleEstimatePage[\s\S]*?function ResidentialSimpleEstimateAttachmentsPage/)?.[0] || "";
+
+  assert.match(simpleEstimateSource, /hasAppliedSelection/);
+  assert.match(simpleEstimateSource, /Original options were provided for selection/);
+  assert.match(simpleEstimateSource, /Selected Base Option/);
+  assert.match(simpleEstimateSource, /Selected Add-On:/);
+  assert.match(simpleEstimateSource, /Customer selection submitted - pending Last Yard review/);
+});
+
+test("residential simple estimate print CSS avoids clipping final selected estimate rows", () => {
+  const styleSource = readFileSync(join(dirname(componentPath), "../../styles.css"), "utf8");
+
+  assert.match(styleSource, /\.proposal-page\.residential-simple-estimate-page\s*\{[\s\S]*?height:\s*auto/);
+  assert.match(styleSource, /\.proposal-page\.residential-simple-estimate-page\s*\{[\s\S]*?overflow:\s*visible/);
+  assert.match(styleSource, /\.simple-estimate-table tr,[\s\S]*?\.simple-estimate-final-row\s*\{[\s\S]*?break-inside:\s*avoid/);
+  assert.match(styleSource, /\.proposal-page\.residential-simple-estimate-page \.simple-estimate-table tr\s*\{[\s\S]*?page-break-inside:\s*avoid/);
+});
+
 test("simple estimate attachments render customer-safe captions and photos", () => {
   assert.match(source, /function ResidentialSimpleEstimateAttachmentsPage/);
   assert.match(source, /getSimpleEstimatePhotoCaption/);
