@@ -9,6 +9,7 @@ const leadFinderSource = readFileSync(new URL("./utils/leadFinder.js", import.me
 const schemaSource = readFileSync(new URL("../SUPABASE_SCHEMA.sql", import.meta.url), "utf8");
 const scoreLeadApiSource = readFileSync(new URL("../api/ai/score-lead.js", import.meta.url), "utf8");
 const draftProposalApiSource = readFileSync(new URL("../api/ai/draft-proposal.js", import.meta.url), "utf8");
+const missingInfoApiSource = readFileSync(new URL("../api/ai/check-missing-info.js", import.meta.url), "utf8");
 
 test("app shell exposes AI Lead Finder navigation and routes", () => {
   assert.match(chromeSource, /AI Lead Finder/);
@@ -65,6 +66,11 @@ test("lead finder screens include dashboard sources inbox new lead and detail be
   assert.match(leadFinderViewSource, /Add \/ Link Contact/);
   assert.match(leadFinderViewSource, /Score This Lead/);
   assert.match(leadFinderViewSource, /Rule-Based Test Score/);
+  assert.match(leadFinderViewSource, /Check Missing Info/);
+  assert.match(leadFinderViewSource, /Rule-Based Missing Info Check/);
+  assert.match(leadFinderViewSource, /Missing Info \/ Proposal Readiness/);
+  assert.match(leadFinderViewSource, /Copy Customer Questions/);
+  assert.match(leadFinderViewSource, /Mark Missing Info Requested/);
   assert.match(leadFinderViewSource, /Score Source/);
   assert.match(leadFinderViewSource, /Score All Unscored Leads/);
   assert.match(leadFinderViewSource, /Lead Review Queue/);
@@ -115,7 +121,9 @@ test("lead finder handoff uses existing proposal and contact paths", () => {
 
 test("lead finder scoring is server-backed and does not add daily search yet", () => {
   assert.match(appSource, /fetch\("\/api\/ai\/score-lead"/);
+  assert.match(appSource, /fetch\("\/api\/ai\/check-missing-info"/);
   assert.match(appSource, /scoreLeadWithLocalRules/);
+  assert.match(appSource, /checkLeadMissingInfoWithLocalRules/);
   assert.match(appSource, /scoreUnscoredLeads/);
   assert.match(appSource, /updateLeadReviewStatus/);
   assert.match(appSource, /autoScoreLeadIfNeeded/);
@@ -125,10 +133,17 @@ test("lead finder scoring is server-backed and does not add daily search yet", (
   assert.match(leadFinderSource, /scoreSource/);
   assert.match(leadFinderSource, /scoreStatus/);
   assert.match(leadFinderSource, /reviewStatus/);
+  assert.match(leadFinderSource, /missingInfoChecklist/);
+  assert.match(leadFinderSource, /proposalReadinessScore/);
+  assert.match(leadFinderSource, /markLeadMissingInfoRequested/);
   assert.match(leadFinderSource, /getLeadReviewQueue/);
   assert.match(leadFinderSource, /hasCompleteLeadScore/);
   assert.match(leadFinderSource, /scoredAt/);
   assert.doesNotMatch(scoreLeadApiSource, /VITE_OPENAI_API_KEY|import\.meta\.env/);
+  assert.match(missingInfoApiSource, /process\.env\.OPENAI_API_KEY/);
+  assert.match(missingInfoApiSource, /AI missing info check is not configured yet/);
+  assert.match(missingInfoApiSource, /Do not invent prices/);
+  assert.doesNotMatch(missingInfoApiSource, /VITE_OPENAI_API_KEY|import\.meta\.env/);
   assert.match(draftProposalApiSource, /process\.env\.OPENAI_API_KEY/);
   assert.match(draftProposalApiSource, /AI proposal drafting is not configured yet/);
   assert.match(draftProposalApiSource, /Do not invent prices/);
@@ -151,6 +166,8 @@ test("Supabase schema includes future lead finder tables and RLS policies", () =
   assert.match(schemaSource, /score_status text/);
   assert.match(schemaSource, /review_status text/);
   assert.match(schemaSource, /reviewed_at timestamptz/);
+  assert.match(schemaSource, /proposal_readiness_score numeric/);
+  assert.match(schemaSource, /missing_info_status text/);
   assert.match(schemaSource, /estimate_id text/);
   assert.match(schemaSource, /handoff_history jsonb/);
   assert.match(schemaSource, /next_follow_up_date date/);

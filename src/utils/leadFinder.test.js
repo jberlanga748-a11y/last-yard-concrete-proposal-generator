@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   LEAD_CONTACT_METHODS,
   LEAD_FOLLOW_UP_STATUSES,
+  LEAD_MISSING_INFO_STATUSES,
+  LEAD_PROPOSAL_READINESS_LABELS,
   LEAD_SOURCE_CHECK_FREQUENCIES,
   LEAD_SOURCE_PRIORITIES,
   LEAD_SOURCE_STATUSES,
@@ -17,8 +19,10 @@ import {
   applyLeadAiScore,
   applyLeadFollowUpQuickAction,
   applyLeadHandoff,
+  applyLeadMissingInfoCheck,
   applyLeadSourceChecked,
   calculateNextSourceCheckDate,
+  checkLeadMissingInfoWithLocalRules,
   createEmptyLead,
   createLeadFinderBackup,
   createLeadFromSource,
@@ -37,12 +41,14 @@ import {
   isLeadFollowUpOverdue,
   isLeadSourceOverdue,
   markLeadSourceChecked,
+  markLeadMissingInfoRequested,
   mergeLeadFinderImportData,
   mergeLeadFinderData,
   normalizeLead,
   normalizeLeadAiScoreResult,
   normalizeLeadFinderData,
   normalizeLeadHandoffHistory,
+  normalizeLeadMissingInfoResult,
   normalizeLeadProposalDraftResult,
   normalizeLeadSource,
   parseLeadFinderBackupData,
@@ -77,6 +83,8 @@ test("lead finder constants include requested statuses, service types, and sourc
   assert.ok(LEAD_SOURCE_CHECK_FREQUENCIES.includes("Every 2 Days"));
   assert.ok(LEAD_SOURCE_STATUSES.includes("Needs Review"));
   assert.ok(LEAD_SOURCE_PRIORITIES.includes("High"));
+  assert.ok(LEAD_PROPOSAL_READINESS_LABELS.includes("Needs Info"));
+  assert.ok(LEAD_MISSING_INFO_STATUSES.includes("Info Requested"));
 });
 
 test("normalizes lead source and lead records with safe defaults", () => {
@@ -102,6 +110,13 @@ test("normalizes lead source and lead records with safe defaults", () => {
   assert.equal(lead.reviewStatus, "Needs Review");
   assert.equal(lead.reviewedAt, "");
   assert.equal(lead.reviewedBy, "");
+  assert.deepEqual(lead.missingInfoChecklist, []);
+  assert.deepEqual(lead.criticalQuestions, []);
+  assert.deepEqual(lead.recommendedPhotosOrDocs, []);
+  assert.deepEqual(lead.missingInfoRiskFlags, []);
+  assert.equal(lead.proposalReadinessScore, "");
+  assert.equal(lead.proposalReadinessLabel, "");
+  assert.equal(lead.missingInfoStatus, "Not Checked");
   assert.equal(lead.estimateId, "");
   assert.deepEqual(lead.handoffHistory, []);
   assert.equal(lead.followUpStatus, "Not Contacted");
@@ -291,6 +306,101 @@ test("review queue filters and sorts Good Fit before Maybe before Bad Fit", () =
   assert.deepEqual(needsReviewQueue.map((lead) => lead.id), ["lead-good", "lead-bad"]);
   assert.equal(getLeadById(reviewedData, "lead-maybe").reviewStatus, "Reviewed");
   assert.equal(getLeadById(reviewedData, "lead-maybe").reviewedBy, "tester");
+});
+
+test("rule-based missing info check finds residential exterior missing details", () => {
+  const result = checkLeadMissingInfoWithLocalRules({
+    title: "Albany fence repair",
+    city: "Albany",
+    state: "OR",
+    serviceType: "Fencing",
+    description: "Replace old backyard fence.",
+    suggestedCompanyMode: "Live Your Future",
+  });
+  const checkedLead = applyLeadMissingInfoCheck(createEmptyLead({ id: "lead-missing-lyf", title: "Albany fence repair" }), result, "rule_based");
+
+  assert.equal(result.missingInfoSource, "rule_based");
+  assert.equal(result.proposalReadinessLabel, "Needs Info");
+  assert.ok(result.missingInfoChecklist.includes("Specific project address"));
+  assert.ok(result.missingInfoChecklist.includes("Approximate measurements"));
+  assert.ok(result.missingInfoChecklist.includes("Fence height/material/style"));
+  assert.match(result.customerQuestionDraft, /Before we prepare an estimate/i);
+  assert.equal(checkedLead.missingInfoSource, "rule_based");
+  assert.equal(checkedLead.missingInfoStatus, "Needs Info");
+  assert.ok(checkedLead.missingInfoLastCheckedAt);
+});
+
+test("rule-based missing info check finds concrete and GC bid missing details", () => {
+  const result = checkLeadMissingInfoWithLocalRules({
+    title: "Salem sidewalk replacement",
+    companyName: "ABC GC",
+    city: "Salem",
+    state: "OR",
+    serviceType: "Sidewalk",
+    description: "Concrete sidewalk replacement at apartment complex.",
+    suggestedCompanyMode: "Last Yard Concrete",
+  });
+
+  assert.equal(result.proposalReadinessLabel, "Needs Info");
+  assert.ok(result.missingInfoChecklist.includes("Bid due date"));
+  assert.ok(result.missingInfoChecklist.includes("Plans/specs/addenda"));
+  assert.ok(result.missingInfoChecklist.includes("Quantities or plan sheets"));
+  assert.match(result.customerQuestionDraft, /Before we price this concrete scope/i);
+});
+
+test("bad fit missing info check is not ready and mark requested updates follow-up fields", () => {
+  const badLead = applyLeadAiScore(
+    createEmptyLead({
+      id: "lead-bad-missing",
+      title: "Roofing prime project",
+      serviceType: "Other",
+      description: "Large bonded public roofing prime project.",
+    }),
+    {
+      aiFitScore: 20,
+      aiFitLabel: "Bad Fit",
+      aiFitReason: "Wrong trade.",
+      scoreSource: "rule_based",
+      scoredAt: "2026-05-09T12:00:00.000Z",
+    },
+  );
+  const checkedLead = applyLeadMissingInfoCheck(badLead, checkLeadMissingInfoWithLocalRules(badLead), "rule_based");
+  const requestedLead = markLeadMissingInfoRequested(checkedLead, { today: "2026-05-09" });
+
+  assert.equal(checkedLead.proposalReadinessLabel, "Not Ready");
+  assert.equal(checkedLead.missingInfoStatus, "Not Ready");
+  assert.equal(requestedLead.missingInfoStatus, "Info Requested");
+  assert.equal(requestedLead.followUpStatus, "Waiting on Response");
+  assert.equal(requestedLead.lastContactMethod, "Other");
+  assert.equal(requestedLead.nextFollowUpDate, "2026-05-10");
+  assert.match(requestedLead.contactNotes, /Missing info was requested/);
+});
+
+test("missing info readiness fields persist through normalize and review queue filters", () => {
+  const checkedLead = applyLeadMissingInfoCheck(
+    createEmptyLead({ id: "lead-ready-filter", title: "Ready deck lead", serviceType: "Decking" }),
+    {
+      missingInformation: [],
+      criticalQuestions: [],
+      recommendedPhotosOrDocs: [],
+      riskFlags: [],
+      proposalReadinessScore: 88,
+      proposalReadinessLabel: "Ready",
+      recommendedNextStep: "Start estimate review.",
+      customerQuestionDraft: "Thanks, I have enough to review.",
+      missingInfoSource: "rule_based",
+    },
+    "rule_based",
+  );
+  const normalizedData = normalizeLeadFinderData({ sources: [], leads: [checkedLead] });
+  const queue = getLeadReviewQueue(normalizedData, { reviewStatus: "all", readinessLabel: "Ready" });
+
+  assert.equal(normalizedData.leads[0].proposalReadinessScore, 88);
+  assert.equal(normalizedData.leads[0].proposalReadinessLabel, "Ready");
+  assert.equal(normalizedData.leads[0].missingInfoStatus, "Ready");
+  assert.equal(queue.length, 1);
+  assert.equal(queue[0].id, "lead-ready-filter");
+  assert.deepEqual(normalizeLeadMissingInfoResult({ missingInformation: "Address" }).missingInfoChecklist, ["Address"]);
 });
 
 test("normalizes AI proposal draft fields without inventing missing data", () => {

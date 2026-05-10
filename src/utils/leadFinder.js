@@ -50,6 +50,10 @@ export const LEAD_SCORE_STATUSES = ["unscored", "scored", "partial", "error"];
 
 export const LEAD_REVIEW_STATUSES = ["Needs Review", "Reviewed", "Rejected", "Saved for Later"];
 
+export const LEAD_PROPOSAL_READINESS_LABELS = ["Ready", "Needs Info", "Not Ready"];
+
+export const LEAD_MISSING_INFO_STATUSES = ["Not Checked", "Needs Info", "Info Requested", "Ready", "Not Ready"];
+
 export const LEAD_FOLLOW_UP_STATUSES = [
   "Not Contacted",
   "Contacted",
@@ -528,6 +532,17 @@ export function createEmptyLead(seed = {}) {
     followUpStatus: "Not Contacted",
     contactNotes: "",
     noFollowUpReason: "",
+    missingInfoChecklist: [],
+    criticalQuestions: [],
+    recommendedPhotosOrDocs: [],
+    missingInfoRiskFlags: [],
+    proposalReadinessScore: "",
+    proposalReadinessLabel: "",
+    missingInfoRecommendedNextStep: "",
+    customerQuestionDraft: "",
+    missingInfoLastCheckedAt: "",
+    missingInfoSource: "",
+    missingInfoStatus: "Not Checked",
     createdAt: now,
     updatedAt: now,
     ...seed,
@@ -690,6 +705,17 @@ export function normalizeLead(lead = {}) {
     followUpStatus: normalizeOption(leadRecord.followUpStatus, LEAD_FOLLOW_UP_STATUSES, "Not Contacted"),
     contactNotes: toSafeText(leadRecord.contactNotes),
     noFollowUpReason: toSafeText(leadRecord.noFollowUpReason),
+    missingInfoChecklist: normalizeTextList(leadRecord.missingInfoChecklist ?? leadRecord.missingInformation),
+    criticalQuestions: normalizeTextList(leadRecord.criticalQuestions),
+    recommendedPhotosOrDocs: normalizeTextList(leadRecord.recommendedPhotosOrDocs),
+    missingInfoRiskFlags: normalizeTextList(leadRecord.missingInfoRiskFlags ?? leadRecord.riskFlags),
+    proposalReadinessScore: clampScoreOrBlank(leadRecord.proposalReadinessScore),
+    proposalReadinessLabel: normalizeOption(leadRecord.proposalReadinessLabel, LEAD_PROPOSAL_READINESS_LABELS, ""),
+    missingInfoRecommendedNextStep: toSafeText(leadRecord.missingInfoRecommendedNextStep ?? leadRecord.recommendedNextStep),
+    customerQuestionDraft: toSafeText(leadRecord.customerQuestionDraft),
+    missingInfoLastCheckedAt: toIsoDateTime(leadRecord.missingInfoLastCheckedAt),
+    missingInfoSource: normalizeLeadScoreSource(leadRecord.missingInfoSource),
+    missingInfoStatus: normalizeOption(leadRecord.missingInfoStatus, LEAD_MISSING_INFO_STATUSES, "Not Checked"),
     createdAt,
     updatedAt: toSafeText(leadRecord.updatedAt) || createdAt,
   };
@@ -1111,6 +1137,24 @@ export function normalizeLeadProposalDraftResult(result = {}) {
   };
 }
 
+export function normalizeLeadMissingInfoResult(result = {}) {
+  const source = isPlainObject(result) ? result : {};
+
+  return {
+    missingInfoChecklist: normalizeTextList(source.missingInfoChecklist ?? source.missingInformation),
+    criticalQuestions: normalizeTextList(source.criticalQuestions),
+    recommendedPhotosOrDocs: normalizeTextList(source.recommendedPhotosOrDocs),
+    missingInfoRiskFlags: normalizeTextList(source.missingInfoRiskFlags ?? source.riskFlags),
+    proposalReadinessScore: clampScoreOrBlank(source.proposalReadinessScore),
+    proposalReadinessLabel: normalizeOption(source.proposalReadinessLabel, LEAD_PROPOSAL_READINESS_LABELS, "Needs Info"),
+    missingInfoRecommendedNextStep: toSafeText(source.missingInfoRecommendedNextStep ?? source.recommendedNextStep),
+    customerQuestionDraft: toSafeText(source.customerQuestionDraft),
+    missingInfoLastCheckedAt: toIsoDateTime(source.missingInfoLastCheckedAt),
+    missingInfoSource: normalizeLeadScoreSource(source.missingInfoSource),
+    missingInfoStatus: normalizeOption(source.missingInfoStatus, LEAD_MISSING_INFO_STATUSES, ""),
+  };
+}
+
 export function applyLeadAiScore(lead = {}, result = {}) {
   const normalizedScore = normalizeLeadAiScoreResult(result);
 
@@ -1121,6 +1165,45 @@ export function applyLeadAiScore(lead = {}, result = {}) {
     scoreStatus: normalizedScore.scoreStatus || "scored",
     scoreError: normalizedScore.scoreError,
     updatedAt: new Date().toISOString(),
+  });
+}
+
+export function applyLeadMissingInfoCheck(lead = {}, result = {}, source = "ai") {
+  const normalizedResult = normalizeLeadMissingInfoResult(result);
+  const checkedAt = normalizedResult.missingInfoLastCheckedAt || new Date().toISOString();
+  const readinessStatus =
+    normalizedResult.missingInfoStatus ||
+    (normalizedResult.proposalReadinessLabel === "Ready"
+      ? "Ready"
+      : normalizedResult.proposalReadinessLabel === "Not Ready"
+        ? "Not Ready"
+        : "Needs Info");
+
+  return normalizeLead({
+    ...lead,
+    ...normalizedResult,
+    missingInfoLastCheckedAt: checkedAt,
+    missingInfoSource: normalizedResult.missingInfoSource || source,
+    missingInfoStatus: readinessStatus,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export function markLeadMissingInfoRequested(lead = {}, options = {}) {
+  const normalizedLead = normalizeLead(lead);
+  const today = toDateInputValue(options.today) || getTodayInputValue();
+  const now = new Date().toISOString();
+  const note = toSafeText(options.note) || "Missing info was requested from the customer/source.";
+
+  return normalizeLead({
+    ...normalizedLead,
+    missingInfoStatus: "Info Requested",
+    followUpStatus: "Waiting on Response",
+    lastContactDate: today,
+    lastContactMethod: normalizeOption(options.contactMethod, LEAD_CONTACT_METHODS, normalizedLead.lastContactMethod || "Other"),
+    nextFollowUpDate: addDaysToInputDate(today, 1),
+    contactNotes: appendContactNote(normalizedLead.contactNotes, note, today),
+    updatedAt: now,
   });
 }
 
@@ -1372,6 +1455,103 @@ export function scoreLeadWithLocalRules(lead = {}) {
   });
 }
 
+export function checkLeadMissingInfoWithLocalRules(lead = {}) {
+  const normalizedLead = normalizeLead(lead);
+  const text = [
+    normalizedLead.title,
+    normalizedLead.sourceName,
+    normalizedLead.sourceUrl,
+    normalizedLead.companyName,
+    normalizedLead.city,
+    normalizedLead.state,
+    normalizedLead.serviceType,
+    normalizedLead.projectType,
+    normalizedLead.description,
+    normalizedLead.aiFitReason,
+    normalizedLead.aiRisks,
+    normalizedLead.aiNextStep,
+    normalizedLead.suggestedCompanyMode,
+    normalizedLead.notes,
+  ]
+    .join(" ")
+    .toLowerCase();
+  const serviceText = `${normalizedLead.serviceType} ${normalizedLead.projectType} ${text}`.toLowerCase();
+  const companyMode = inferMissingInfoCompanyMode(normalizedLead, serviceText);
+  const isBadFit = normalizedLead.aiFitLabel === "Bad Fit";
+  const missing = [];
+  const questions = [];
+  const photosOrDocs = [];
+  const riskFlags = [];
+
+  const addMissing = (item) => addUniqueText(missing, item);
+  const addQuestion = (item) => addUniqueText(questions, item);
+  const addPhotoOrDoc = (item) => addUniqueText(photosOrDocs, item);
+  const addRisk = (item) => addUniqueText(riskFlags, item);
+
+  if (!normalizedLead.title) {
+    addMissing("Lead title / project name");
+  }
+
+  if (!normalizedLead.contactName && !normalizedLead.companyName) {
+    addMissing(companyMode === "Last Yard Concrete" ? "GC/company contact name" : "Customer name");
+    addQuestion(companyMode === "Last Yard Concrete" ? "Who is the GC or estimator contact for this scope?" : "Who should be listed as the customer/contact?");
+  }
+
+  if (!normalizedLead.contactEmail && !normalizedLead.contactPhone) {
+    addMissing("Contact phone or email");
+    addQuestion("What is the best phone number or email for follow-up?");
+  }
+
+  if (!normalizedLead.city && !normalizedLead.state) {
+    addMissing(companyMode === "Last Yard Concrete" ? "Project address/location" : "Project address");
+    addQuestion(companyMode === "Last Yard Concrete" ? "Where is the project located?" : "What is the project address?");
+  } else if (!looksLikeSpecificAddress(text)) {
+    addMissing("Specific project address");
+    addQuestion("Can you send the exact project address?");
+  }
+
+  if (!normalizedLead.serviceType || normalizedLead.serviceType === "Other") {
+    addMissing("Service type");
+    addQuestion("Which trade/scope should this be estimated under?");
+  }
+
+  if (!normalizedLead.description && !normalizedLead.notes) {
+    addMissing("Scope description");
+    addQuestion("Can you send a short description of the work needed?");
+  }
+
+  if (companyMode === "Live Your Future") {
+    addLiveYourFutureMissingInfo(normalizedLead, serviceText, { addMissing, addQuestion, addPhotoOrDoc, addRisk });
+  } else if (companyMode === "Last Yard Concrete") {
+    addLastYardConcreteMissingInfo(normalizedLead, serviceText, { addMissing, addQuestion, addPhotoOrDoc, addRisk });
+  } else {
+    addMissing("Company fit / trade path");
+    addQuestion("Should this be handled by Live Your Future, Last Yard Concrete, or saved for later?");
+    addRisk("Company fit is not clear from the lead details.");
+  }
+
+  if (isBadFit) {
+    addRisk("Lead is currently scored Bad Fit; review carefully before starting a proposal.");
+  }
+
+  const readinessScore = calculateProposalReadinessScore(missing, questions, riskFlags, isBadFit);
+  const readinessLabel = getProposalReadinessLabel(readinessScore, missing, questions, isBadFit);
+  const recommendedNextStep = getMissingInfoRecommendedNextStep(readinessLabel, companyMode, isBadFit);
+
+  return normalizeLeadMissingInfoResult({
+    missingInfoChecklist: missing,
+    criticalQuestions: questions,
+    recommendedPhotosOrDocs: photosOrDocs,
+    missingInfoRiskFlags: riskFlags,
+    proposalReadinessScore: readinessScore,
+    proposalReadinessLabel: readinessLabel,
+    missingInfoRecommendedNextStep: recommendedNextStep,
+    customerQuestionDraft: buildMissingInfoQuestionDraft(normalizedLead, companyMode, questions, photosOrDocs),
+    missingInfoSource: "rule_based",
+    missingInfoStatus: readinessLabel === "Ready" ? "Ready" : readinessLabel === "Not Ready" ? "Not Ready" : "Needs Info",
+  });
+}
+
 export function getLeadFinderStats(data = {}) {
   const { leads, sources } = normalizeLeadFinderData(data);
   const countStatus = (status) => leads.filter((lead) => lead.status === status).length;
@@ -1388,6 +1568,9 @@ export function getLeadFinderStats(data = {}) {
     newLeadsNeedingReview: leads.filter((lead) => lead.status === "New" && lead.reviewStatus === "Needs Review").length,
     unscoredLeads: leads.filter((lead) => !hasCompleteLeadScore(lead)).length,
     autoScoredToday: leads.filter((lead) => lead.scoreSource === "rule_based" && lead.scoredAt.slice(0, 10) === today).length,
+    readyLeads: leads.filter((lead) => lead.proposalReadinessLabel === "Ready").length,
+    leadsNeedingInfo: leads.filter((lead) => lead.proposalReadinessLabel === "Needs Info").length,
+    notReadyLeads: leads.filter((lead) => lead.proposalReadinessLabel === "Not Ready").length,
     contactedLeads: countStatus("Contacted"),
     estimatesStarted: countStatus("Estimate Started"),
     proposalsStarted: countStatus("Proposal Started"),
@@ -1412,6 +1595,7 @@ export function getLeadReviewQueue(data = {}, filters = {}) {
   const sourceId = toSafeText(filters.sourceId || "all");
   const serviceType = toSafeText(filters.serviceType || "all");
   const city = toSafeText(filters.city).toLowerCase();
+  const readinessLabel = normalizeOption(filters.readinessLabel, LEAD_PROPOSAL_READINESS_LABELS, "all");
   const requestedReviewStatus = toSafeText(filters.reviewStatus || "Needs Review");
   const reviewStatus = requestedReviewStatus === "all" ? "all" : normalizeOption(requestedReviewStatus, LEAD_REVIEW_STATUSES, "Needs Review");
 
@@ -1424,8 +1608,9 @@ export function getLeadReviewQueue(data = {}, filters = {}) {
       const matchesSource = sourceId === "all" || lead.sourceId === sourceId;
       const matchesService = serviceType === "all" || lead.serviceType === serviceType;
       const matchesCity = !city || lead.city.toLowerCase().includes(city);
+      const matchesReadiness = readinessLabel === "all" || lead.proposalReadinessLabel === readinessLabel;
 
-      return matchesReview && matchesLabel && matchesCompany && matchesScoreSource && matchesSource && matchesService && matchesCity;
+      return matchesReview && matchesLabel && matchesCompany && matchesScoreSource && matchesSource && matchesService && matchesCity && matchesReadiness;
     })
     .sort(compareLeadReviewQueueItems);
 }
@@ -1605,6 +1790,217 @@ function isLeadSourceCheckable(source = {}) {
   return Boolean(normalizedSource.active && !["Paused", "Bad Source"].includes(normalizedSource.sourceStatus));
 }
 
+function inferMissingInfoCompanyMode(lead = {}, serviceText = "") {
+  const normalizedMode = normalizeOption(lead.suggestedCompanyMode, LEAD_SUGGESTED_COMPANY_MODES, "Unknown");
+
+  if (normalizedMode !== "Unknown") {
+    return normalizedMode;
+  }
+
+  if (["concrete", "site concrete", "sidewalk", "ada", "ramp", "curb", "gutter", "slab"].some((term) => serviceText.includes(term))) {
+    return "Last Yard Concrete";
+  }
+
+  if (["fencing", "fence", "decking", "deck", "siding", "exterior repair"].some((term) => serviceText.includes(term))) {
+    return "Live Your Future";
+  }
+
+  return "Unknown";
+}
+
+function addLiveYourFutureMissingInfo(lead = {}, serviceText = "", helpers = {}) {
+  const { addMissing, addQuestion, addPhotoOrDoc, addRisk } = helpers;
+
+  if (!lead.estimatedValue) {
+    addMissing("Budget range or approval to estimate");
+    addQuestion("Is there a budget range or approval to prepare an estimate?");
+  }
+
+  if (!serviceText.match(/photo|image|picture/)) {
+    addPhotoOrDoc("Current photos of the project area");
+  }
+
+  if (!serviceText.match(/measure|linear|lf|feet|ft|sq ft|square|length|height|size/)) {
+    addMissing("Approximate measurements");
+    addQuestion("What are the approximate measurements or size of the area?");
+  }
+
+  if (serviceText.includes("fenc")) {
+    if (!serviceText.match(/height|6('| ft|ft)|4('| ft|ft)|cedar|wood|chain|vinyl|style|material/)) {
+      addMissing("Fence height/material/style");
+      addQuestion("What fence height, material, and style should be estimated?");
+    }
+  } else if (serviceText.includes("deck")) {
+    if (!serviceText.match(/repair|replace|resurface|size|wood|composite|material|framing|rail/)) {
+      addMissing("Deck size/material/repair scope");
+      addQuestion("What is the deck size, material preference, and repair or replacement scope?");
+    }
+  } else if (serviceText.includes("siding")) {
+    if (!serviceText.match(/area|damage|material|lap|panel|fiber|cedar|repair|replace/)) {
+      addMissing("Siding area/material/damage scope");
+      addQuestion("What siding area, material, and damage/repair scope should be included?");
+    }
+  } else {
+    addMissing("Fence/deck/siding/exterior repair scope");
+    addQuestion("Which exterior scope should be estimated?");
+  }
+
+  if (!serviceText.match(/demo|remove|haul|disposal/)) {
+    addMissing("Demo/removal responsibility");
+    addQuestion("Who is responsible for demo, removal, and haul-off?");
+  }
+
+  if (!serviceText.match(/access|staging|gate|yard|parking/)) {
+    addMissing("Access/staging notes");
+    addQuestion("Are there access, staging, parking, gate, or yard constraints?");
+  }
+
+  if (!lead.dueDate && !serviceText.match(/timeline|schedule|start|finish|asap/)) {
+    addMissing("Timeline");
+    addQuestion("What is the desired timeline?");
+  }
+
+  if (serviceText.match(/hoa|permit/)) {
+    addRisk("Permit or HOA requirements may affect schedule and scope.");
+  } else {
+    addMissing("Permit/HOA concerns if relevant");
+  }
+}
+
+function addLastYardConcreteMissingInfo(lead = {}, serviceText = "", helpers = {}) {
+  const { addMissing, addQuestion, addPhotoOrDoc, addRisk } = helpers;
+
+  if (!lead.dueDate && !serviceText.match(/due|bid date|deadline/)) {
+    addMissing("Bid due date");
+    addQuestion("What is the bid due date and time?");
+  }
+
+  if (!serviceText.match(/plan|spec|addenda|addendum|sheet|drawing/)) {
+    addMissing("Plans/specs/addenda");
+    addQuestion("Can you send the plans, specs, and current addenda?");
+    addPhotoOrDoc("Plans, specs, addenda, and relevant plan sheets");
+  }
+
+  if (!serviceText.match(/scope limit|limits|include|exclude|site concrete|sidewalk|ada|curb|gutter|slab/)) {
+    addMissing("Concrete scope limits");
+    addQuestion("What concrete scopes are included and excluded?");
+  }
+
+  if (!serviceText.match(/quantity|quantities|cy|sf|lf|sq ft|square|linear|takeoff|plan sheet/)) {
+    addMissing("Quantities or plan sheets");
+    addQuestion("Are quantities available, or should Last Yard take off the plans?");
+  }
+
+  if (!serviceText.match(/demo|sawcut|remove|haul/)) {
+    addMissing("Demo/sawcut responsibility");
+    addQuestion("Who carries demo, sawcutting, removal, and haul-off?");
+  }
+
+  if (!serviceText.match(/excavat|base rock|rock|subgrade|prep/)) {
+    addMissing("Excavation/base rock responsibility");
+    addQuestion("Who carries excavation, subgrade prep, and base rock?");
+  }
+
+  if (!serviceText.match(/traffic|control|pedestrian|closure/)) {
+    addMissing("Traffic control responsibility");
+  }
+
+  if (!serviceText.match(/schedule|phase|phasing|start|duration/)) {
+    addMissing("Schedule/phasing");
+    addQuestion("What is the project schedule and phasing?");
+  }
+
+  if (!serviceText.match(/access|staging|laydown|parking/)) {
+    addMissing("Access/staging");
+    addQuestion("What are the access, staging, laydown, and working-hour constraints?");
+  }
+
+  if (!serviceText.match(/testing|inspection|cylinder|special inspect/)) {
+    addMissing("Testing/inspection responsibility");
+  }
+
+  if (!serviceText.match(/bond|insurance|public work|prevailing wage/)) {
+    addMissing("Bond/insurance/public work requirements if relevant");
+  } else {
+    addRisk("Bond, insurance, public work, or prevailing wage requirements need review before bidding.");
+  }
+}
+
+function calculateProposalReadinessScore(missing = [], questions = [], riskFlags = [], isBadFit = false) {
+  const score = 100 - missing.length * 4 - questions.length * 3 - riskFlags.length * 5 - (isBadFit ? 35 : 0);
+  return Math.min(100, Math.max(0, Math.round(score)));
+}
+
+function getProposalReadinessLabel(score = 0, missing = [], questions = [], isBadFit = false) {
+  if (isBadFit || score < 20) {
+    return "Not Ready";
+  }
+
+  if (score >= 80 && missing.length === 0 && questions.length <= 1) {
+    return "Ready";
+  }
+
+  return "Needs Info";
+}
+
+function getMissingInfoRecommendedNextStep(readinessLabel = "Needs Info", companyMode = "Unknown", isBadFit = false) {
+  if (isBadFit || readinessLabel === "Not Ready") {
+    return "Review fit before spending estimating time. Reject or save for later unless the scope changes.";
+  }
+
+  if (readinessLabel === "Ready") {
+    return "Ready for human review and estimate/proposal setup. Do not send without final scope and pricing review.";
+  }
+
+  return companyMode === "Last Yard Concrete"
+    ? "Ask the GC/source for missing bid documents, scope limits, quantities, schedule, and responsibilities before pricing."
+    : "Ask the customer for missing address, photos, measurements, material choices, access, and timeline before pricing.";
+}
+
+function buildMissingInfoQuestionDraft(lead = {}, companyMode = "Unknown", questions = [], photosOrDocs = []) {
+  const recipient = lead.contactName || (companyMode === "Last Yard Concrete" ? "there" : "there");
+  const intro =
+    companyMode === "Last Yard Concrete"
+      ? `Hi ${recipient}, thanks for the opportunity. Before we price this concrete scope, can you send or confirm:`
+      : `Hi ${recipient}, thanks for reaching out. Before we prepare an estimate, can you send or confirm:`;
+  const combinedQuestions = [...questions, ...photosOrDocs.map((item) => `Please send ${item.toLowerCase()}.`)]
+    .map((item) => toSafeText(item).replace(/\?$/, ""))
+    .filter(Boolean)
+    .slice(0, 6);
+
+  if (combinedQuestions.length === 0) {
+    return companyMode === "Last Yard Concrete"
+      ? "Hi there, thanks for the opportunity. I have enough to begin review, and I will follow up if any scope or plan details need clarification."
+      : "Hi there, thanks for reaching out. I have enough to begin review, and I will follow up if any scope details need clarification.";
+  }
+
+  return `${intro}\n- ${combinedQuestions.join("\n- ")}\n\nThanks.`;
+}
+
+function looksLikeSpecificAddress(text = "") {
+  return /\b\d{2,6}\s+[a-z0-9.'-]+/i.test(text);
+}
+
+function addUniqueText(items = [], value = "") {
+  const text = toSafeText(value);
+
+  if (text && !items.includes(text)) {
+    items.push(text);
+  }
+}
+
+function appendContactNote(existingNotes = "", note = "", date = getTodayInputValue()) {
+  const nextNote = toSafeText(note);
+  const existing = toSafeText(existingNotes);
+
+  if (!nextNote) {
+    return existing;
+  }
+
+  const stampedNote = `${date}: ${nextNote}`;
+  return existing ? `${existing}\n${stampedNote}` : stampedNote;
+}
+
 function sanitizeLeadFinderBackupData(data = {}) {
   const normalizedData = normalizeLeadFinderData(data);
 
@@ -1694,6 +2090,14 @@ function clampScore(value) {
   }
 
   return Math.min(100, Math.max(0, Math.round(parsed)));
+}
+
+function clampScoreOrBlank(value) {
+  if (value === "" || value == null) {
+    return "";
+  }
+
+  return clampScore(value);
 }
 
 function normalizeAiRisks(value = "") {

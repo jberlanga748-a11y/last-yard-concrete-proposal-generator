@@ -45,6 +45,8 @@ const filesToCheck = [
   "src/utils/proposals/proposalModes.js",
   "src/utils/proposals/proposalModes.test.js",
   "src/proposalData.test.js",
+  "api/ai/check-missing-info.test.js",
+  "api/ai/check-missing-info.js",
   "api/ai/draft-proposal.test.js",
   "api/ai/draft-proposal.js",
   "api/ai/extract-proposal.js",

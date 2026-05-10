@@ -760,6 +760,17 @@ create table if not exists public.leads (
   review_status text,
   reviewed_at timestamptz,
   reviewed_by text,
+  missing_info_checklist jsonb not null default '[]'::jsonb,
+  critical_questions jsonb not null default '[]'::jsonb,
+  recommended_photos_or_docs jsonb not null default '[]'::jsonb,
+  missing_info_risk_flags jsonb not null default '[]'::jsonb,
+  proposal_readiness_score numeric,
+  proposal_readiness_label text,
+  missing_info_recommended_next_step text,
+  customer_question_draft text,
+  missing_info_last_checked_at timestamptz,
+  missing_info_source text,
+  missing_info_status text,
   status text,
   notes text,
   estimate_id text,
@@ -788,6 +799,17 @@ alter table public.leads add column if not exists score_error text;
 alter table public.leads add column if not exists review_status text;
 alter table public.leads add column if not exists reviewed_at timestamptz;
 alter table public.leads add column if not exists reviewed_by text;
+alter table public.leads add column if not exists missing_info_checklist jsonb not null default '[]'::jsonb;
+alter table public.leads add column if not exists critical_questions jsonb not null default '[]'::jsonb;
+alter table public.leads add column if not exists recommended_photos_or_docs jsonb not null default '[]'::jsonb;
+alter table public.leads add column if not exists missing_info_risk_flags jsonb not null default '[]'::jsonb;
+alter table public.leads add column if not exists proposal_readiness_score numeric;
+alter table public.leads add column if not exists proposal_readiness_label text;
+alter table public.leads add column if not exists missing_info_recommended_next_step text;
+alter table public.leads add column if not exists customer_question_draft text;
+alter table public.leads add column if not exists missing_info_last_checked_at timestamptz;
+alter table public.leads add column if not exists missing_info_source text;
+alter table public.leads add column if not exists missing_info_status text;
 alter table public.leads add column if not exists estimate_id text;
 alter table public.leads add column if not exists proposal_id text;
 alter table public.leads add column if not exists packet_id text;

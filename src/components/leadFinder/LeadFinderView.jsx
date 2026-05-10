@@ -6,6 +6,7 @@ import {
   LEAD_CONTACT_METHODS,
   LEAD_AI_FIT_LABELS,
   LEAD_FOLLOW_UP_STATUSES,
+  LEAD_PROPOSAL_READINESS_LABELS,
   LEAD_REVIEW_STATUSES,
   LEAD_SOURCE_CHECK_FREQUENCIES,
   LEAD_SOURCE_PRIORITIES,
@@ -32,6 +33,7 @@ import {
   isLeadSourceDueToday,
   isLeadSourceOverdue,
   normalizeLeadFinderData,
+  normalizeLeadMissingInfoResult,
   normalizeLeadProposalDraftResult,
   normalizeLeadSource,
   previewLeadFinderBackupImport,
@@ -46,11 +48,14 @@ export function LeadFinderView({
   route = {},
   onBackToDashboard,
   onAddStarterSources,
+  onCheckMissingInfo,
+  onCheckMissingInfoWithRules,
   onDeactivateSource,
   onExportBackup,
   onGenerateProposalDraft,
   onImportBackup,
   onLeadHandoff,
+  onMarkMissingInfoRequested,
   onNavigate,
   onApplyProposalDraft,
   onSaveLead,
@@ -136,6 +141,9 @@ export function LeadFinderView({
           onApplyProposalDraft={onApplyProposalDraft}
           onLeadHandoff={onLeadHandoff}
           onGenerateProposalDraft={onGenerateProposalDraft}
+          onCheckMissingInfo={onCheckMissingInfo}
+          onCheckMissingInfoWithRules={onCheckMissingInfoWithRules}
+          onMarkMissingInfoRequested={onMarkMissingInfoRequested}
           onSaveLead={onSaveLead}
           onScoreLead={onScoreLead}
           onScoreLeadWithRules={onScoreLeadWithRules}
@@ -199,6 +207,9 @@ function LeadFinderDashboard({ data = {}, permissions = {}, onExportBackup, onIm
     ["Bad Fit Leads", stats.aiBadFitLeads],
     ["Unscored Leads", stats.unscoredLeads],
     ["Auto-Scored Today", stats.autoScoredToday],
+    ["Ready for Proposal Review", stats.readyLeads],
+    ["Need Missing Info", stats.leadsNeedingInfo],
+    ["Not Ready", stats.notReadyLeads],
     ["Contacted Leads", stats.contactedLeads],
     ["Estimates Started", stats.estimatesStarted],
     ["Proposals Started", stats.proposalsStarted],
@@ -863,6 +874,7 @@ function LeadReviewQueuePage({
   const [serviceTypeFilter, setServiceTypeFilter] = useState("all");
   const [cityFilter, setCityFilter] = useState("");
   const [reviewStatusFilter, setReviewStatusFilter] = useState("Needs Review");
+  const [readinessLabelFilter, setReadinessLabelFilter] = useState("all");
   const [localMessage, setLocalMessage] = useState("");
   const [actionLoading, setActionLoading] = useState("");
   const filteredLeads = getLeadReviewQueue(normalizedData, {
@@ -870,6 +882,7 @@ function LeadReviewQueuePage({
     city: cityFilter,
     companyMode: companyModeFilter,
     reviewStatus: reviewStatusFilter,
+    readinessLabel: readinessLabelFilter,
     scoreSource: scoreSourceFilter,
     serviceType: serviceTypeFilter,
     sourceId: sourceFilter,
@@ -996,6 +1009,7 @@ function LeadReviewQueuePage({
             ))}
           </select>
         </label>
+        <LeadFilterSelect label="Readiness" value={readinessLabelFilter} options={LEAD_PROPOSAL_READINESS_LABELS} onChange={setReadinessLabelFilter} />
         <LeadFilterSelect label="Service Type" value={serviceTypeFilter} options={LEAD_SERVICE_TYPES} onChange={setServiceTypeFilter} />
         <label>
           <span>City</span>
@@ -1055,6 +1069,7 @@ function LeadReviewQueueRow({
           <strong>{lead.title || "Untitled lead"}</strong>
           <Badge className={getLeadStatusClass(lead.aiFitLabel)}>{lead.aiFitLabel || "Unscored"}</Badge>
           <Badge>{lead.reviewStatus}</Badge>
+          <Badge className={getLeadReadinessClass(lead.proposalReadinessLabel)}>{lead.proposalReadinessLabel || "Not Checked"}</Badge>
           <Badge>{formatLeadScoreSource(lead.scoreSource)}</Badge>
         </div>
         <p>{[lead.companyName, lead.city, lead.state, lead.serviceType, lead.sourceName].filter(Boolean).join(" | ") || "No lead details entered"}</p>
@@ -1062,6 +1077,7 @@ function LeadReviewQueueRow({
       </div>
       <div className="lead-inbox-meta">
         <span>{lead.suggestedCompanyMode || "Unknown"}</span>
+        <span>{lead.proposalReadinessScore !== "" ? `Ready ${lead.proposalReadinessScore}/100` : "Readiness not checked"}</span>
         <span>{hasCompleteLeadScore(lead) ? `Scored ${formatDisplayDate(lead.scoredAt)}` : "Needs score"}</span>
         <strong>{lead.aiFitScore !== "" ? `${lead.aiFitScore}/100` : "No score"}</strong>
       </div>
@@ -1103,8 +1119,11 @@ function LeadEditPage({
   permissions = {},
   prefillSourceId = "",
   onApplyProposalDraft,
+  onCheckMissingInfo,
+  onCheckMissingInfoWithRules,
   onGenerateProposalDraft,
   onLeadHandoff,
+  onMarkMissingInfoRequested,
   onNavigate,
   onSaveLead,
   onScoreLead,
@@ -1122,6 +1141,8 @@ function LeadEditPage({
   const [proposalDraftLoading, setProposalDraftLoading] = useState(false);
   const [proposalDraftError, setProposalDraftError] = useState("");
   const [proposalDraft, setProposalDraft] = useState(null);
+  const [missingInfoLoading, setMissingInfoLoading] = useState("");
+  const [missingInfoError, setMissingInfoError] = useState("");
 
   useEffect(() => {
     setLeadDraft(createLeadDraftForEditor(existingLead, mode, normalizedData.sources, prefillSourceId));
@@ -1133,6 +1154,8 @@ function LeadEditPage({
     setProposalDraftLoading(false);
     setProposalDraftError("");
     setProposalDraft(null);
+    setMissingInfoLoading("");
+    setMissingInfoError("");
   }, [existingLead?.id, mode, prefillSourceId]);
 
   const quickStatuses = ["Good Fit", "Maybe", "Bad Fit", "Contacted"];
@@ -1258,6 +1281,96 @@ function LeadEditPage({
     }
   }
 
+  async function checkMissingInfo() {
+    setMissingInfoLoading("ai");
+    setMissingInfoError("");
+    setLocalMessage("");
+
+    try {
+      const checkedLead = await onCheckMissingInfo?.(leadDraft);
+
+      if (checkedLead) {
+        setLeadDraft(checkedLead);
+        setLocalMessage("Missing info check saved to this lead.");
+      }
+    } catch (error) {
+      setMissingInfoError(error?.message || "AI missing info check failed.");
+    } finally {
+      setMissingInfoLoading("");
+    }
+  }
+
+  async function checkMissingInfoWithRules() {
+    setMissingInfoLoading("rule_based");
+    setMissingInfoError("");
+    setLocalMessage("");
+
+    try {
+      const checkedLead = await onCheckMissingInfoWithRules?.(leadDraft);
+
+      if (checkedLead) {
+        setLeadDraft(checkedLead);
+        setLocalMessage("Rule-based missing info check saved to this lead.");
+      }
+    } catch (error) {
+      setMissingInfoError(error?.message || "Rule-based missing info check failed.");
+    } finally {
+      setMissingInfoLoading("");
+    }
+  }
+
+  async function copyCustomerQuestions() {
+    if (!leadDraft.customerQuestionDraft) {
+      setMissingInfoError("Run a missing info check before copying customer questions.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(leadDraft.customerQuestionDraft);
+      setLocalMessage("Customer questions copied.");
+    } catch {
+      setMissingInfoError("Copy failed. Select the question draft manually.");
+    }
+  }
+
+  async function markMissingInfoRequested() {
+    setMissingInfoLoading("requested");
+    setMissingInfoError("");
+    setLocalMessage("");
+
+    try {
+      const updatedLead = await onMarkMissingInfoRequested?.(leadDraft);
+
+      if (updatedLead) {
+        setLeadDraft(updatedLead);
+        setLocalMessage("Missing info requested. Follow-up set for tomorrow.");
+      }
+    } catch (error) {
+      setMissingInfoError(error?.message || "Could not mark missing info requested.");
+    } finally {
+      setMissingInfoLoading("");
+    }
+  }
+
+  function clearMissingInfoCheck() {
+    setLeadDraft({
+      ...leadDraft,
+      missingInfoChecklist: [],
+      criticalQuestions: [],
+      recommendedPhotosOrDocs: [],
+      missingInfoRiskFlags: [],
+      proposalReadinessScore: "",
+      proposalReadinessLabel: "",
+      missingInfoRecommendedNextStep: "",
+      customerQuestionDraft: "",
+      missingInfoLastCheckedAt: "",
+      missingInfoSource: "",
+      missingInfoStatus: "Not Checked",
+    });
+    setMissingInfoError("");
+    setLocalMessage("Missing info check cleared. Save the lead to keep this change.");
+  }
+
   async function applyProposalDraft() {
     if (!proposalDraft) {
       setProposalDraftError("Generate a proposal draft before applying it.");
@@ -1353,6 +1466,16 @@ function LeadEditPage({
             </button>
           ) : null}
           {mode !== "new" ? (
+            <button type="button" onClick={checkMissingInfo} disabled={!permissions.editBid || Boolean(missingInfoLoading)}>
+              {missingInfoLoading === "ai" ? "Checking..." : "Check Missing Info"}
+            </button>
+          ) : null}
+          {mode !== "new" ? (
+            <button type="button" onClick={checkMissingInfoWithRules} disabled={!permissions.editBid || Boolean(missingInfoLoading)}>
+              Rule-Based Missing Info Check
+            </button>
+          ) : null}
+          {mode !== "new" ? (
             <button type="button" onClick={generateProposalDraft} disabled={!permissions.editBid || proposalDraftLoading}>
               {proposalDraftLoading ? "Generating..." : "Generate Proposal Draft"}
             </button>
@@ -1364,6 +1487,7 @@ function LeadEditPage({
       </div>
       {localMessage ? <p className="backup-message">{localMessage}</p> : null}
       {aiScoreError ? <p className="backup-message backup-message-error">{aiScoreError}</p> : null}
+      {missingInfoError ? <p className="backup-message backup-message-error">{missingInfoError}</p> : null}
       {proposalDraftError ? <p className="backup-message backup-message-error">{proposalDraftError}</p> : null}
       {handoffError ? <p className="backup-message backup-message-error">{handoffError}</p> : null}
       <fieldset className="editor-permission-fieldset" disabled={!permissions.editBid}>
@@ -1384,6 +1508,18 @@ function LeadEditPage({
             permissions={permissions}
             onHandoff={createLeadHandoff}
             onNavigate={onNavigate}
+          />
+        ) : null}
+        {mode !== "new" ? (
+          <LeadMissingInfoCard
+            isLoading={missingInfoLoading}
+            lead={leadDraft}
+            permissions={permissions}
+            onCheckAi={checkMissingInfo}
+            onCheckRules={checkMissingInfoWithRules}
+            onClear={clearMissingInfoCheck}
+            onCopyQuestions={copyCustomerQuestions}
+            onMarkRequested={markMissingInfoRequested}
           />
         ) : null}
         <div className="bid-form-sections">
@@ -1514,6 +1650,109 @@ function AiScoreSummary({ lead = {} }) {
       </small>
     </div>
   );
+}
+
+function LeadMissingInfoCard({
+  isLoading = "",
+  lead = {},
+  permissions = {},
+  onCheckAi,
+  onCheckRules,
+  onClear,
+  onCopyQuestions,
+  onMarkRequested,
+}) {
+  const normalizedResult = normalizeLeadMissingInfoResult(lead);
+  const hasCheck = Boolean(lead.missingInfoLastCheckedAt || normalizedResult.proposalReadinessLabel || normalizedResult.missingInfoChecklist.length);
+  const sections = [
+    ["Missing Information", normalizedResult.missingInfoChecklist],
+    ["Critical Questions", normalizedResult.criticalQuestions],
+    ["Recommended Photos / Docs", normalizedResult.recommendedPhotosOrDocs],
+    ["Risk Flags", normalizedResult.missingInfoRiskFlags],
+  ];
+
+  return (
+    <LeadFormSection title="Missing Info / Proposal Readiness">
+      <div className="lead-ai-score-card">
+        <div>
+          <span>Readiness Score</span>
+          <strong>{normalizedResult.proposalReadinessScore !== "" ? `${normalizedResult.proposalReadinessScore}/100` : "Not checked"}</strong>
+        </div>
+        <div>
+          <span>Readiness Label</span>
+          <Badge className={getLeadReadinessClass(normalizedResult.proposalReadinessLabel)}>
+            {normalizedResult.proposalReadinessLabel || "Not Checked"}
+          </Badge>
+        </div>
+        <div>
+          <span>Missing Info Status</span>
+          <strong>{lead.missingInfoStatus || "Not Checked"}</strong>
+        </div>
+        <div>
+          <span>Source</span>
+          <strong>{formatLeadScoreSource(lead.missingInfoSource)}</strong>
+        </div>
+        {normalizedResult.missingInfoRecommendedNextStep ? (
+          <p>
+            <strong>Recommended next step:</strong> {normalizedResult.missingInfoRecommendedNextStep}
+          </p>
+        ) : (
+          <p>No missing info check has been saved yet.</p>
+        )}
+        {lead.missingInfoLastCheckedAt ? <small>Checked {formatLeadScoredAt(lead.missingInfoLastCheckedAt)}.</small> : null}
+      </div>
+      <div className="lead-proposal-draft-review">
+        <div className="settings-actions">
+          <button type="button" onClick={onCheckAi} disabled={!permissions.editBid || Boolean(isLoading)}>
+            {isLoading === "ai" ? "Checking..." : "Check Missing Info"}
+          </button>
+          <button type="button" onClick={onCheckRules} disabled={!permissions.editBid || Boolean(isLoading)}>
+            {isLoading === "rule_based" ? "Checking..." : "Rule-Based Missing Info Check"}
+          </button>
+          <button type="button" onClick={onCopyQuestions} disabled={!lead.customerQuestionDraft}>
+            Copy Customer Questions
+          </button>
+          <button type="button" onClick={onMarkRequested} disabled={!permissions.editBid || Boolean(isLoading) || !hasCheck}>
+            {isLoading === "requested" ? "Updating..." : "Mark Missing Info Requested"}
+          </button>
+          <button type="button" onClick={onClear} disabled={!permissions.editBid || !hasCheck}>
+            Clear Missing Info Check
+          </button>
+        </div>
+        {sections.map(([title, items]) =>
+          items.length > 0 ? (
+            <div className="lead-proposal-draft-section" key={title}>
+              <strong>{title}</strong>
+              <ul>
+                {items.map((item, index) => (
+                  <li key={`${title}-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null,
+        )}
+        {lead.customerQuestionDraft ? (
+          <div className="lead-proposal-draft-section">
+            <strong>Customer / GC Question Draft</strong>
+            <p>{lead.customerQuestionDraft}</p>
+          </div>
+        ) : null}
+        <small>Questions are drafts only. Review before sending anything to a customer, GC, or source.</small>
+      </div>
+    </LeadFormSection>
+  );
+}
+
+function getLeadReadinessClass(label = "") {
+  if (label === "Ready") {
+    return "status-won";
+  }
+
+  if (label === "Not Ready") {
+    return "status-lost";
+  }
+
+  return "status-draft";
 }
 
 function formatLeadScoreSource(scoreSource = "") {

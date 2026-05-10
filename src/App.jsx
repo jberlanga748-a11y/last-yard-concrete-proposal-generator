@@ -184,8 +184,10 @@ import { getAuthGateState, getLogoutCleanupState } from "./utils/authSession.js"
 import {
   applyLeadHandoff,
   applyLeadAiScore,
+  applyLeadMissingInfoCheck,
   addLeadFinderStarterSources as addLeadFinderStarterSourcesRecord,
   autoScoreLeadIfNeeded,
+  checkLeadMissingInfoWithLocalRules,
   createLeadFinderBackup,
   createEmptyLead,
   deactivateLeadSource as deactivateLeadSourceRecord,
@@ -196,8 +198,10 @@ import {
   mergeLeadFinderData,
   normalizeLead,
   normalizeLeadFinderData,
+  normalizeLeadMissingInfoResult,
   normalizeLeadProposalDraftResult,
   normalizeLeadSource,
+  markLeadMissingInfoRequested as markLeadMissingInfoRequestedRecord,
   scoreUnscoredLeads,
   scoreLeadWithLocalRules,
   upsertLead,
@@ -3089,6 +3093,58 @@ export default function App() {
     return await saveLeadScoreResult(normalizedLead, score, "Rule-based test score", "rule_based");
   }
 
+  async function checkLeadMissingInfoWithAi(lead) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    if (!lead?.id) {
+      setLeadFinderMessage("Save this lead before checking missing info.");
+      return null;
+    }
+
+    const normalizedLead = normalizeLead(lead);
+
+    setLeadFinderMessage(`Checking missing info for ${normalizedLead.title || "lead"} with AI...`);
+
+    try {
+      const response = await fetch("/api/ai/check-missing-info", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ lead: normalizedLead }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "AI missing info check failed.");
+      }
+
+      return await saveLeadMissingInfoResult(normalizedLead, data.result, "AI missing info check", "ai");
+    } catch (error) {
+      const message = error?.message || "AI missing info check failed.";
+      setLeadFinderMessage(message);
+      throw new Error(message);
+    }
+  }
+
+  async function checkLeadMissingInfoWithRules(lead) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    if (!lead?.id) {
+      setLeadFinderMessage("Save this lead before checking missing info.");
+      return null;
+    }
+
+    const normalizedLead = normalizeLead(lead);
+    const result = checkLeadMissingInfoWithLocalRules(normalizedLead);
+
+    return await saveLeadMissingInfoResult(normalizedLead, result, "Rule-based missing info check", "rule_based");
+  }
+
   async function saveLeadScoreResult(lead, result, scoreLabel = "AI score", scoreSource = "ai") {
     const scoredLead = applyLeadAiScore(lead, {
       ...result,
@@ -3106,6 +3162,50 @@ export default function App() {
     });
 
     return getLeadById(nextLeadFinderData, scoredLead.id) || scoredLead;
+  }
+
+  async function saveLeadMissingInfoResult(lead, result, label = "Missing info check", source = "ai") {
+    const checkedLead = applyLeadMissingInfoCheck(lead, {
+      ...normalizeLeadMissingInfoResult(result),
+      missingInfoSource: result?.missingInfoSource || source,
+    }, source);
+    const nextLeadFinderData = upsertLead(leadFinderData, checkedLead, leadFinderData.sources);
+
+    await commitLeadFinderData(nextLeadFinderData, `Saved ${label} for ${checkedLead.title || "lead"} locally.`);
+    recordActivity({
+      action: `${label} saved`,
+      entityType: "lead_finder",
+      entityId: checkedLead.id,
+      entityLabel: checkedLead.title || "Lead",
+      notes: `${checkedLead.proposalReadinessLabel || "Needs Info"} | ${checkedLead.proposalReadinessScore || 0}`,
+    });
+
+    return getLeadById(nextLeadFinderData, checkedLead.id) || checkedLead;
+  }
+
+  async function markLeadMissingInfoRequested(lead) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    if (!lead?.id) {
+      setLeadFinderMessage("Save this lead before marking missing info requested.");
+      return null;
+    }
+
+    const updatedLead = markLeadMissingInfoRequestedRecord(lead);
+    const nextLeadFinderData = upsertLead(leadFinderData, updatedLead, leadFinderData.sources);
+
+    await commitLeadFinderData(nextLeadFinderData, `Marked missing info requested for ${updatedLead.title || "lead"}.`);
+    recordActivity({
+      action: "Lead missing info requested",
+      entityType: "lead_finder",
+      entityId: updatedLead.id,
+      entityLabel: updatedLead.title || "Lead",
+      notes: updatedLead.nextFollowUpDate ? `Follow-up ${updatedLead.nextFollowUpDate}` : "Waiting on response",
+    });
+
+    return getLeadById(nextLeadFinderData, updatedLead.id) || updatedLead;
   }
 
   async function generateLeadProposalDraft(lead) {
@@ -7076,11 +7176,14 @@ export default function App() {
           onAddStarterSources={addLeadFinderStarterSources}
           onDeactivateSource={deactivateLeadSource}
           onExportBackup={exportLeadFinderBackup}
+          onCheckMissingInfo={checkLeadMissingInfoWithAi}
+          onCheckMissingInfoWithRules={checkLeadMissingInfoWithRules}
           onGenerateProposalDraft={generateLeadProposalDraft}
           onImportBackup={importLeadFinderBackup}
           onNavigate={navigate}
           onApplyProposalDraft={applyLeadProposalDraft}
           onLeadHandoff={handleLeadHandoff}
+          onMarkMissingInfoRequested={markLeadMissingInfoRequested}
           onSaveLead={saveLead}
           onSaveSource={saveLeadSource}
           onScoreAllUnscoredLeads={scoreAllUnscoredLeads}
