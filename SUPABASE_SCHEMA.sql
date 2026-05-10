@@ -697,3 +697,171 @@ using (
       and public.current_user_is_company_admin(companies.id)
   )
 );
+
+-- Phase 34: AI Lead Finder foundation
+-- The app currently stores Lead Finder data in company_settings.leadFinder to
+-- match the local-first settings sync pattern. These tables prepare Supabase
+-- for a future direct cloud-sync/search worker without exposing AI or web
+-- search behavior yet.
+
+create table if not exists public.lead_sources (
+  id text primary key,
+  company_id uuid references public.companies(id) on delete cascade not null,
+  name text,
+  source_type text,
+  url text,
+  company_type text,
+  location_focus text,
+  trade_focus text,
+  active boolean not null default true,
+  notes text,
+  check_frequency text,
+  last_checked_date date,
+  next_check_date date,
+  source_status text,
+  source_priority text,
+  source_notes text,
+  default_service_type text,
+  default_company_mode text,
+  source_data jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.leads (
+  id text primary key,
+  company_id uuid references public.companies(id) on delete cascade not null,
+  title text,
+  source_id text references public.lead_sources(id) on delete set null,
+  source_name text,
+  source_url text,
+  company_name text,
+  city text,
+  state text,
+  service_type text,
+  project_type text,
+  due_date date,
+  contact_name text,
+  contact_email text,
+  contact_phone text,
+  description text,
+  estimated_value numeric,
+  capacity_fit text,
+  ai_fit_score numeric,
+  ai_fit_label text,
+  ai_fit_reason text,
+  ai_risks text,
+  ai_next_step text,
+  suggested_company_mode text,
+  status text,
+  notes text,
+  estimate_id text,
+  proposal_id text,
+  packet_id text,
+  contact_id text,
+  handoff_history jsonb not null default '[]'::jsonb,
+  last_contact_date date,
+  last_contact_method text,
+  next_follow_up_date date,
+  follow_up_status text,
+  contact_notes text,
+  no_follow_up_reason text,
+  lead_data jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.leads add column if not exists ai_fit_label text;
+alter table public.leads add column if not exists ai_risks text;
+alter table public.leads add column if not exists suggested_company_mode text;
+alter table public.leads add column if not exists estimate_id text;
+alter table public.leads add column if not exists proposal_id text;
+alter table public.leads add column if not exists packet_id text;
+alter table public.leads add column if not exists contact_id text;
+alter table public.leads add column if not exists handoff_history jsonb not null default '[]'::jsonb;
+alter table public.leads add column if not exists last_contact_date date;
+alter table public.leads add column if not exists last_contact_method text;
+alter table public.leads add column if not exists next_follow_up_date date;
+alter table public.leads add column if not exists follow_up_status text;
+alter table public.leads add column if not exists contact_notes text;
+alter table public.leads add column if not exists no_follow_up_reason text;
+alter table public.lead_sources add column if not exists check_frequency text;
+alter table public.lead_sources add column if not exists last_checked_date date;
+alter table public.lead_sources add column if not exists next_check_date date;
+alter table public.lead_sources add column if not exists source_status text;
+alter table public.lead_sources add column if not exists source_priority text;
+alter table public.lead_sources add column if not exists source_notes text;
+alter table public.lead_sources add column if not exists default_service_type text;
+alter table public.lead_sources add column if not exists default_company_mode text;
+
+create index if not exists lead_sources_company_id_idx on public.lead_sources(company_id);
+create index if not exists lead_sources_company_active_idx on public.lead_sources(company_id, active);
+create index if not exists lead_sources_company_next_check_date_idx on public.lead_sources(company_id, next_check_date);
+create index if not exists lead_sources_company_source_status_idx on public.lead_sources(company_id, source_status);
+create index if not exists lead_sources_company_source_priority_idx on public.lead_sources(company_id, source_priority);
+create index if not exists leads_company_id_idx on public.leads(company_id);
+create index if not exists leads_company_status_idx on public.leads(company_id, status);
+create index if not exists leads_company_service_type_idx on public.leads(company_id, service_type);
+create index if not exists leads_company_due_date_idx on public.leads(company_id, due_date);
+create index if not exists leads_source_id_idx on public.leads(source_id);
+create index if not exists leads_estimate_id_idx on public.leads(estimate_id);
+create index if not exists leads_proposal_id_idx on public.leads(proposal_id);
+create index if not exists leads_packet_id_idx on public.leads(packet_id);
+create index if not exists leads_contact_id_idx on public.leads(contact_id);
+create index if not exists leads_company_follow_up_status_idx on public.leads(company_id, follow_up_status);
+create index if not exists leads_company_next_follow_up_date_idx on public.leads(company_id, next_follow_up_date);
+
+drop trigger if exists set_lead_sources_updated_at on public.lead_sources;
+create trigger set_lead_sources_updated_at
+before update on public.lead_sources
+for each row execute function public.set_updated_at();
+
+drop trigger if exists set_leads_updated_at on public.leads;
+create trigger set_leads_updated_at
+before update on public.leads
+for each row execute function public.set_updated_at();
+
+alter table public.lead_sources enable row level security;
+alter table public.leads enable row level security;
+
+drop policy if exists "Users can read lead sources" on public.lead_sources;
+create policy "Users can read lead sources"
+on public.lead_sources for select
+using (public.current_user_can_access_company(company_id));
+
+drop policy if exists "Users can insert lead sources" on public.lead_sources;
+create policy "Users can insert lead sources"
+on public.lead_sources for insert
+with check (public.current_user_can_edit_company(company_id));
+
+drop policy if exists "Users can update lead sources" on public.lead_sources;
+create policy "Users can update lead sources"
+on public.lead_sources for update
+using (public.current_user_can_edit_company(company_id))
+with check (public.current_user_can_edit_company(company_id));
+
+drop policy if exists "Users can delete lead sources" on public.lead_sources;
+create policy "Users can delete lead sources"
+on public.lead_sources for delete
+using (public.current_user_is_company_admin(company_id));
+
+drop policy if exists "Users can read leads" on public.leads;
+create policy "Users can read leads"
+on public.leads for select
+using (public.current_user_can_access_company(company_id));
+
+drop policy if exists "Users can insert leads" on public.leads;
+create policy "Users can insert leads"
+on public.leads for insert
+with check (public.current_user_can_edit_company(company_id));
+
+drop policy if exists "Users can update leads" on public.leads;
+create policy "Users can update leads"
+on public.leads for update
+using (public.current_user_can_edit_company(company_id))
+with check (public.current_user_can_edit_company(company_id));
+
+drop policy if exists "Users can delete leads" on public.leads;
+create policy "Users can delete leads"
+on public.leads for delete
+using (public.current_user_is_company_admin(company_id));

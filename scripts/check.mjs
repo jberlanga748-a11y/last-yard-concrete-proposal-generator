@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 const filesToCheck = [
   "src/proposalData.js",
   "src/App.customerPortal.test.js",
+  "src/App.leadFinder.test.js",
   "src/App.performance.test.js",
   "src/supabaseClient.js",
   "src/utils/cloud/cloudSync.js",
@@ -15,6 +16,8 @@ const filesToCheck = [
   "src/utils/cloud/teamAccess.js",
   "src/utils/authSession.js",
   "src/utils/authSession.test.js",
+  "src/utils/leadFinder.js",
+  "src/utils/leadFinder.test.js",
   "src/utils/customerPortal.js",
   "src/utils/customerPortal.test.js",
   "src/utils/formatting/display.js",
@@ -42,7 +45,11 @@ const filesToCheck = [
   "src/utils/proposals/proposalModes.js",
   "src/utils/proposals/proposalModes.test.js",
   "src/proposalData.test.js",
+  "api/ai/draft-proposal.test.js",
+  "api/ai/draft-proposal.js",
   "api/ai/extract-proposal.js",
+  "api/ai/score-lead.test.js",
+  "api/ai/score-lead.js",
   "api/customer-proposal.js",
 ];
 

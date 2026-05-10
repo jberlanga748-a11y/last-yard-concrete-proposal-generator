@@ -1,0 +1,136 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
+const chromeSource = readFileSync(new URL("./components/shell/AppChrome.jsx", import.meta.url), "utf8");
+const leadFinderViewSource = readFileSync(new URL("./components/leadFinder/LeadFinderView.jsx", import.meta.url), "utf8");
+const leadFinderSource = readFileSync(new URL("./utils/leadFinder.js", import.meta.url), "utf8");
+const schemaSource = readFileSync(new URL("../SUPABASE_SCHEMA.sql", import.meta.url), "utf8");
+const scoreLeadApiSource = readFileSync(new URL("../api/ai/score-lead.js", import.meta.url), "utf8");
+const draftProposalApiSource = readFileSync(new URL("../api/ai/draft-proposal.js", import.meta.url), "utf8");
+
+test("app shell exposes AI Lead Finder navigation and routes", () => {
+  assert.match(chromeSource, /AI Lead Finder/);
+  assert.match(chromeSource, /onNavigate\("\/lead-finder"\)/);
+  assert.match(appSource, /segments\[0\] === "lead-finder"/);
+  assert.match(appSource, /section: "dailyCheck"/);
+  assert.match(appSource, /section: "sources"/);
+  assert.match(appSource, /section: "leads"/);
+  assert.match(appSource, /section: "newLead"/);
+  assert.match(appSource, /section: "leadDetail"/);
+  assert.match(appSource, /<LeadFinderView/);
+});
+
+test("lead finder data follows local-first company settings persistence", () => {
+  assert.match(appSource, /const leadFinderStorageKey = "last-yard-lead-finder-v1"/);
+  assert.match(appSource, /loadLeadFinderData\(\)/);
+  assert.match(appSource, /saveLeadFinderData\(leadFinderData\)/);
+  assert.match(appSource, /leadFinder: normalizeLeadFinderData/);
+  assert.match(appSource, /extractLeadFinderFromSettingsPaths/);
+  assert.match(appSource, /source\.company\?\.leadFinder/);
+  assert.match(appSource, /company: isPlainObject\(settings\.company\)/);
+  assert.match(appSource, /getLeadFinderFromSettings/);
+  assert.match(appSource, /commitLeadFinderData/);
+});
+
+test("lead finder screens include dashboard sources inbox new lead and detail behavior", () => {
+  assert.match(leadFinderViewSource, /function LeadFinderDashboard/);
+  assert.match(leadFinderViewSource, /function LeadFinderBackupTools/);
+  assert.match(leadFinderViewSource, /function LeadDailySourceCheckPage/);
+  assert.match(leadFinderViewSource, /function LeadSourcesPage/);
+  assert.match(leadFinderViewSource, /function LeadInboxPage/);
+  assert.match(leadFinderViewSource, /function LeadEditPage/);
+  assert.match(leadFinderViewSource, /function LeadNextActions/);
+  assert.match(leadFinderViewSource, /Mark \{status\}/);
+  assert.match(leadFinderViewSource, /New Lead/);
+  assert.match(leadFinderViewSource, /Daily Source Check/);
+  assert.match(leadFinderViewSource, /Mark Checked/);
+  assert.match(leadFinderViewSource, /Add Lead From This Source/);
+  assert.match(leadFinderViewSource, /Open Source/);
+  assert.match(leadFinderViewSource, /No source URL saved/);
+  assert.match(leadFinderViewSource, /getLeadSourceOpenUrl/);
+  assert.match(leadFinderViewSource, /window\.open\(openSourceUrl, "_blank", "noopener,noreferrer"\)/);
+  assert.match(leadFinderViewSource, /AI-Ready Fit Fields/);
+  assert.match(leadFinderViewSource, /Next Actions/);
+  assert.match(leadFinderViewSource, /Follow-Up/);
+  assert.match(leadFinderViewSource, /Mark Contacted/);
+  assert.match(leadFinderViewSource, /Follow Up Tomorrow/);
+  assert.match(leadFinderViewSource, /Waiting on Response/);
+  assert.match(leadFinderViewSource, /Create Residential Estimate/);
+  assert.match(leadFinderViewSource, /Create Commercial Proposal/);
+  assert.match(leadFinderViewSource, /Create GC Packet \/ Bid Packet/);
+  assert.match(leadFinderViewSource, /Add \/ Link Contact/);
+  assert.match(leadFinderViewSource, /Score This Lead/);
+  assert.match(leadFinderViewSource, /Rule-Based Test Score/);
+  assert.match(leadFinderViewSource, /Generate Proposal Draft/);
+  assert.match(leadFinderViewSource, /Apply to New Proposal/);
+  assert.match(leadFinderViewSource, /Copy Draft/);
+  assert.match(leadFinderViewSource, /function LeadProposalDraftReview/);
+  assert.match(leadFinderViewSource, /Live AI scoring: not configured/);
+  assert.match(leadFinderViewSource, /Export Lead Finder Data/);
+  assert.match(leadFinderViewSource, /Import Lead Finder Data/);
+  assert.match(leadFinderViewSource, /Confirm Import/);
+  assert.match(leadFinderViewSource, /Starter Source Pack/);
+  assert.match(leadFinderViewSource, /Add Starter Sources/);
+  assert.match(leadFinderViewSource, /previewLeadFinderStarterSources/);
+  assert.match(appSource, /exportLeadFinderBackup/);
+  assert.match(appSource, /importLeadFinderBackup/);
+  assert.match(appSource, /addLeadFinderStarterSources/);
+  assert.match(appSource, /window\.confirm\(\s*`Add \$\{preview\.sourcesToAdd\} Starter Source Pack sources/);
+  assert.match(leadFinderSource, /createLeadFinderBackup/);
+  assert.match(leadFinderSource, /mergeLeadFinderImportData/);
+  assert.match(leadFinderSource, /LEAD_FINDER_STARTER_SOURCE_COUNT = 28/);
+});
+
+test("lead finder handoff uses existing proposal and contact paths", () => {
+  assert.match(appSource, /handleLeadHandoff/);
+  assert.match(appSource, /generateLeadProposalDraft/);
+  assert.match(appSource, /applyLeadProposalDraft/);
+  assert.match(appSource, /fetch\("\/api\/ai\/draft-proposal"/);
+  assert.match(appSource, /createProposalFromLeadHandoff/);
+  assert.match(appSource, /createProposalFromLeadHandoff\(\s*normalizedLead,\s*"proposal_draft"/);
+  assert.match(appSource, /createBlankProposalByTemplate\(templateType, existingProposals, companySettings\)/);
+  assert.match(appSource, /NEW_PROPOSAL_TEMPLATE_TYPES\.RESIDENTIAL_SIMPLE_ESTIMATE/);
+  assert.match(appSource, /NEW_PROPOSAL_TEMPLATE_TYPES\.COMMERCIAL_SUBCONTRACTOR/);
+  assert.match(appSource, /NEW_PROPOSAL_TEMPLATE_TYPES\.GC_PRIME_PACKET/);
+  assert.match(appSource, /applyLeadHandoff/);
+  assert.match(appSource, /normalizedLead\.proposalId[\s\S]*Create another proposal draft anyway/);
+  assert.match(leadFinderSource, /Estimate Started/);
+  assert.match(leadFinderSource, /Proposal Started/);
+  assert.match(leadFinderSource, /type === "proposal_draft"/);
+  assert.match(leadFinderSource, /normalizeLeadProposalDraftResult/);
+  assert.match(appSource, /findMatchingContactForLead/);
+  assert.match(appSource, /navigate\(`\/proposals\/\$\{proposalFromLead\.id\}`/);
+});
+
+test("lead finder scoring is server-backed and does not add daily search yet", () => {
+  assert.match(appSource, /fetch\("\/api\/ai\/score-lead"/);
+  assert.match(appSource, /scoreLeadWithLocalRules/);
+  assert.match(scoreLeadApiSource, /process\.env\.OPENAI_API_KEY/);
+  assert.doesNotMatch(scoreLeadApiSource, /VITE_OPENAI_API_KEY|import\.meta\.env/);
+  assert.match(draftProposalApiSource, /process\.env\.OPENAI_API_KEY/);
+  assert.match(draftProposalApiSource, /AI proposal drafting is not configured yet/);
+  assert.match(draftProposalApiSource, /Do not invent prices/);
+  assert.doesNotMatch(draftProposalApiSource, /VITE_OPENAI_API_KEY|import\.meta\.env/);
+  assert.doesNotMatch(appSource, /lead-finder\/search|dailyLeadSearch|scrapeLead/i);
+});
+
+test("Supabase schema includes future lead finder tables and RLS policies", () => {
+  assert.match(schemaSource, /create table if not exists public\.lead_sources/);
+  assert.match(schemaSource, /create table if not exists public\.leads/);
+  assert.match(schemaSource, /lead_sources_company_active_idx/);
+  assert.match(schemaSource, /check_frequency text/);
+  assert.match(schemaSource, /next_check_date date/);
+  assert.match(schemaSource, /source_priority text/);
+  assert.match(schemaSource, /leads_company_status_idx/);
+  assert.match(schemaSource, /ai_fit_label text/);
+  assert.match(schemaSource, /suggested_company_mode text/);
+  assert.match(schemaSource, /estimate_id text/);
+  assert.match(schemaSource, /handoff_history jsonb/);
+  assert.match(schemaSource, /next_follow_up_date date/);
+  assert.match(schemaSource, /follow_up_status text/);
+  assert.match(schemaSource, /Users can read lead sources/);
+  assert.match(schemaSource, /Users can insert leads/);
+  assert.match(schemaSource, /current_user_can_edit_company\(company_id\)/);
+});

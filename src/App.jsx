@@ -4,6 +4,7 @@ import { LoginView } from "./components/auth/LoginView.jsx";
 import { BackupRestorePanel } from "./components/backup/BackupRestorePanel.jsx";
 import { BackupView } from "./components/backup/BackupView.jsx";
 import { Badge, StatusBadge } from "./components/common/Badges.jsx";
+import { LeadFinderView } from "./components/leadFinder/LeadFinderView.jsx";
 import { CloudStatusCard } from "./components/settings/CloudStatusCard.jsx";
 import { TeamAccessPanel } from "./components/settings/TeamAccessPanel.jsx";
 import { AppChrome } from "./components/shell/AppChrome.jsx";
@@ -181,6 +182,27 @@ import {
 } from "./utils/activityLog.js";
 import { getAuthGateState, getLogoutCleanupState } from "./utils/authSession.js";
 import {
+  applyLeadHandoff,
+  applyLeadAiScore,
+  addLeadFinderStarterSources as addLeadFinderStarterSourcesRecord,
+  createLeadFinderBackup,
+  createEmptyLead,
+  deactivateLeadSource as deactivateLeadSourceRecord,
+  getLeadFinderBackupFileName,
+  getLeadById,
+  previewLeadFinderStarterSources,
+  mergeLeadFinderImportData,
+  mergeLeadFinderData,
+  normalizeLead,
+  normalizeLeadFinderData,
+  normalizeLeadProposalDraftResult,
+  normalizeLeadSource,
+  scoreLeadWithLocalRules,
+  upsertLead,
+  upsertLeadSource,
+  updateLeadStatus as updateLeadStatusRecord,
+} from "./utils/leadFinder.js";
+import {
   applyCustomerSelectionToProposal,
   buildCustomerApprovalRecord,
   buildCustomerChangeRequestRecord,
@@ -228,6 +250,7 @@ const companySettingsStorageKey = "last-yard-company-settings-v1";
 const contactsStorageKey = "last-yard-contacts-v1";
 const priceLibraryStorageKey = "last-yard-price-library-v1";
 const bidsStorageKey = "last-yard-bids-v1";
+const leadFinderStorageKey = "last-yard-lead-finder-v1";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
 const demoContactId = "demo-contact-abc-prime-contractors";
@@ -594,6 +617,11 @@ export default function App() {
   const [priceLibrary, setPriceLibrary] = useState(() => loadPriceLibrary());
   const [priceLibraryMessage, setPriceLibraryMessage] = useState("");
   const [savedBids, setSavedBids] = useState(() => loadSavedBids());
+  const [leadFinderData, setLeadFinderData] = useState(() =>
+    getLeadFinderFromSettings(initialAppState.companySettings, loadLeadFinderData()),
+  );
+  const [leadFinderMessage, setLeadFinderMessage] = useState("");
+  const [leadAiConfigured, setLeadAiConfigured] = useState(null);
   const [activityLog, setActivityLog] = useState(() => loadActivityLogFromLocalStorage());
   const [bidDraft, setBidDraft] = useState(() => createEmptyBid());
   const [bidEditorOpen, setBidEditorOpen] = useState(false);
@@ -653,6 +681,7 @@ export default function App() {
   const isLoginView = route.view === "login";
   const isPriceLibraryView = route.view === "priceLibrary";
   const isBidsView = route.view === "bids";
+  const isLeadFinderView = route.view === "leadFinder";
   const isActivityView = route.view === "activity";
   const isCustomerPortalView = route.view === "customerPortal";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
@@ -707,6 +736,39 @@ export default function App() {
   useEffect(() => {
     saveStoredBids(savedBids);
   }, [savedBids]);
+
+  useEffect(() => {
+    saveLeadFinderData(leadFinderData);
+  }, [leadFinderData]);
+
+  useEffect(() => {
+    if (!isLeadFinderView) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function checkLeadAiConfiguration() {
+      try {
+        const response = await fetch("/api/ai/score-lead", { method: "GET" });
+        const data = await response.json().catch(() => ({}));
+
+        if (!cancelled) {
+          setLeadAiConfigured(Boolean(response.ok && data.configured));
+        }
+      } catch {
+        if (!cancelled) {
+          setLeadAiConfigured(false);
+        }
+      }
+    }
+
+    checkLeadAiConfiguration();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLeadFinderView]);
 
   useEffect(() => {
     saveActivityLogToLocalStorage(activityLog);
@@ -982,6 +1044,7 @@ export default function App() {
     setBidSmartPasteResult(null);
     setBackupMessage("");
     setAssetUploadMessage("");
+    setLeadFinderMessage("");
   }, [route.path]);
 
   useEffect(() => {
@@ -998,7 +1061,8 @@ export default function App() {
         isLoginView ||
         isActivityView ||
         isPriceLibraryView ||
-        isBidsView
+        isBidsView ||
+        isLeadFinderView
       ) {
         return;
       }
@@ -1013,7 +1077,7 @@ export default function App() {
 
     window.addEventListener("keydown", handlePrintShortcut);
     return () => window.removeEventListener("keydown", handlePrintShortcut);
-  }, [isActivityView, isBackupView, isBidsView, isContactsView, isDashboardView, isListView, isLoginView, isPriceLibraryView, isSettingsView, proposalDraft]);
+  }, [isActivityView, isBackupView, isBidsView, isContactsView, isDashboardView, isLeadFinderView, isListView, isLoginView, isPriceLibraryView, isSettingsView, proposalDraft]);
 
   useEffect(() => {
     if (validationNotice && proposalValidation.errors.length === 0) {
@@ -1694,7 +1758,7 @@ export default function App() {
       return;
     }
 
-    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog);
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog, leadFinderData);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     setSettingsMessage(getCloudReadyMessage(authUser, "Company settings saved locally. Syncing to cloud...", "Company settings saved locally."));
@@ -1726,7 +1790,11 @@ export default function App() {
     }));
 
     try {
-      const companyRecord = await ensureCloudCompany(user, getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog), companyCloudDeps);
+      const companyRecord = await ensureCloudCompany(
+        user,
+        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData),
+        companyCloudDeps,
+      );
 
       if (isCancelled()) {
         return;
@@ -1734,7 +1802,7 @@ export default function App() {
 
       const settingsResult = await loadOrSeedCloudCompanySettings(
         companyRecord.id,
-        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog),
+        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData),
         companyCloudDeps,
       );
 
@@ -1763,10 +1831,12 @@ export default function App() {
       const syncedPriceLibrary = getPriceLibraryFromSettings(settingsResult.settings, priceLibrary);
       const syncedBids = getBidsFromSettings(settingsResult.settings, savedBids);
       const syncedActivityLog = getActivityLogFromSettings(settingsResult.settings, activityLog);
-      const syncedSettings = getSettingsWithPriceLibraryAndBids(settingsResult.settings, syncedPriceLibrary, syncedBids, syncedActivityLog);
+      const syncedLeadFinder = getLeadFinderFromSettings(settingsResult.settings, leadFinderData);
+      const syncedSettings = getSettingsWithPriceLibraryAndBids(settingsResult.settings, syncedPriceLibrary, syncedBids, syncedActivityLog, syncedLeadFinder);
 
       setPriceLibrary(syncedPriceLibrary);
       setSavedBids(syncedBids);
+      setLeadFinderData(syncedLeadFinder);
       setActivityLog(syncedActivityLog);
       setCompanySettings(syncedSettings);
       setSettingsDraft(syncedSettings);
@@ -1817,7 +1887,14 @@ export default function App() {
     const libraryForSettings = Array.isArray(settings?.priceLibrary) ? settings.priceLibrary : priceLibrary;
     const bidsForSettings = Array.isArray(settings?.bidPipeline) ? settings.bidPipeline : savedBids;
     const activityForSettings = Array.isArray(settings?.activityLog) ? settings.activityLog : activityLog;
-    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settings, libraryForSettings, bidsForSettings, activityForSettings);
+    const leadFinderForSettings = isPlainObject(settings?.leadFinder) ? settings.leadFinder : leadFinderData;
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(
+      settings,
+      libraryForSettings,
+      bidsForSettings,
+      activityForSettings,
+      leadFinderForSettings,
+    );
 
     if (!canUseCloudSync(authUser)) {
       setCloudSync((currentSync) => ({
@@ -1996,7 +2073,7 @@ export default function App() {
       return;
     }
 
-    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog);
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog, leadFinderData);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     await syncSettingsToCloud(normalizedSettings);
@@ -2696,17 +2773,516 @@ export default function App() {
 
   async function commitBids(nextBids, message = "Bid pipeline saved locally.") {
     const normalizedBids = normalizeBids(nextBids);
-    const settingsWithBids = getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, normalizedBids, activityLog);
+    const settingsWithBids = getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, normalizedBids, activityLog, leadFinderData);
 
     setSavedBids(normalizedBids);
     setCompanySettings(settingsWithBids);
-    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, normalizedBids, activityLog));
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, normalizedBids, activityLog, leadFinderData));
     setBidMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
     if (canUseCloudSync(authUser)) {
       const synced = await syncSettingsToCloud(settingsWithBids);
       setBidMessage(synced ? `${message} Synced to cloud settings.` : `${message} Cloud sync failed. See Settings for details.`);
     }
+  }
+
+  async function commitLeadFinderData(nextData, message = "Lead Finder saved locally.") {
+    const normalizedLeadFinderData = normalizeLeadFinderData(nextData);
+    const settingsWithLeadFinder = getSettingsWithPriceLibraryAndBids(
+      companySettings,
+      priceLibrary,
+      savedBids,
+      activityLog,
+      normalizedLeadFinderData,
+    );
+
+    setLeadFinderData(normalizedLeadFinderData);
+    setCompanySettings(settingsWithLeadFinder);
+    setSettingsDraft((currentSettings) =>
+      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, normalizedLeadFinderData),
+    );
+    setLeadFinderMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
+
+    if (canUseCloudSync(authUser)) {
+      const synced = await syncSettingsToCloud(settingsWithLeadFinder);
+      setLeadFinderMessage(synced ? `${message} Synced to cloud settings.` : `${message} Cloud sync failed. See Settings for details.`);
+    }
+
+    return normalizedLeadFinderData;
+  }
+
+  function exportLeadFinderBackup() {
+    if (!canPerform("backupExport", setLeadFinderMessage)) {
+      return;
+    }
+
+    try {
+      const payload = createLeadFinderBackup(leadFinderData);
+      downloadJsonFile(payload, getLeadFinderBackupFileName());
+      setLeadFinderMessage(`Exported ${payload.sources.length} sources and ${payload.leads.length} leads.`);
+      recordActivity({
+        action: "Backup exported",
+        entityType: "backup",
+        entityId: "lead-finder",
+        entityLabel: "Lead Finder backup",
+        notes: `${payload.sources.length} sources | ${payload.leads.length} leads`,
+      });
+    } catch (error) {
+      setLeadFinderMessage(`Lead Finder export failed: ${error.message}`);
+    }
+  }
+
+  async function importLeadFinderBackup(importedData) {
+    if (!canPerform("backupImport", setLeadFinderMessage)) {
+      return null;
+    }
+
+    try {
+      const { data: nextLeadFinderData, summary } = mergeLeadFinderImportData(leadFinderData, importedData);
+
+      await commitLeadFinderData(
+        nextLeadFinderData,
+        `Imported Lead Finder backup: ${summary.sourcesImported} sources and ${summary.leadsImported} leads added locally; ${summary.sourcesSkipped} sources and ${summary.leadsSkipped} leads skipped as duplicates.`,
+      );
+      recordActivity({
+        action: "Backup imported",
+        entityType: "backup",
+        entityId: "lead-finder",
+        entityLabel: "Lead Finder backup",
+        notes: `${summary.sourcesImported}/${summary.sourcesFound} sources imported | ${summary.leadsImported}/${summary.leadsFound} leads imported`,
+      });
+
+      return summary;
+    } catch (error) {
+      setLeadFinderMessage(`Lead Finder import failed: ${error.message}`);
+      return null;
+    }
+  }
+
+  async function addLeadFinderStarterSources() {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    const preview = previewLeadFinderStarterSources(leadFinderData);
+
+    if (preview.sourcesToAdd <= 0) {
+      setLeadFinderMessage(`Starter Source Pack already exists. ${preview.sourcesSkipped} sources skipped as duplicates.`);
+      return {
+        sourcesAdded: 0,
+        sourcesSkipped: preview.sourcesSkipped,
+        totalSources: preview.totalSources,
+      };
+    }
+
+    if (
+      !window.confirm(
+        `Add ${preview.sourcesToAdd} Starter Source Pack sources? ${preview.sourcesSkipped} existing sources will be skipped as duplicates.`,
+      )
+    ) {
+      setLeadFinderMessage("Starter Source Pack import cancelled.");
+      return null;
+    }
+
+    const { data: nextLeadFinderData, summary } = addLeadFinderStarterSourcesRecord(leadFinderData);
+
+    await commitLeadFinderData(
+      nextLeadFinderData,
+      `Added ${summary.sourcesAdded} Starter Source Pack sources locally. Skipped ${summary.sourcesSkipped} duplicates.`,
+    );
+    recordActivity({
+      action: "Lead sources imported",
+      entityType: "lead_finder",
+      entityId: "starter-source-pack",
+      entityLabel: "Starter Source Pack",
+      notes: `${summary.sourcesAdded}/${summary.totalSources} sources added`,
+    });
+
+    return summary;
+  }
+
+  async function saveLeadSource(source) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    const normalizedSource = normalizeLeadSource(source);
+    const nextLeadFinderData = upsertLeadSource(leadFinderData, normalizedSource);
+
+    await commitLeadFinderData(nextLeadFinderData, `Saved ${normalizedSource.name || "lead source"} locally.`);
+    recordActivity({
+      action: leadFinderData.sources.some((item) => item.id === normalizedSource.id) ? "Lead source updated" : "Lead source created",
+      entityType: "lead_finder",
+      entityId: normalizedSource.id,
+      entityLabel: normalizedSource.name || "Lead source",
+      notes: normalizedSource.sourceType,
+    });
+
+    return normalizedSource;
+  }
+
+  async function deactivateLeadSource(sourceId) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return;
+    }
+
+    const source = leadFinderData.sources.find((item) => item.id === sourceId);
+    const nextLeadFinderData = deactivateLeadSourceRecord(leadFinderData, sourceId);
+
+    await commitLeadFinderData(nextLeadFinderData, `Deactivated ${source?.name || "lead source"} locally.`);
+    recordActivity({
+      action: "Lead source deactivated",
+      entityType: "lead_finder",
+      entityId: sourceId,
+      entityLabel: source?.name || "Lead source",
+    });
+  }
+
+  async function saveLead(lead) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    const seed = lead?.id ? lead : { ...lead, id: createEmptyLead().id };
+    const normalizedLead = normalizeLead(seed);
+    const nextLeadFinderData = upsertLead(leadFinderData, normalizedLead, leadFinderData.sources);
+
+    await commitLeadFinderData(nextLeadFinderData, `Saved ${normalizedLead.title || "lead"} locally.`);
+    recordActivity({
+      action: leadFinderData.leads.some((item) => item.id === normalizedLead.id) ? "Lead updated" : "Lead created",
+      entityType: "lead_finder",
+      entityId: normalizedLead.id,
+      entityLabel: normalizedLead.title || "Lead",
+      notes: normalizedLead.status,
+    });
+
+    return getLeadById(nextLeadFinderData, normalizedLead.id) || normalizedLead;
+  }
+
+  async function updateLeadStatus(leadId, status) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return;
+    }
+
+    const nextLeadFinderData = updateLeadStatusRecord(leadFinderData, leadId, status);
+    const lead = getLeadById(nextLeadFinderData, leadId);
+
+    await commitLeadFinderData(nextLeadFinderData, `Marked ${lead?.title || "lead"} as ${status}.`);
+    recordActivity({
+      action: "Lead status updated",
+      entityType: "lead_finder",
+      entityId: leadId,
+      entityLabel: lead?.title || "Lead",
+      notes: status,
+    });
+  }
+
+  async function scoreLeadWithAi(lead) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    if (!lead?.id) {
+      setLeadFinderMessage("Save this lead before scoring it.");
+      return null;
+    }
+
+    const normalizedLead = normalizeLead(lead);
+
+    setLeadFinderMessage(`Scoring ${normalizedLead.title || "lead"} with AI...`);
+
+    try {
+      const response = await fetch("/api/ai/score-lead", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ lead: normalizedLead }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.ok) {
+        if (data.configured === false) {
+          setLeadAiConfigured(false);
+        } else if (data.configured === true) {
+          setLeadAiConfigured(true);
+        }
+
+        throw new Error(data.error || "AI lead scoring failed.");
+      }
+
+      setLeadAiConfigured(true);
+      return await saveLeadScoreResult(normalizedLead, data.result, "AI score");
+    } catch (error) {
+      const message = error?.message || "AI lead scoring failed.";
+      setLeadFinderMessage(message);
+      throw new Error(message);
+    }
+  }
+
+  async function scoreLeadWithRules(lead) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    if (!lead?.id) {
+      setLeadFinderMessage("Save this lead before scoring it.");
+      return null;
+    }
+
+    const normalizedLead = normalizeLead(lead);
+    const score = scoreLeadWithLocalRules(normalizedLead);
+
+    return await saveLeadScoreResult(normalizedLead, score, "Rule-based test score");
+  }
+
+  async function saveLeadScoreResult(lead, result, scoreLabel = "AI score") {
+    const scoredLead = applyLeadAiScore(lead, result);
+    const nextLeadFinderData = upsertLead(leadFinderData, scoredLead, leadFinderData.sources);
+
+    await commitLeadFinderData(nextLeadFinderData, `Saved ${scoreLabel} for ${scoredLead.title || "lead"} locally.`);
+    recordActivity({
+      action: `${scoreLabel} saved`,
+      entityType: "lead_finder",
+      entityId: scoredLead.id,
+      entityLabel: scoredLead.title || "Lead",
+      notes: `${scoredLead.aiFitLabel || "Maybe"} | ${scoredLead.aiFitScore || 0}`,
+    });
+
+    return getLeadById(nextLeadFinderData, scoredLead.id) || scoredLead;
+  }
+
+  async function generateLeadProposalDraft(lead) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    if (!lead?.id) {
+      setLeadFinderMessage("Save this lead before generating a proposal draft.");
+      return null;
+    }
+
+    const normalizedLead = normalizeLead(lead);
+
+    setLeadFinderMessage(`Generating proposal draft for ${normalizedLead.title || "lead"}...`);
+
+    try {
+      const response = await fetch("/api/ai/draft-proposal", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ lead: normalizedLead }),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "AI proposal drafting failed.");
+      }
+
+      setLeadFinderMessage("AI proposal draft generated. Review before applying.");
+      return normalizeLeadProposalDraftResult(data.result);
+    } catch (error) {
+      const message = error?.message || "AI proposal drafting failed.";
+      setLeadFinderMessage(message);
+      throw new Error(message);
+    }
+  }
+
+  async function applyLeadProposalDraft(lead, draft) {
+    const normalizedLead = normalizeLead(lead);
+    const normalizedDraft = normalizeLeadProposalDraftResult(draft);
+
+    if (!normalizedLead.id) {
+      setLeadFinderMessage("Save this lead before applying a proposal draft.");
+      return null;
+    }
+
+    if (!canPerform("createProposal", setLeadFinderMessage)) {
+      return null;
+    }
+
+    if (
+      normalizedLead.proposalId &&
+      !window.confirm("A proposal was already started from this lead. Create another proposal draft anyway?")
+    ) {
+      const message = "No duplicate proposal draft created.";
+      setLeadFinderMessage(message);
+      return { cancelled: true, lead: normalizedLead, message };
+    }
+
+    const proposalFromLead = createProposalFromLeadHandoff(
+      normalizedLead,
+      "proposal_draft",
+      savedProposals,
+      companySettings,
+      savedContacts,
+      normalizedDraft,
+    );
+    const nextProposals = upsertProposal(savedProposals, proposalFromLead);
+    const linkedLead = applyLeadHandoff(normalizedLead, {
+      type: "proposal_draft",
+      recordId: proposalFromLead.id,
+      label: proposalFromLead.project?.name || proposalFromLead.proposalNumber || "AI Proposal Draft",
+      notes: "Created from AI proposal draft. Review before sending or printing.",
+    });
+    const nextLeadFinderData = upsertLead(leadFinderData, linkedLead, leadFinderData.sources);
+    const message = `Created proposal draft from ${linkedLead.title || "lead"}.`;
+
+    setSavedProposals(nextProposals);
+    await commitLeadFinderData(nextLeadFinderData, `${message} Lead link saved locally.`);
+    setSaveMessage(`${message} Review pricing, scope, terms, and PDF before sending.`);
+    recordActivity({
+      action: "Lead Finder AI proposal draft",
+      entityType: "lead_finder",
+      entityId: linkedLead.id,
+      entityLabel: linkedLead.title || "Lead",
+      notes: `Proposal: ${proposalFromLead.proposalNumber || proposalFromLead.id}`,
+    });
+    recordActivity({
+      action: "Proposal created",
+      entityType: "proposal",
+      entityId: proposalFromLead.id,
+      entityLabel: proposalFromLead.proposalNumber || proposalFromLead.project?.name || "Proposal",
+      notes: `Created from AI proposal draft for Lead Finder: ${linkedLead.title || linkedLead.id}`,
+    });
+    await syncSingleProposalToCloud(proposalFromLead, "Lead Finder AI proposal draft synced to Supabase.");
+    navigate(`/proposals/${proposalFromLead.id}`, { proposal: proposalFromLead, skipUnsavedCheck: true });
+
+    return {
+      lead: getLeadById(nextLeadFinderData, linkedLead.id) || linkedLead,
+      message,
+      proposal: proposalFromLead,
+      recordId: proposalFromLead.id,
+      recordType: "proposal",
+    };
+  }
+
+  async function handleLeadHandoff(lead, actionType) {
+    const normalizedLead = normalizeLead(lead);
+
+    if (!normalizedLead.id) {
+      setLeadFinderMessage("Save this lead before starting a handoff.");
+      return null;
+    }
+
+    if (actionType === "contact") {
+      return await createOrLinkContactFromLead(normalizedLead);
+    }
+
+    if (!canPerform("createProposal", setLeadFinderMessage)) {
+      return null;
+    }
+
+    const existingRecordId = getLeadHandoffRecordId(normalizedLead, actionType);
+    const handoffLabel = getLeadHandoffLabel(actionType);
+
+    if (
+      existingRecordId &&
+      !window.confirm(`${handoffLabel} was already started from this lead. Create another draft anyway?`)
+    ) {
+      const message = "No duplicate record created.";
+      setLeadFinderMessage(message);
+      return { cancelled: true, lead: normalizedLead, message };
+    }
+
+    const proposalFromLead = createProposalFromLeadHandoff(normalizedLead, actionType, savedProposals, companySettings, savedContacts);
+    const nextProposals = upsertProposal(savedProposals, proposalFromLead);
+    const linkedLead = applyLeadHandoff(normalizedLead, {
+      type: actionType,
+      recordId: proposalFromLead.id,
+      label: proposalFromLead.project?.name || proposalFromLead.proposalNumber || handoffLabel,
+      notes: `Created ${handoffLabel} draft from Lead Finder.`,
+    });
+    const nextLeadFinderData = upsertLead(leadFinderData, linkedLead, leadFinderData.sources);
+    const message = `Created ${handoffLabel} draft from ${linkedLead.title || "lead"}.`;
+
+    setSavedProposals(nextProposals);
+    await commitLeadFinderData(nextLeadFinderData, `${message} Lead link saved locally.`);
+    setSaveMessage(`${message} Review before saving, sending, or printing.`);
+    recordActivity({
+      action: "Lead Finder handoff",
+      entityType: "lead_finder",
+      entityId: linkedLead.id,
+      entityLabel: linkedLead.title || "Lead",
+      notes: `${handoffLabel}: ${proposalFromLead.proposalNumber || proposalFromLead.id}`,
+    });
+    recordActivity({
+      action: "Proposal created",
+      entityType: "proposal",
+      entityId: proposalFromLead.id,
+      entityLabel: proposalFromLead.proposalNumber || proposalFromLead.project?.name || "Proposal",
+      notes: `Created from Lead Finder: ${linkedLead.title || linkedLead.id}`,
+    });
+    await syncSingleProposalToCloud(proposalFromLead, "Lead Finder proposal handoff synced to Supabase.");
+    navigate(`/proposals/${proposalFromLead.id}`, { proposal: proposalFromLead, skipUnsavedCheck: true });
+
+    return {
+      lead: getLeadById(nextLeadFinderData, linkedLead.id) || linkedLead,
+      message,
+      recordId: proposalFromLead.id,
+      recordType: "proposal",
+    };
+  }
+
+  async function createOrLinkContactFromLead(lead) {
+    if (!canPerform("createContact", setLeadFinderMessage)) {
+      return null;
+    }
+
+    const normalizedLead = normalizeLead(lead);
+    const existingContact =
+      (normalizedLead.contactId ? savedContacts.find((contact) => contact.id === normalizedLead.contactId) : null) ||
+      findMatchingContactForLead(normalizedLead, savedContacts);
+
+    if (normalizedLead.contactId && !existingContact) {
+      const shouldCreate = window.confirm("This lead has a linked contact ID, but the contact was not found. Create a new contact from the lead?");
+
+      if (!shouldCreate) {
+        const message = "No duplicate contact created.";
+        setLeadFinderMessage(message);
+        return { cancelled: true, lead: normalizedLead, message };
+      }
+    }
+
+    const contact = existingContact || createContactFromLead(normalizedLead);
+    const nextContacts = existingContact ? savedContacts : upsertContact(savedContacts, contact);
+    const linkedLead = applyLeadHandoff(normalizedLead, {
+      type: "contact",
+      recordId: contact.id,
+      label: formatContactName(contact),
+      notes: existingContact ? "Linked existing contact from Lead Finder." : "Created contact from Lead Finder.",
+    });
+    const nextLeadFinderData = upsertLead(leadFinderData, linkedLead, leadFinderData.sources);
+    const message = existingContact
+      ? `Linked ${formatContactName(contact)} to ${linkedLead.title || "lead"}.`
+      : `Created ${formatContactName(contact)} from ${linkedLead.title || "lead"}.`;
+
+    setSavedContacts(nextContacts);
+    setContactDraft(contact);
+    setContactEditorOpen(true);
+    await commitLeadFinderData(nextLeadFinderData, `${message} Lead link saved locally.`);
+    setContactMessage(`${message} Review before saving additional contact changes.`);
+    recordActivity({
+      action: existingContact ? "Contact linked" : "Contact created",
+      entityType: "contact",
+      entityId: contact.id,
+      entityLabel: formatContactName(contact),
+      notes: `Lead Finder: ${linkedLead.title || linkedLead.id}`,
+    });
+
+    if (!existingContact) {
+      await syncSingleContactToCloud(contact);
+    }
+
+    navigate("/contacts", { skipUnsavedCheck: true });
+
+    return {
+      lead: getLeadById(nextLeadFinderData, linkedLead.id) || linkedLead,
+      message,
+      recordId: contact.id,
+      recordType: "contact",
+    };
   }
 
   async function saveBid() {
@@ -6032,7 +6608,10 @@ export default function App() {
       }
 
       if (type === "full") {
-        downloadJsonFile(createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary, savedBids, activityLog), getFullBackupFileName());
+        downloadJsonFile(
+          createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary, savedBids, activityLog, leadFinderData),
+          getFullBackupFileName(),
+        );
         setBackupMessage(
           `Exported full app backup with ${savedProposals.length} proposals, ${savedContacts.length} contacts, ${savedBids.length} bids, ${priceLibrary.length} price items, ${activityLog.length} activity records, and company settings.`,
         );
@@ -6204,10 +6783,24 @@ export default function App() {
           importedBackup.priceLibrary.length > 0 ? normalizePriceLibrary(importedBackup.priceLibrary) : priceLibrary;
         const nextActivityLog =
           mode === "replace" ? normalizeActivityLog(importedBackup.activityLog) : normalizeActivityLog([...importedBackup.activityLog, ...activityLog]);
-        const importedSettings = getSettingsWithPriceLibraryAndBids(importedBackup.companySettings, importedPriceLibrary, nextBids, nextActivityLog);
+        const nextLeadFinder =
+          mode === "replace"
+            ? normalizeLeadFinderData(importedBackup.leadFinder)
+            : normalizeLeadFinderData({
+                sources: [...leadFinderData.sources, ...importedBackup.leadFinder.sources],
+                leads: [...leadFinderData.leads, ...importedBackup.leadFinder.leads],
+              });
+        const importedSettings = getSettingsWithPriceLibraryAndBids(
+          importedBackup.companySettings,
+          importedPriceLibrary,
+          nextBids,
+          nextActivityLog,
+          nextLeadFinder,
+        );
 
         setPriceLibrary(importedPriceLibrary);
         setSavedBids(nextBids);
+        setLeadFinderData(nextLeadFinder);
         setActivityLog(nextActivityLog);
         setCompanySettings(importedSettings);
         setSettingsDraft(importedSettings);
@@ -6228,6 +6821,7 @@ export default function App() {
           notes: `${mode}: ${importedBackup.proposals.length} proposals, ${nextActivityLog.length} activity records`,
           activityLog: nextActivityLog,
           bids: nextBids,
+          leadFinder: nextLeadFinder,
           priceLibrary: importedPriceLibrary,
           settings: importedSettings,
         });
@@ -6372,6 +6966,7 @@ export default function App() {
           onOpen={openProposal}
           onOpenContacts={() => navigate("/contacts")}
           onOpenBids={() => navigate("/bids")}
+          onOpenLeadFinder={() => navigate("/lead-finder")}
           onOpenList={() => navigate("/proposals")}
           onOpenPrint={openProposalPrintView}
           onOpenSampleProposal={openSampleProposal}
@@ -6413,6 +7008,28 @@ export default function App() {
           onImport={importPriceLibraryBackup}
           onSave={savePriceLibraryItem}
           onToggleActive={togglePriceLibraryItem}
+        />
+      ) : isLeadFinderView ? (
+        <LeadFinderView
+          data={leadFinderData}
+          leadAiConfigured={leadAiConfigured}
+          message={leadFinderMessage}
+          permissions={permissions}
+          route={route}
+          onBackToDashboard={() => navigate("/dashboard")}
+          onAddStarterSources={addLeadFinderStarterSources}
+          onDeactivateSource={deactivateLeadSource}
+          onExportBackup={exportLeadFinderBackup}
+          onGenerateProposalDraft={generateLeadProposalDraft}
+          onImportBackup={importLeadFinderBackup}
+          onNavigate={navigate}
+          onApplyProposalDraft={applyLeadProposalDraft}
+          onLeadHandoff={handleLeadHandoff}
+          onSaveLead={saveLead}
+          onSaveSource={saveLeadSource}
+          onScoreLead={scoreLeadWithAi}
+          onScoreLeadWithRules={scoreLeadWithRules}
+          onUpdateLeadStatus={updateLeadStatus}
         />
       ) : isBidsView ? (
         <BidsRouteErrorBoundary onBackToDashboard={() => navigate("/dashboard")} onNewBid={startNewBid} resetKey={route.path}>
@@ -7785,6 +8402,7 @@ function DashboardView({
   onOpen,
   onOpenBids,
   onOpenContacts,
+  onOpenLeadFinder,
   onOpenList,
   onOpenPrint,
   onOpenPriceLibrary,
@@ -7839,6 +8457,9 @@ function DashboardView({
           </button>
           <button type="button" onClick={onOpenBids}>
             Bid Tracker
+          </button>
+          <button type="button" onClick={onOpenLeadFinder}>
+            AI Lead Finder
           </button>
           <button type="button" onClick={onOpenPriceLibrary}>
             Price Library
@@ -13175,6 +13796,30 @@ function parseRoute(pathname) {
     return { view: "bids", path: "/bids" };
   }
 
+  if (segments[0] === "lead-finder") {
+    if (segments[1] === "daily-check") {
+      return { view: "leadFinder", section: "dailyCheck", path: "/lead-finder/daily-check" };
+    }
+
+    if (segments[1] === "sources") {
+      return { view: "leadFinder", section: "sources", path: "/lead-finder/sources" };
+    }
+
+    if (segments[1] === "leads" && segments[2] === "new") {
+      return { view: "leadFinder", section: "newLead", path: "/lead-finder/leads/new" };
+    }
+
+    if (segments[1] === "leads" && segments[2]) {
+      return { view: "leadFinder", section: "leadDetail", id: decodeURIComponent(segments[2]), path: `/lead-finder/leads/${segments[2]}` };
+    }
+
+    if (segments[1] === "leads") {
+      return { view: "leadFinder", section: "leads", path: "/lead-finder/leads" };
+    }
+
+    return { view: "leadFinder", section: "dashboard", path: "/lead-finder" };
+  }
+
   if (segments[0] === "price-library") {
     return { view: "priceLibrary", path: "/price-library" };
   }
@@ -13775,6 +14420,38 @@ function saveStoredBids(bids) {
   }
 }
 
+function loadLeadFinderData() {
+  const leadFinderSources = [];
+
+  try {
+    const storedValue = window.localStorage.getItem(leadFinderStorageKey);
+
+    if (storedValue) {
+      leadFinderSources.push(JSON.parse(storedValue));
+    }
+
+    const storedSettings = window.localStorage.getItem(companySettingsStorageKey);
+
+    if (storedSettings) {
+      const parsedSettings = JSON.parse(storedSettings);
+
+      leadFinderSources.push(extractLeadFinderFromSettingsPaths(parsedSettings));
+    }
+  } catch {
+    // Fall through to any Lead Finder data collected before malformed local storage was encountered.
+  }
+
+  return mergeLeadFinderData(...leadFinderSources);
+}
+
+function saveLeadFinderData(data) {
+  try {
+    window.localStorage.setItem(leadFinderStorageKey, JSON.stringify(normalizeLeadFinderData(data)));
+  } catch {
+    // Local Lead Finder saving is best-effort for this foundation phase.
+  }
+}
+
 function loadPriceLibrary() {
   try {
     const storedValue = window.localStorage.getItem(priceLibraryStorageKey);
@@ -13818,11 +14495,20 @@ function getSettingsWithPriceLibrary(settings = {}, priceLibrary = []) {
   });
 }
 
-function getSettingsWithPriceLibraryAndBids(settings = {}, priceLibrary = [], bids = [], activityLog = []) {
+function getSettingsWithPriceLibraryAndBids(settings = {}, priceLibrary = [], bids = [], activityLog = [], leadFinderData = null) {
+  const normalizedLeadFinderData = mergeLeadFinderData(extractLeadFinderFromSettingsPaths(settings), leadFinderData);
+
   return normalizeCompanySettings({
     ...(settings || {}),
     activityLog: normalizeActivityLog(Array.isArray(activityLog) && activityLog.length > 0 ? activityLog : settings?.activityLog),
     bidPipeline: normalizeBids(bids),
+    company: isPlainObject(settings?.company)
+      ? {
+          ...settings.company,
+          leadFinder: mergeLeadFinderData(settings.company.leadFinder, normalizedLeadFinderData),
+        }
+      : settings?.company,
+    leadFinder: normalizedLeadFinderData,
     priceLibrary: normalizePriceLibrary(priceLibrary),
   });
 }
@@ -13841,6 +14527,15 @@ function getBidsFromSettings(settings = {}, fallbackBids = []) {
   }
 
   return normalizeBids(fallbackBids);
+}
+
+function getLeadFinderFromSettings(settings = {}, fallbackLeadFinder = {}) {
+  return mergeLeadFinderData(fallbackLeadFinder, extractLeadFinderFromSettingsPaths(settings));
+}
+
+function extractLeadFinderFromSettingsPaths(settings = {}) {
+  const source = isPlainObject(settings) ? settings : {};
+  return mergeLeadFinderData(source.leadFinder, source.company?.leadFinder);
 }
 
 function isDemoRecord(record = {}) {
@@ -13912,10 +14607,11 @@ function createPriceLibraryExport(priceLibrary = []) {
   };
 }
 
-function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = [], bids = [], activityLog = []) {
+function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = [], bids = [], activityLog = [], leadFinderData = {}) {
   const normalizedPriceLibrary = normalizePriceLibrary(priceLibrary);
   const normalizedBids = normalizeBids(bids);
   const normalizedActivityLog = normalizeActivityLog(activityLog);
+  const normalizedLeadFinderData = normalizeLeadFinderData(leadFinderData);
 
   return {
     backupVersion,
@@ -13927,13 +14623,17 @@ function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = 
       companySettings: companySettingsStorageKey,
       contacts: contactsStorageKey,
       bids: bidsStorageKey,
+      leadFinder: leadFinderStorageKey,
       priceLibrary: priceLibraryStorageKey,
       activityLog: activityLogStorageKey,
     },
     proposals: cloneObject(proposals),
-    companySettings: cloneObject(getSettingsWithPriceLibraryAndBids(settings, normalizedPriceLibrary, normalizedBids, normalizedActivityLog)),
+    companySettings: cloneObject(
+      getSettingsWithPriceLibraryAndBids(settings, normalizedPriceLibrary, normalizedBids, normalizedActivityLog, normalizedLeadFinderData),
+    ),
     contacts: cloneObject(contacts),
     bids: cloneObject(normalizedBids),
+    leadFinder: cloneObject(normalizedLeadFinderData),
     priceLibrary: cloneObject(normalizedPriceLibrary),
     activityLog: cloneObject(normalizedActivityLog),
   };
@@ -14034,6 +14734,16 @@ function parseBidCollectionImport(importedJson) {
   return normalizeBids(bids).filter((bid) => hasTextValue(bid.projectName));
 }
 
+function parseLeadFinderImport(importedJson) {
+  const leadFinder = importedJson?.leadFinder || importedJson?.companySettings?.leadFinder || importedJson;
+
+  if (!isPlainObject(leadFinder)) {
+    return normalizeLeadFinderData();
+  }
+
+  return normalizeLeadFinderData(leadFinder);
+}
+
 function parseFullAppBackupImport(importedJson) {
   if (!isPlainObject(importedJson) || (!Array.isArray(importedJson.proposals) && !isPlainObject(importedJson.companySettings))) {
     throw new Error("This file does not look like a full app backup.");
@@ -14049,12 +14759,14 @@ function parseFullAppBackupImport(importedJson) {
   const importedActivityLog = Array.isArray(importedJson.activityLog) || Array.isArray(importedSettings.activityLog)
     ? getActivityLogFromSettings(importedSettings, importedJson.activityLog)
     : [];
+  const importedLeadFinder = parseLeadFinderImport(importedJson);
 
   return {
     proposals: parseProposalCollectionImport(importedJson),
-    companySettings: getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog),
+    companySettings: getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog, importedLeadFinder),
     contacts: Array.isArray(importedJson.contacts) ? parseContactCollectionImport(importedJson) : [],
     bids: importedBids,
+    leadFinder: importedLeadFinder,
     priceLibrary: importedPriceLibrary,
     activityLog: importedActivityLog,
   };
@@ -14710,6 +15422,44 @@ function normalizeContact(contact = {}) {
   };
 }
 
+function createContactFromLead(lead = {}) {
+  const normalizedLead = normalizeLead(lead);
+  const projectLocation = formatLeadProjectLocation(normalizedLead);
+  const contactName = normalizedLead.contactName || (!normalizedLead.companyName ? normalizedLead.title : "");
+
+  return normalizeContact({
+    companyName: normalizedLead.companyName,
+    contactName,
+    phone: normalizedLead.contactPhone,
+    email: normalizedLead.contactEmail,
+    defaultProjectAddress: projectLocation,
+    contactType: normalizedLead.serviceType === "Concrete" || normalizedLead.serviceType === "Site Concrete" ? "Commercial Client" : "Residential Client",
+    notes: buildLeadInternalNotes(normalizedLead),
+  });
+}
+
+function findMatchingContactForLead(lead = {}, contacts = []) {
+  const normalizedLead = normalizeLead(lead);
+  const leadEmail = normalizedLead.contactEmail.toLowerCase();
+  const leadPhone = normalizePhoneDigits(normalizedLead.contactPhone);
+  const leadCompany = normalizedLead.companyName.toLowerCase();
+  const leadContactName = normalizedLead.contactName.toLowerCase();
+
+  return normalizeContacts(contacts).find((contact) => {
+    const contactEmail = contact.email.toLowerCase();
+    const contactPhone = normalizePhoneDigits(contact.phone);
+    const contactCompany = contact.companyName.toLowerCase();
+    const contactName = contact.contactName.toLowerCase();
+
+    return (
+      (leadEmail && contactEmail === leadEmail) ||
+      (leadPhone && contactPhone === leadPhone) ||
+      (leadCompany && contactCompany === leadCompany) ||
+      (leadContactName && contactName === leadContactName)
+    );
+  }) || null;
+}
+
 function normalizeContacts(contacts = []) {
   return (Array.isArray(contacts) ? contacts : []).filter(isPlainObject).map((contact) => normalizeContact(contact));
 }
@@ -14803,6 +15553,188 @@ function normalizeBid(bid = {}) {
     createdAt: toSafeBidText(sourceBid.createdAt) || now,
     updatedAt: toSafeBidText(sourceBid.updatedAt) || now,
   };
+}
+
+function createProposalFromLeadHandoff(
+  lead = {},
+  actionType = "residential_estimate",
+  existingProposals = [],
+  companySettings = getDefaultCompanySettings(),
+  contacts = [],
+  proposalDraft = {},
+) {
+  const normalizedLead = normalizeLead(lead);
+  const normalizedProposalDraft = normalizeLeadProposalDraftResult(proposalDraft);
+  const templateType = getLeadHandoffTemplateType(actionType, normalizedLead);
+  const baseProposal = createBlankProposalByTemplate(templateType, existingProposals, companySettings);
+  const matchingContact = findMatchingContactForLead(normalizedLead, contacts);
+  const customerName = normalizedProposalDraft.clientName || normalizedLead.companyName || normalizedLead.contactName || "";
+  const projectLocation = normalizedProposalDraft.projectLocation || formatLeadProjectLocation(normalizedLead);
+  const projectCategory = [normalizedLead.serviceType, normalizedLead.projectType].filter(hasTextValue).join(" / ");
+  const internalNotes = buildLeadInternalNotes(normalizedLead, normalizedProposalDraft);
+  const scopeSections = buildLeadProposalScopeSections(baseProposal.scopeSections, normalizedLead, normalizedProposalDraft);
+
+  return createEditableProposal({
+    ...baseProposal,
+    contactId: matchingContact?.id || "",
+    leadFinderLeadId: normalizedLead.id,
+    leadFinderHandoffType: actionType,
+    sourceReferenceUrl: normalizedLead.sourceUrl,
+    client: {
+      ...baseProposal.client,
+      companyName: matchingContact?.companyName || normalizedLead.companyName || normalizedProposalDraft.clientName || baseProposal.client?.companyName || "",
+      contactName:
+        matchingContact?.contactName ||
+        normalizedLead.contactName ||
+        (!normalizedLead.companyName ? customerName : baseProposal.client?.contactName || ""),
+      email: matchingContact?.email || normalizedLead.contactEmail || baseProposal.client?.email || "",
+      phone: matchingContact?.phone || normalizedLead.contactPhone || baseProposal.client?.phone || "",
+      billingAddress: matchingContact?.billingAddress || baseProposal.client?.billingAddress || "",
+      projectAddress: matchingContact?.defaultProjectAddress || projectLocation || baseProposal.client?.projectAddress || "",
+    },
+    gcPrime: {
+      ...baseProposal.gcPrime,
+      gcName: normalizedLead.companyName || baseProposal.gcPrime?.gcName || "",
+      contractorName: normalizedLead.companyName || baseProposal.gcPrime?.contractorName || "",
+      projectManagerName: normalizedLead.contactName || baseProposal.gcPrime?.projectManagerName || "",
+      projectManagerEmail: normalizedLead.contactEmail || baseProposal.gcPrime?.projectManagerEmail || "",
+      projectManagerPhone: normalizedLead.contactPhone || baseProposal.gcPrime?.projectManagerPhone || "",
+      rfiClarificationNotes: baseProposal.gcPrime?.rfiClarificationNotes || "",
+    },
+    project: {
+      ...baseProposal.project,
+      name: normalizedProposalDraft.proposalTitle || normalizedLead.title || baseProposal.project?.name || "",
+      location: projectLocation || baseProposal.project?.location || "",
+      address: projectLocation || baseProposal.project?.address || "",
+      description: normalizedProposalDraft.customerSummary || normalizedLead.description || baseProposal.project?.description || "",
+      category: projectCategory || baseProposal.project?.category || "",
+      specialRequirements: baseProposal.project?.specialRequirements || "",
+    },
+    scopeSections,
+    nextAction: normalizedProposalDraft.recommendedNextStep || normalizedLead.aiNextStep || baseProposal.nextAction || "",
+    internalTrackingNotes: appendTextBlocks(baseProposal.internalTrackingNotes, internalNotes),
+    notes: appendTextBlocks(baseProposal.notes, `Lead Finder handoff: ${normalizedLead.title || normalizedLead.id}`),
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+function getLeadHandoffTemplateType(actionType = "", lead = {}) {
+  if (actionType === "commercial_proposal") {
+    return NEW_PROPOSAL_TEMPLATE_TYPES.COMMERCIAL_SUBCONTRACTOR;
+  }
+
+  if (actionType === "gc_packet") {
+    return NEW_PROPOSAL_TEMPLATE_TYPES.GC_PRIME_PACKET;
+  }
+
+  if (actionType === "proposal_draft") {
+    const normalizedLead = normalizeLead(lead);
+    return normalizedLead.suggestedCompanyMode === "Live Your Future"
+      ? NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_SIMPLE_ESTIMATE
+      : NEW_PROPOSAL_TEMPLATE_TYPES.COMMERCIAL_SUBCONTRACTOR;
+  }
+
+  return NEW_PROPOSAL_TEMPLATE_TYPES.RESIDENTIAL_SIMPLE_ESTIMATE;
+}
+
+function getLeadHandoffRecordId(lead = {}, actionType = "") {
+  if (actionType === "commercial_proposal") {
+    return lead.proposalId || "";
+  }
+
+  if (actionType === "proposal_draft") {
+    return lead.proposalId || "";
+  }
+
+  if (actionType === "gc_packet") {
+    return lead.packetId || "";
+  }
+
+  if (actionType === "contact") {
+    return lead.contactId || "";
+  }
+
+  return lead.estimateId || "";
+}
+
+function getLeadHandoffLabel(actionType = "") {
+  if (actionType === "commercial_proposal") {
+    return "Commercial Proposal";
+  }
+
+  if (actionType === "proposal_draft") {
+    return "AI Proposal Draft";
+  }
+
+  if (actionType === "gc_packet") {
+    return "GC Packet";
+  }
+
+  if (actionType === "contact") {
+    return "Contact";
+  }
+
+  return "Residential Estimate";
+}
+
+function formatLeadProjectLocation(lead = {}) {
+  return [lead.city, lead.state].filter(hasTextValue).join(", ");
+}
+
+function buildLeadProposalScopeSections(baseScopeSections = [], lead = {}, draft = {}) {
+  const normalizedLead = normalizeLead(lead);
+  const normalizedDraft = normalizeLeadProposalDraftResult(draft);
+  const sections = [...normalizeScopeSections(baseScopeSections)];
+  const appendSection = (title, items) => {
+    const normalizedItems = Array.isArray(items) ? items.filter(hasTextValue) : hasTextValue(items) ? [items] : [];
+
+    if (normalizedItems.length > 0) {
+      sections.push({
+        id: createProposalId(),
+        title,
+        items: normalizedItems,
+      });
+    }
+  };
+
+  appendSection("AI Draft Scope of Work", normalizedDraft.scopeOfWork.length > 0 ? normalizedDraft.scopeOfWork : normalizedLead.description);
+  appendSection("Inclusions", normalizedDraft.inclusions);
+  appendSection("Exclusions", normalizedDraft.exclusions);
+  appendSection("Assumptions", normalizedDraft.assumptions);
+  appendSection("Missing Information Before Final Proposal", normalizedDraft.missingInformation);
+  appendSection("Schedule Notes", normalizedDraft.scheduleNotes);
+
+  return sections;
+}
+
+function buildLeadInternalNotes(lead = {}, draft = {}) {
+  const normalizedLead = normalizeLead(lead);
+  const normalizedDraft = normalizeLeadProposalDraftResult(draft);
+  const lines = [
+    "Lead Finder reference",
+    normalizedLead.sourceName ? `Source: ${normalizedLead.sourceName}` : "",
+    normalizedLead.sourceUrl ? `Source URL: ${normalizedLead.sourceUrl}` : "",
+    normalizedLead.estimatedValue !== "" ? `Estimated value: ${formatCurrency(normalizedLead.estimatedValue)}` : "",
+    normalizedLead.dueDate ? `Due date: ${normalizedLead.dueDate}` : "",
+    normalizedLead.aiFitReason ? `AI fit reason: ${normalizedLead.aiFitReason}` : "",
+    normalizedLead.aiRisks ? `AI risks: ${normalizedLead.aiRisks}` : "",
+    normalizedLead.aiNextStep ? `AI next step: ${normalizedLead.aiNextStep}` : "",
+    normalizedLead.notes ? `Lead notes: ${normalizedLead.notes}` : "",
+    normalizedDraft.internalRiskNotes.length > 0 ? `AI draft internal risks: ${normalizedDraft.internalRiskNotes.join("; ")}` : "",
+    normalizedDraft.recommendedNextStep ? `AI draft next step: ${normalizedDraft.recommendedNextStep}` : "",
+    normalizedDraft.followUpEmailDraft ? `AI draft follow-up email:\n${normalizedDraft.followUpEmailDraft}` : "",
+    normalizedDraft.followUpSmsDraft ? `AI draft follow-up SMS:\n${normalizedDraft.followUpSmsDraft}` : "",
+  ];
+
+  return lines.filter(hasTextValue).join("\n");
+}
+
+function appendTextBlocks(...blocks) {
+  return blocks.map((block) => toSafeBidText(block)).filter(hasTextValue).join("\n\n");
+}
+
+function normalizePhoneDigits(value = "") {
+  return String(value || "").replace(/\D+/g, "");
 }
 
 function toSafeBidText(value) {
@@ -15874,15 +16806,23 @@ function getDefaultCompanySettings() {
     defaultWarrantyNote: "",
     defaultSignatureBlock: terms.acceptance,
     proposalPdfStyle: getDefaultProposalPdfStyleSettings(),
+    leadFinder: normalizeLeadFinderData(),
   };
 }
 
 function normalizeCompanySettings(settings = {}) {
   const defaults = getDefaultCompanySettings();
+  const normalizedLeadFinderData = mergeLeadFinderData(settings.leadFinder, settings.company?.leadFinder, defaults.leadFinder);
 
   return {
     ...defaults,
     ...settings,
+    company: isPlainObject(settings.company)
+      ? {
+          ...settings.company,
+          leadFinder: mergeLeadFinderData(settings.company.leadFinder, normalizedLeadFinderData),
+        }
+      : settings.company,
     companyName: hasTextValue(settings.companyName) ? settings.companyName : defaults.companyName,
     phone: hasTextValue(settings.phone) ? settings.phone : defaults.phone,
     email: hasTextValue(settings.email) ? settings.email : defaults.email,
@@ -15940,6 +16880,7 @@ function normalizeCompanySettings(settings = {}) {
       ? settings.defaultSignatureBlock
       : defaults.defaultSignatureBlock,
     proposalPdfStyle: normalizeProposalPdfStyleSettings(settings.proposalPdfStyle || defaults.proposalPdfStyle),
+    leadFinder: normalizedLeadFinderData,
   };
 }
 

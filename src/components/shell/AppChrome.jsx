@@ -19,6 +19,7 @@ export function AppChrome({
   const navItems = [
     { view: "dashboard", label: "Dashboard", shortLabel: "Dash", action: () => onNavigate("/dashboard") },
     { view: "bids", label: "Bids", shortLabel: "Bids", action: () => onNavigate("/bids") },
+    { view: "leadFinder", label: "AI Lead Finder", shortLabel: "Leads", action: () => onNavigate("/lead-finder") },
     { view: "list", label: "Proposals", shortLabel: "Props", action: () => onNavigate("/proposals") },
     { view: "contacts", label: "Contacts", shortLabel: "Contacts", action: () => onNavigate("/contacts") },
     {
