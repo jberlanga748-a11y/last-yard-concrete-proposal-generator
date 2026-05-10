@@ -292,49 +292,58 @@ export function formatOpsJobDraftSummary(draft = {}) {
 
 export function createConcreteOpsJobDraftExportPackage(draft = {}, options = {}) {
   const normalizedDraft = normalizeOpsJobDraft(draft);
+  const exportLocation = resolveOpsJobDraftExportLocation(normalizedDraft, options);
+  const exportDraft = normalizeOpsJobDraft({
+    ...normalizedDraft,
+    city: exportLocation.city,
+    state: exportLocation.state,
+  });
   const exportedAt = toIsoDateTime(options.exportedAt) || new Date().toISOString();
+  const locationWarning =
+    exportDraft.city && exportDraft.state ? "" : "City/state missing — confirm before importing into Concrete Ops 2.";
+  const jobDraftSummary = [formatOpsJobDraftSummary(exportDraft), locationWarning].filter(Boolean).join("\n\n");
 
   return {
     packageVersion: CONCRETE_OPS_JOB_DRAFT_PACKAGE_VERSION,
     exportedAt,
     sourceApp: CONCRETE_OPS_JOB_DRAFT_SOURCE_APP,
     packageType: CONCRETE_OPS_JOB_DRAFT_PACKAGE_TYPE,
-    opsJobDraftId: normalizedDraft.id,
-    sourceHandoffId: normalizedDraft.sourceHandoffId,
-    sourceLeadId: normalizedDraft.sourceLeadId,
-    sourceProposalId: normalizedDraft.sourceProposalId,
-    sourceEstimateId: normalizedDraft.sourceEstimateId,
-    sourcePacketId: normalizedDraft.sourcePacketId,
-    customerName: normalizedDraft.customerName,
-    contactName: normalizedDraft.contactName,
-    contactEmail: normalizedDraft.contactEmail,
-    contactPhone: normalizedDraft.contactPhone,
-    jobName: normalizedDraft.jobName,
-    jobAddress: normalizedDraft.jobAddress,
-    city: normalizedDraft.city,
-    state: normalizedDraft.state,
-    serviceType: normalizedDraft.serviceType,
-    projectType: normalizedDraft.projectType,
-    scopeSummary: normalizedDraft.scopeSummary,
-    includedScope: [...normalizedDraft.includedScope],
-    exclusions: [...normalizedDraft.exclusions],
-    assumptions: [...normalizedDraft.assumptions],
-    operationsNotes: normalizedDraft.operationsNotes,
-    crewNotes: normalizedDraft.crewNotes,
-    scheduleNotes: normalizedDraft.scheduleNotes,
-    startDateTarget: normalizedDraft.startDateTarget,
-    assignedCrewPlaceholder: normalizedDraft.assignedCrewPlaceholder,
-    foremanPlaceholder: normalizedDraft.foremanPlaceholder,
-    draftStatus: normalizedDraft.draftStatus,
-    opsReadinessScore: normalizedDraft.opsReadinessScore,
-    opsReadinessLabel: normalizedDraft.opsReadinessLabel,
-    opsReadinessIssues: [...normalizedDraft.opsReadinessIssues],
-    proposalAmount: normalizedDraft.proposalAmount,
-    proposalLinkOrId: normalizedDraft.proposalLinkOrId,
-    handoffStatus: normalizedDraft.handoffStatus,
-    createdAt: normalizedDraft.createdAt,
-    updatedAt: normalizedDraft.updatedAt,
-    jobDraftSummary: formatOpsJobDraftSummary(normalizedDraft),
+    opsJobDraftId: exportDraft.id,
+    sourceHandoffId: exportDraft.sourceHandoffId,
+    sourceLeadId: exportDraft.sourceLeadId,
+    sourceProposalId: exportDraft.sourceProposalId,
+    sourceEstimateId: exportDraft.sourceEstimateId,
+    sourcePacketId: exportDraft.sourcePacketId,
+    customerName: exportDraft.customerName,
+    contactName: exportDraft.contactName,
+    contactEmail: exportDraft.contactEmail,
+    contactPhone: exportDraft.contactPhone,
+    jobName: exportDraft.jobName,
+    jobAddress: exportDraft.jobAddress,
+    city: exportDraft.city,
+    state: exportDraft.state,
+    serviceType: exportDraft.serviceType,
+    projectType: exportDraft.projectType,
+    scopeSummary: exportDraft.scopeSummary,
+    includedScope: [...exportDraft.includedScope],
+    exclusions: [...exportDraft.exclusions],
+    assumptions: [...exportDraft.assumptions],
+    operationsNotes: exportDraft.operationsNotes,
+    crewNotes: exportDraft.crewNotes,
+    scheduleNotes: exportDraft.scheduleNotes,
+    startDateTarget: exportDraft.startDateTarget,
+    assignedCrewPlaceholder: exportDraft.assignedCrewPlaceholder,
+    foremanPlaceholder: exportDraft.foremanPlaceholder,
+    draftStatus: exportDraft.draftStatus,
+    opsReadinessScore: exportDraft.opsReadinessScore,
+    opsReadinessLabel: exportDraft.opsReadinessLabel,
+    opsReadinessIssues: [...exportDraft.opsReadinessIssues],
+    proposalAmount: exportDraft.proposalAmount,
+    proposalLinkOrId: exportDraft.proposalLinkOrId,
+    handoffStatus: exportDraft.handoffStatus,
+    createdAt: exportDraft.createdAt,
+    updatedAt: exportDraft.updatedAt,
+    jobDraftSummary,
   };
 }
 
@@ -350,6 +359,82 @@ export function getConcreteOpsJobDraftExportFileName(draft = {}, date = new Date
       .slice(0, 80) || "draft";
 
   return `concrete-ops-job-draft-${slug}-${dateStamp}.json`;
+}
+
+function resolveOpsJobDraftExportLocation(draft = {}, options = {}) {
+  const sourceDraft = normalizeOpsJobDraft(draft);
+  const handoff = isPlainObject(options.handoff) ? options.handoff : {};
+  const lead = isPlainObject(options.lead) ? options.lead : {};
+  const proposal = isPlainObject(options.proposal) ? options.proposal : {};
+  const proposalClient = isPlainObject(proposal.client) ? proposal.client : {};
+  const proposalProject = isPlainObject(proposal.project) ? proposal.project : {};
+  let city = firstText(
+    sourceDraft.city,
+    options.city,
+    handoff.city,
+    lead.city,
+    proposalClient.city,
+    proposalProject.city,
+  );
+  let state = normalizeStateText(firstText(sourceDraft.state, options.state, handoff.state, lead.state, proposalClient.state, proposalProject.state));
+  const locationTexts = [
+    sourceDraft.jobAddress,
+    options.projectLocation,
+    options.location,
+    options.address,
+    handoff.projectAddress,
+    handoff.projectLocation,
+    lead.projectAddress,
+    lead.address,
+    lead.projectLocation,
+    proposalClient.projectAddress,
+    proposalClient.cityStateZip,
+    proposalProject.address,
+    proposalProject.location,
+  ];
+
+  for (const text of locationTexts) {
+    if (city && state) {
+      break;
+    }
+
+    const parsedLocation = parseCityStateFromText(text);
+    city = city || parsedLocation.city;
+    state = state || parsedLocation.state;
+  }
+
+  return {
+    city: toSafeText(city),
+    state: normalizeStateText(state),
+  };
+}
+
+function parseCityStateFromText(value) {
+  const text = toSafeText(value).replace(/\s+/g, " ");
+
+  if (!text) {
+    return { city: "", state: "" };
+  }
+
+  const commaMatch = text.match(/(?:^|,\s*)([A-Za-z][A-Za-z .'-]*?),\s*([A-Za-z]{2}|Oregon)(?:\s+\d{5}(?:-\d{4})?)?\b/i);
+
+  if (commaMatch) {
+    return {
+      city: toSafeText(commaMatch[1]),
+      state: normalizeStateText(commaMatch[2]),
+    };
+  }
+
+  const looseMatch = text.match(/\b([A-Za-z][A-Za-z .'-]+?)\s+([A-Za-z]{2}|Oregon)(?:\s+\d{5}(?:-\d{4})?)?$/i);
+
+  if (looseMatch) {
+    return {
+      city: toSafeText(looseMatch[1]),
+      state: normalizeStateText(looseMatch[2]),
+    };
+  }
+
+  return { city: "", state: "" };
 }
 
 function clampScoreOrBlank(value) {
@@ -375,6 +460,24 @@ function normalizeTextList(value = []) {
 function normalizeOption(value, options = [], fallback = "") {
   const text = toSafeText(value);
   return options.includes(text) ? text : fallback;
+}
+
+function firstText(...values) {
+  return values.map(toSafeText).find(Boolean) || "";
+}
+
+function normalizeStateText(value) {
+  const text = toSafeText(value);
+
+  if (!text) {
+    return "";
+  }
+
+  if (/^oregon$/i.test(text)) {
+    return "OR";
+  }
+
+  return text.toUpperCase().slice(0, 2);
 }
 
 function toSafeText(value) {

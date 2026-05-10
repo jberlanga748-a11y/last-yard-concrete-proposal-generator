@@ -242,6 +242,82 @@ test("export package filename uses job name or draft id with date stamp", () => 
   assert.equal(fallbackFileName, "concrete-ops-job-draft-draft-1-2026-05-10.json");
 });
 
+test("export package fills missing city and state from linked handoff lead or proposal data", () => {
+  const fromHandoff = createConcreteOpsJobDraftExportPackage(
+    {
+      id: "draft-from-handoff",
+      jobName: "Sidewalk repair",
+      sourceHandoffId: "handoff-1",
+    },
+    {
+      handoff: {
+        id: "handoff-1",
+        city: "Albany",
+        state: "or",
+      },
+    },
+  );
+  const fromLead = createConcreteOpsJobDraftExportPackage(
+    {
+      id: "draft-from-lead",
+      jobName: "Slab replacement",
+      sourceLeadId: "lead-1",
+    },
+    {
+      lead: {
+        id: "lead-1",
+        city: "Salem",
+        state: "OR",
+      },
+    },
+  );
+  const fromProposal = createConcreteOpsJobDraftExportPackage(
+    {
+      id: "draft-from-proposal",
+      jobName: "Curb repair",
+      sourceProposalId: "proposal-1",
+    },
+    {
+      proposal: {
+        id: "proposal-1",
+        project: {
+          location: "220 Demo Drive, Corvallis, OR 97330",
+        },
+      },
+    },
+  );
+
+  assert.equal(fromHandoff.city, "Albany");
+  assert.equal(fromHandoff.state, "OR");
+  assert.equal(fromLead.city, "Salem");
+  assert.equal(fromLead.state, "OR");
+  assert.equal(fromProposal.city, "Corvallis");
+  assert.equal(fromProposal.state, "OR");
+});
+
+test("export package derives city and state from job address when practical", () => {
+  const exportPackage = createConcreteOpsJobDraftExportPackage({
+    id: "draft-from-address",
+    jobName: "Park sidewalk",
+    jobAddress: "Settlemier Park, Woodburn, Oregon",
+  });
+
+  assert.equal(exportPackage.city, "Woodburn");
+  assert.equal(exportPackage.state, "OR");
+  assert.match(exportPackage.jobDraftSummary, /Location: Woodburn, OR/);
+});
+
+test("export package keeps blank city state fields but warns when location cannot be found", () => {
+  const exportPackage = createConcreteOpsJobDraftExportPackage({
+    id: "draft-missing-location",
+    jobName: "Mystery slab",
+  });
+
+  assert.equal(exportPackage.city, "");
+  assert.equal(exportPackage.state, "");
+  assert.match(exportPackage.jobDraftSummary, /City\/state missing — confirm before importing into Concrete Ops 2\./);
+});
+
 test("not-ready draft can still create an export package with readiness issues", () => {
   const exportPackage = createConcreteOpsJobDraftExportPackage({
     id: "draft-not-ready",

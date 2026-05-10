@@ -175,7 +175,8 @@ test("Concrete Ops job draft bridge adds prep-only routes, UI, and persistence",
   assert.match(opsJobDraftsSource, /createConcreteOpsJobDraftExportPackage/);
   assert.match(opsJobDraftsSource, /getConcreteOpsJobDraftExportFileName/);
   assert.match(opsJobDraftsSource, /packageType: CONCRETE_OPS_JOB_DRAFT_PACKAGE_TYPE/);
-  assert.match(opsJobDraftsSource, /jobDraftSummary: formatOpsJobDraftSummary/);
+  assert.match(opsJobDraftsSource, /const jobDraftSummary =/);
+  assert.match(opsJobDraftsSource, /City\/state missing — confirm before importing into Concrete Ops 2/);
   assert.match(opsJobDraftsViewSource, /Concrete Ops Job Drafts/);
   assert.match(opsJobDraftsViewSource, /Customer \/ Contact/);
   assert.match(opsJobDraftsViewSource, /Job Info/);

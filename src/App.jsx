@@ -3647,7 +3647,14 @@ export default function App() {
     }
 
     const normalizedDraft = normalizeOpsJobDraft(draft);
-    const packagePayload = createConcreteOpsJobDraftExportPackage(normalizedDraft);
+    const linkedHandoff = normalizedDraft.sourceHandoffId ? getJobHandoffById(jobHandoffs, normalizedDraft.sourceHandoffId) : null;
+    const linkedLead = normalizedDraft.sourceLeadId ? getLeadById(leadFinderData, normalizedDraft.sourceLeadId) : null;
+    const linkedProposal = normalizedDraft.sourceProposalId ? savedProposals.find((proposal) => proposal.id === normalizedDraft.sourceProposalId) || null : null;
+    const packagePayload = createConcreteOpsJobDraftExportPackage(normalizedDraft, {
+      handoff: linkedHandoff,
+      lead: linkedLead,
+      proposal: linkedProposal,
+    });
     const fileName = getConcreteOpsJobDraftExportFileName(normalizedDraft);
     const notReadyWarning =
       normalizedDraft.opsReadinessLabel === "Not Ready"
