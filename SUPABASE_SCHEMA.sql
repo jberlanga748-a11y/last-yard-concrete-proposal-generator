@@ -891,6 +891,8 @@ create table if not exists public.job_handoffs (
   schedule_notes text,
   document_links jsonb not null default '[]'::jsonb,
   handoff_status text,
+  ops_job_draft_id text,
+  handoff_history jsonb not null default '[]'::jsonb,
   ops_readiness_score numeric,
   ops_readiness_label text,
   ops_readiness_checklist jsonb not null default '[]'::jsonb,
@@ -905,6 +907,8 @@ create table if not exists public.job_handoffs (
 );
 
 alter table public.job_handoffs add column if not exists ops_readiness_score numeric;
+alter table public.job_handoffs add column if not exists ops_job_draft_id text;
+alter table public.job_handoffs add column if not exists handoff_history jsonb not null default '[]'::jsonb;
 alter table public.job_handoffs add column if not exists ops_readiness_label text;
 alter table public.job_handoffs add column if not exists ops_readiness_checklist jsonb not null default '[]'::jsonb;
 alter table public.job_handoffs add column if not exists ops_readiness_issues jsonb not null default '[]'::jsonb;
@@ -916,6 +920,7 @@ alter table public.job_handoffs add column if not exists ops_readiness_tbd_field
 create index if not exists job_handoffs_company_id_idx on public.job_handoffs(company_id);
 create index if not exists job_handoffs_company_status_idx on public.job_handoffs(company_id, handoff_status);
 create index if not exists job_handoffs_company_ops_readiness_idx on public.job_handoffs(company_id, ops_readiness_label);
+create index if not exists job_handoffs_ops_job_draft_id_idx on public.job_handoffs(ops_job_draft_id);
 create index if not exists job_handoffs_source_lead_id_idx on public.job_handoffs(source_lead_id);
 create index if not exists job_handoffs_source_proposal_id_idx on public.job_handoffs(source_proposal_id);
 
@@ -945,6 +950,83 @@ with check (public.current_user_can_edit_company(company_id));
 drop policy if exists "Users can delete job handoffs" on public.job_handoffs;
 create policy "Users can delete job handoffs"
 on public.job_handoffs for delete
+using (public.current_user_is_company_admin(company_id));
+
+-- Phase 42: Concrete Ops Job Draft bridge.
+-- Prep-only records shaped for a future Concrete Ops integration. These do not create real jobs.
+
+create table if not exists public.ops_job_drafts (
+  id text primary key,
+  company_id uuid references public.companies(id) on delete cascade not null,
+  source_handoff_id text,
+  source_lead_id text,
+  source_proposal_id text,
+  source_estimate_id text,
+  source_packet_id text,
+  customer_name text,
+  contact_name text,
+  contact_email text,
+  contact_phone text,
+  job_name text,
+  job_address text,
+  city text,
+  state text,
+  service_type text,
+  project_type text,
+  scope_summary text,
+  included_scope jsonb not null default '[]'::jsonb,
+  exclusions jsonb not null default '[]'::jsonb,
+  assumptions jsonb not null default '[]'::jsonb,
+  operations_notes text,
+  crew_notes text,
+  schedule_notes text,
+  start_date_target date,
+  assigned_crew_placeholder text,
+  foreman_placeholder text,
+  job_status text,
+  ops_readiness_score numeric,
+  ops_readiness_label text,
+  ops_readiness_issues jsonb not null default '[]'::jsonb,
+  proposal_amount numeric,
+  proposal_link_or_id text,
+  handoff_status text,
+  draft_status text,
+  draft_data jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists ops_job_drafts_company_id_idx on public.ops_job_drafts(company_id);
+create index if not exists ops_job_drafts_company_status_idx on public.ops_job_drafts(company_id, draft_status);
+create index if not exists ops_job_drafts_company_readiness_idx on public.ops_job_drafts(company_id, ops_readiness_label);
+create index if not exists ops_job_drafts_source_handoff_id_idx on public.ops_job_drafts(source_handoff_id);
+
+drop trigger if exists set_ops_job_drafts_updated_at on public.ops_job_drafts;
+create trigger set_ops_job_drafts_updated_at
+before update on public.ops_job_drafts
+for each row execute function public.set_updated_at();
+
+alter table public.ops_job_drafts enable row level security;
+
+drop policy if exists "Users can read ops job drafts" on public.ops_job_drafts;
+create policy "Users can read ops job drafts"
+on public.ops_job_drafts for select
+using (public.current_user_can_access_company(company_id));
+
+drop policy if exists "Users can insert ops job drafts" on public.ops_job_drafts;
+create policy "Users can insert ops job drafts"
+on public.ops_job_drafts for insert
+with check (public.current_user_can_edit_company(company_id));
+
+drop policy if exists "Users can update ops job drafts" on public.ops_job_drafts;
+create policy "Users can update ops job drafts"
+on public.ops_job_drafts for update
+using (public.current_user_can_edit_company(company_id))
+with check (public.current_user_can_edit_company(company_id));
+
+drop policy if exists "Users can delete ops job drafts" on public.ops_job_drafts;
+create policy "Users can delete ops job drafts"
+on public.ops_job_drafts for delete
 using (public.current_user_is_company_admin(company_id));
 
 drop trigger if exists set_lead_sources_updated_at on public.lead_sources;

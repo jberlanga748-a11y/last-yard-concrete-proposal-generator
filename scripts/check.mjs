@@ -20,6 +20,8 @@ const filesToCheck = [
   "src/utils/leadFinder.test.js",
   "src/utils/jobHandoffs.js",
   "src/utils/jobHandoffs.test.js",
+  "src/utils/opsJobDrafts.js",
+  "src/utils/opsJobDrafts.test.js",
   "src/utils/customerPortal.js",
   "src/utils/customerPortal.test.js",
   "src/utils/formatting/display.js",

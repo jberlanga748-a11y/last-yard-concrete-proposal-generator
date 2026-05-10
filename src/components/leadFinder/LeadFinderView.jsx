@@ -41,10 +41,12 @@ import {
   previewLeadFinderStarterSources,
 } from "../../utils/leadFinder.js";
 import { findJobHandoffForLead, getJobHandoffStats, normalizeJobHandoffs } from "../../utils/jobHandoffs.js";
+import { findOpsJobDraftForHandoff, getOpsJobDraftStats, normalizeOpsJobDrafts } from "../../utils/opsJobDrafts.js";
 
 export function LeadFinderView({
   data = {},
   jobHandoffs = [],
+  opsJobDrafts = [],
   leadAiConfigured = null,
   message = "",
   permissions = {},
@@ -58,6 +60,7 @@ export function LeadFinderView({
   onGenerateProposalDraft,
   onImportBackup,
   onCreateJobHandoff,
+  onCreateOpsJobDraft,
   onLeadHandoff,
   onMarkMissingInfoRequested,
   onNavigate,
@@ -103,10 +106,12 @@ export function LeadFinderView({
         <LeadCommandCenterPage
           data={normalizedData}
           jobHandoffs={jobHandoffs}
+          opsJobDrafts={opsJobDrafts}
           permissions={permissions}
           onAddLeadFromSource={addLeadFromSource}
           onCheckMissingInfoWithRules={onCheckMissingInfoWithRules}
           onCreateJobHandoff={onCreateJobHandoff}
+          onCreateOpsJobDraft={onCreateOpsJobDraft}
           onGenerateProposalDraft={onGenerateProposalDraft}
           onLeadHandoff={onLeadHandoff}
           onMarkMissingInfoRequested={onMarkMissingInfoRequested}
@@ -343,10 +348,12 @@ function LeadFinderDashboard({ data = {}, permissions = {}, onExportBackup, onIm
 function LeadCommandCenterPage({
   data = {},
   jobHandoffs = [],
+  opsJobDrafts = [],
   permissions = {},
   onAddLeadFromSource,
   onCheckMissingInfoWithRules,
   onCreateJobHandoff,
+  onCreateOpsJobDraft,
   onGenerateProposalDraft,
   onLeadHandoff,
   onMarkMissingInfoRequested,
@@ -357,10 +364,13 @@ function LeadCommandCenterPage({
 }) {
   const commandData = getLeadFinderCommandCenterData(data);
   const normalizedJobHandoffs = normalizeJobHandoffs(jobHandoffs);
+  const normalizedOpsJobDrafts = normalizeOpsJobDrafts(opsJobDrafts);
   const handoffStats = getJobHandoffStats(normalizedJobHandoffs);
+  const opsJobDraftStats = getOpsJobDraftStats(normalizedOpsJobDrafts);
   const readyOpsHandoffs = normalizedJobHandoffs.filter(
     (packet) => packet.opsReadinessLabel === "Ready" || packet.opsReadinessOverride || packet.handoffStatus === "Ready to Create Job",
   );
+  const readyOpsJobDrafts = normalizedOpsJobDrafts.filter((draft) => draft.draftStatus === "Ready to Create in Concrete Ops");
   const [localMessage, setLocalMessage] = useState("");
   const [actionLoading, setActionLoading] = useState("");
   const statCards = [
@@ -378,6 +388,8 @@ function LeadCommandCenterPage({
     ["Ready to Create Job", handoffStats.readyToCreateJob],
     ["Handoffs Not Ready", handoffStats.opsNotReady],
     ["Handoffs Ready for Concrete Ops", handoffStats.opsReady],
+    ["Ops Job Drafts Ready", opsJobDraftStats.readyToCreate],
+    ["Ops Job Drafts Needing Review", opsJobDraftStats.needsOpsReview],
   ];
 
   async function runLeadAction(lead, actionName, action) {
@@ -422,6 +434,20 @@ function LeadCommandCenterPage({
 
   async function createJobHandoff(lead) {
     await runLeadAction(lead, "job_handoff", async () => onCreateJobHandoff?.(lead));
+  }
+
+  async function createOpsDraftFromHandoff(packet) {
+    setActionLoading(`${packet.id}-ops-job-draft`);
+    setLocalMessage("");
+
+    try {
+      const result = await onCreateOpsJobDraft?.(packet);
+      setLocalMessage(result?.message || `Concrete Ops Job Draft started for ${packet.projectName || "handoff"}.`);
+    } catch (error) {
+      setLocalMessage(error?.message || "Concrete Ops Job Draft creation failed.");
+    } finally {
+      setActionLoading("");
+    }
   }
 
   async function followUpAction(lead, actionType) {
@@ -615,7 +641,21 @@ function LeadCommandCenterPage({
 
       <CommandCenterSection title="Ready for Concrete Ops" emptyText="No job handoff packets are ready for future Concrete Ops job creation yet.">
         {readyOpsHandoffs.map((packet) => (
-          <CommandCenterHandoffRow key={packet.id} packet={packet} onNavigate={onNavigate} />
+          <CommandCenterHandoffRow
+            actionLoading={actionLoading}
+            existingDraft={findOpsJobDraftForHandoff(normalizedOpsJobDrafts, packet.id)}
+            key={packet.id}
+            packet={packet}
+            permissions={permissions}
+            onCreateOpsDraft={createOpsDraftFromHandoff}
+            onNavigate={onNavigate}
+          />
+        ))}
+      </CommandCenterSection>
+
+      <CommandCenterSection title="Ready Ops Job Drafts" emptyText="No Concrete Ops Job Drafts are ready yet.">
+        {readyOpsJobDrafts.map((draft) => (
+          <CommandCenterOpsDraftRow draft={draft} key={draft.id} onNavigate={onNavigate} />
         ))}
       </CommandCenterSection>
     </div>
@@ -672,7 +712,9 @@ function CommandCenterLeadRow({ actionLoading = "", actions = [], lead = {}, onN
   );
 }
 
-function CommandCenterHandoffRow({ packet = {}, onNavigate }) {
+function CommandCenterHandoffRow({ actionLoading = "", existingDraft = null, packet = {}, permissions = {}, onCreateOpsDraft, onNavigate }) {
+  const isBusy = actionLoading.startsWith(`${packet.id}-`);
+
   return (
     <article className="lead-inbox-row job-handoff-row">
       <div className="lead-inbox-main">
@@ -695,8 +737,43 @@ function CommandCenterHandoffRow({ packet = {}, onNavigate }) {
         <strong>{packet.opsReadinessScore !== "" ? `${packet.opsReadinessScore}/100` : "No score"}</strong>
       </div>
       <div className="table-actions lead-review-actions">
+        {existingDraft ? (
+          <button type="button" onClick={() => onNavigate?.(`/ops-job-drafts/${existingDraft.id}`)}>
+            Open Concrete Ops Job Draft
+          </button>
+        ) : (
+          <button type="button" disabled={!permissions.editBid || isBusy} onClick={() => onCreateOpsDraft?.(packet)}>
+            Create Concrete Ops Job Draft
+          </button>
+        )}
         <button type="button" onClick={() => onNavigate?.(`/job-handoffs/${packet.id}`)}>
           Open Handoff
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function CommandCenterOpsDraftRow({ draft = {}, onNavigate }) {
+  return (
+    <article className="lead-inbox-row job-handoff-row">
+      <div className="lead-inbox-main">
+        <div className="bid-card-title">
+          <strong>{draft.jobName || "Untitled job draft"}</strong>
+          <Badge>{draft.draftStatus}</Badge>
+          {draft.opsReadinessLabel ? <Badge>{draft.opsReadinessLabel}</Badge> : null}
+        </div>
+        <p>{[draft.customerName, draft.city, draft.state, draft.serviceType].filter(Boolean).join(" | ") || "No draft details entered"}</p>
+        <small>{draft.scheduleNotes || draft.operationsNotes || draft.scopeSummary || "No operations notes entered yet."}</small>
+      </div>
+      <div className="lead-inbox-meta">
+        <span>{draft.startDateTarget ? `Start ${formatDisplayDate(draft.startDateTarget)}` : "No start target"}</span>
+        <span>{draft.proposalAmount !== "" ? formatCurrency(draft.proposalAmount) : "No amount"}</span>
+        <strong>{draft.opsReadinessScore !== "" ? `${draft.opsReadinessScore}/100` : "No score"}</strong>
+      </div>
+      <div className="table-actions lead-review-actions">
+        <button type="button" onClick={() => onNavigate?.(`/ops-job-drafts/${draft.id}`)}>
+          Open Draft
         </button>
       </div>
     </article>

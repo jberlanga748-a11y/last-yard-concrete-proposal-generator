@@ -8,6 +8,8 @@ const leadFinderViewSource = readFileSync(new URL("./components/leadFinder/LeadF
 const leadFinderSource = readFileSync(new URL("./utils/leadFinder.js", import.meta.url), "utf8");
 const jobHandoffsViewSource = readFileSync(new URL("./components/jobHandoffs/JobHandoffsView.jsx", import.meta.url), "utf8");
 const jobHandoffsSource = readFileSync(new URL("./utils/jobHandoffs.js", import.meta.url), "utf8");
+const opsJobDraftsViewSource = readFileSync(new URL("./components/opsJobDrafts/OpsJobDraftsView.jsx", import.meta.url), "utf8");
+const opsJobDraftsSource = readFileSync(new URL("./utils/opsJobDrafts.js", import.meta.url), "utf8");
 const schemaSource = readFileSync(new URL("../SUPABASE_SCHEMA.sql", import.meta.url), "utf8");
 const scoreLeadApiSource = readFileSync(new URL("../api/ai/score-lead.js", import.meta.url), "utf8");
 const draftProposalApiSource = readFileSync(new URL("../api/ai/draft-proposal.js", import.meta.url), "utf8");
@@ -16,9 +18,11 @@ const missingInfoApiSource = readFileSync(new URL("../api/ai/check-missing-info.
 test("app shell exposes AI Lead Finder navigation and routes", () => {
   assert.match(chromeSource, /AI Lead Finder/);
   assert.match(chromeSource, /Job Handoffs/);
+  assert.match(chromeSource, /Ops Job Drafts/);
   assert.match(chromeSource, /onNavigate\("\/lead-finder"\)/);
   assert.match(appSource, /segments\[0\] === "lead-finder"/);
   assert.match(appSource, /segments\[0\] === "job-handoffs"/);
+  assert.match(appSource, /segments\[0\] === "ops-job-drafts"/);
   assert.match(appSource, /section: "commandCenter"/);
   assert.match(appSource, /section: "review"/);
   assert.match(appSource, /section: "dailyCheck"/);
@@ -28,6 +32,7 @@ test("app shell exposes AI Lead Finder navigation and routes", () => {
   assert.match(appSource, /section: "leadDetail"/);
   assert.match(appSource, /<LeadFinderView/);
   assert.match(appSource, /<JobHandoffsView/);
+  assert.match(appSource, /<OpsJobDraftsView/);
 });
 
 test("lead finder data follows local-first company settings persistence", () => {
@@ -36,10 +41,15 @@ test("lead finder data follows local-first company settings persistence", () => 
   assert.match(appSource, /saveLeadFinderData\(leadFinderData\)/);
   assert.match(appSource, /leadFinder: normalizeLeadFinderData/);
   assert.match(appSource, /const jobHandoffsStorageKey = "last-yard-job-handoffs-v1"/);
+  assert.match(appSource, /const opsJobDraftsStorageKey = "last-yard-ops-job-drafts-v1"/);
   assert.match(appSource, /loadJobHandoffsData\(\)/);
   assert.match(appSource, /saveJobHandoffsData\(jobHandoffs\)/);
+  assert.match(appSource, /loadOpsJobDraftsData\(\)/);
+  assert.match(appSource, /saveOpsJobDraftsData\(opsJobDrafts\)/);
   assert.match(appSource, /jobHandoffs: normalizedJobHandoffs/);
+  assert.match(appSource, /opsJobDrafts: normalizedOpsJobDrafts/);
   assert.match(appSource, /extractJobHandoffsFromSettingsPaths/);
+  assert.match(appSource, /extractOpsJobDraftsFromSettingsPaths/);
   assert.match(appSource, /extractLeadFinderFromSettingsPaths/);
   assert.match(appSource, /source\.company\?\.leadFinder/);
   assert.match(appSource, /company: isPlainObject\(settings\.company\)/);
@@ -68,8 +78,11 @@ test("lead finder screens include dashboard sources inbox new lead and detail be
   assert.match(leadFinderViewSource, /Follow-Ups Due/);
   assert.match(leadFinderViewSource, /Ready To Bid \/ Ready To Proposal/);
   assert.match(leadFinderViewSource, /Ready for Concrete Ops/);
+  assert.match(leadFinderViewSource, /Ready Ops Job Drafts/);
   assert.match(leadFinderViewSource, /Handoffs Ready for Concrete Ops/);
   assert.match(leadFinderViewSource, /Handoffs Not Ready/);
+  assert.match(leadFinderViewSource, /Ops Job Drafts Ready/);
+  assert.match(leadFinderViewSource, /Ops Job Drafts Needing Review/);
   assert.match(leadFinderViewSource, /Open Command Center/);
   assert.match(leadFinderViewSource, /Mark Checked/);
   assert.match(leadFinderViewSource, /Add Lead From This Source/);
@@ -137,6 +150,8 @@ test("job handoff packet bridge adds prep-only routes, UI, and persistence", () 
   assert.match(jobHandoffsViewSource, /Concrete Ops Readiness/);
   assert.match(jobHandoffsViewSource, /Check Ops Readiness/);
   assert.match(jobHandoffsViewSource, /Override Readiness/);
+  assert.match(jobHandoffsViewSource, /Create Concrete Ops Job Draft/);
+  assert.match(jobHandoffsViewSource, /Open Concrete Ops Job Draft/);
   assert.match(jobHandoffsViewSource, /Handoffs Ready for Concrete Ops/);
   assert.match(jobHandoffsViewSource, /Handoffs Not Ready/);
   assert.match(jobHandoffsSource, /calculateJobHandoffOpsReadiness/);
@@ -149,7 +164,27 @@ test("job handoff packet bridge adds prep-only routes, UI, and persistence", () 
   assert.match(appSource, /createJobHandoffFromProposalAction/);
   assert.match(appSource, /commitLeadFinderAndJobHandoffs/);
   assert.match(appSource, /onCreateJobHandoff=\{createJobHandoffFromLeadAction\}/);
+  assert.match(appSource, /createOpsJobDraftFromHandoffAction/);
   assert.match(appSource, /\/job-handoffs\/\$\{handoff\.id\}/);
+});
+
+test("Concrete Ops job draft bridge adds prep-only routes, UI, and persistence", () => {
+  assert.match(opsJobDraftsSource, /OPS_JOB_DRAFT_STATUSES/);
+  assert.match(opsJobDraftsSource, /createOpsJobDraftFromHandoff/);
+  assert.match(opsJobDraftsSource, /formatOpsJobDraftSummary/);
+  assert.match(opsJobDraftsViewSource, /Concrete Ops Job Drafts/);
+  assert.match(opsJobDraftsViewSource, /Customer \/ Contact/);
+  assert.match(opsJobDraftsViewSource, /Job Info/);
+  assert.match(opsJobDraftsViewSource, /Scope/);
+  assert.match(opsJobDraftsViewSource, /Proposal \/ Handoff Links/);
+  assert.match(opsJobDraftsViewSource, /Ops Readiness/);
+  assert.match(opsJobDraftsViewSource, /Crew \/ Schedule Placeholders/);
+  assert.match(opsJobDraftsViewSource, /Draft Status/);
+  assert.match(opsJobDraftsViewSource, /Copy Concrete Ops Job Draft Summary/);
+  assert.match(appSource, /findOpsJobDraftForHandoff/);
+  assert.match(appSource, /opsJobDraftId/);
+  assert.match(appSource, /No real Concrete Ops job was created/);
+  assert.match(appSource, /\/ops-job-drafts\/\$\{draft\.id\}/);
 });
 
 test("lead finder handoff uses existing proposal and contact paths", () => {
@@ -227,11 +262,15 @@ test("Supabase schema includes future lead finder tables and RLS policies", () =
   assert.match(schemaSource, /handoff_history jsonb/);
   assert.match(schemaSource, /job_handoff_id text/);
   assert.match(schemaSource, /create table if not exists public\.job_handoffs/);
+  assert.match(schemaSource, /ops_job_draft_id text/);
   assert.match(schemaSource, /job_handoffs_company_status_idx/);
   assert.match(schemaSource, /ops_readiness_score numeric/);
   assert.match(schemaSource, /ops_readiness_checklist jsonb/);
   assert.match(schemaSource, /ops_readiness_override boolean/);
   assert.match(schemaSource, /job_handoffs_company_ops_readiness_idx/);
+  assert.match(schemaSource, /create table if not exists public\.ops_job_drafts/);
+  assert.match(schemaSource, /ops_job_drafts_company_status_idx/);
+  assert.match(schemaSource, /Users can read ops job drafts/);
   assert.match(schemaSource, /next_follow_up_date date/);
   assert.match(schemaSource, /follow_up_status text/);
   assert.match(schemaSource, /Users can read lead sources/);

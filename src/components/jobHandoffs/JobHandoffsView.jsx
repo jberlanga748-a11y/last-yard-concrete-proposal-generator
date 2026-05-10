@@ -13,13 +13,16 @@ import {
   normalizeJobHandoffs,
   toggleJobHandoffOpsTbdField,
 } from "../../utils/jobHandoffs.js";
+import { findOpsJobDraftForHandoff, getOpsJobDraftById } from "../../utils/opsJobDrafts.js";
 
 export function JobHandoffsView({
   handoffs = [],
   message = "",
+  opsJobDrafts = [],
   permissions = {},
   route = {},
   onBackToDashboard,
+  onCreateOpsJobDraft,
   onNavigate,
   onSaveHandoff,
 }) {
@@ -47,9 +50,11 @@ export function JobHandoffsView({
       {section === "detail" ? (
         <JobHandoffDetailPage
           handoffs={normalizedHandoffs}
+          opsJobDrafts={opsJobDrafts}
           packetId={route.id}
           permissions={permissions}
           onNavigate={onNavigate}
+          onCreateOpsJobDraft={onCreateOpsJobDraft}
           onSaveHandoff={onSaveHandoff}
         />
       ) : (
@@ -193,8 +198,10 @@ function JobHandoffListPage({ handoffs = [], onNavigate }) {
   );
 }
 
-function JobHandoffDetailPage({ handoffs = [], packetId = "", permissions = {}, onNavigate, onSaveHandoff }) {
+function JobHandoffDetailPage({ handoffs = [], opsJobDrafts = [], packetId = "", permissions = {}, onNavigate, onCreateOpsJobDraft, onSaveHandoff }) {
   const existingPacket = getJobHandoffById(handoffs, packetId);
+  const existingOpsDraft =
+    existingPacket?.opsJobDraftId ? getOpsJobDraftById(opsJobDrafts, existingPacket.opsJobDraftId) : findOpsJobDraftForHandoff(opsJobDrafts, existingPacket?.id);
   const [packetDraft, setPacketDraft] = useState(() => (existingPacket ? normalizeJobHandoff(existingPacket) : null));
   const [localMessage, setLocalMessage] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
@@ -276,6 +283,15 @@ function JobHandoffDetailPage({ handoffs = [], packetId = "", permissions = {}, 
           <button type="button" onClick={() => window.print()}>
             Print / Save as PDF
           </button>
+          {existingOpsDraft ? (
+            <button type="button" onClick={() => onNavigate?.(`/ops-job-drafts/${existingOpsDraft.id}`)}>
+              Open Concrete Ops Job Draft
+            </button>
+          ) : (
+            <button type="button" disabled={!permissions.editBid} onClick={() => onCreateOpsJobDraft?.(packetDraft)}>
+              Create Concrete Ops Job Draft
+            </button>
+          )}
           <button className="gold-action" type="submit" disabled={!permissions.editBid}>
             Save Handoff
           </button>
@@ -347,6 +363,7 @@ function JobHandoffDetailPage({ handoffs = [], packetId = "", permissions = {}, 
         </HandoffSection>
 
         <ConcreteOpsReadinessCard
+          existingOpsDraft={existingOpsDraft}
           overrideReason={overrideReason}
           packet={packetDraft}
           permissions={permissions}
@@ -447,6 +464,7 @@ function JobHandoffListRow({ packet = {}, onNavigate }) {
 }
 
 function ConcreteOpsReadinessCard({
+  existingOpsDraft = null,
   overrideReason = "",
   packet = {},
   permissions = {},
@@ -474,6 +492,7 @@ function ConcreteOpsReadinessCard({
         {isNotReady ? <p className="backup-message-error">This handoff is not ready to create a Concrete Ops job yet.</p> : null}
         {isReady ? <p className="backup-message">This handoff is ready for future Concrete Ops job creation.</p> : null}
         {packet.opsReadinessOverrideReason ? <p>Override reason: {packet.opsReadinessOverrideReason}</p> : null}
+        {existingOpsDraft ? <p>Concrete Ops Job Draft: {existingOpsDraft.jobName || existingOpsDraft.id}</p> : null}
         <div className="settings-actions no-print">
           <button type="button" disabled={!permissions.editBid} onClick={onCheckReadiness}>
             Check Ops Readiness

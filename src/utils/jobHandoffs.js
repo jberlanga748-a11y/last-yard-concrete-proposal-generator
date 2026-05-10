@@ -71,6 +71,8 @@ export function createEmptyJobHandoff(seed = {}) {
     scheduleNotes: "",
     documentLinks: [],
     handoffStatus: "Draft",
+    opsJobDraftId: "",
+    handoffHistory: [],
     opsReadinessScore: "",
     opsReadinessLabel: "",
     opsReadinessChecklist: [],
@@ -127,6 +129,8 @@ export function normalizeJobHandoff(packet = {}) {
     scheduleNotes: toSafeText(source.scheduleNotes),
     documentLinks: normalizeDocumentLinks(source.documentLinks),
     handoffStatus: normalizeOption(source.handoffStatus, JOB_HANDOFF_STATUSES, "Draft"),
+    opsJobDraftId: toSafeText(source.opsJobDraftId),
+    handoffHistory: normalizeHandoffHistory(source.handoffHistory),
     opsReadinessScore: clampScoreOrBlank(source.opsReadinessScore),
     opsReadinessLabel: normalizeOption(source.opsReadinessLabel, JOB_HANDOFF_OPS_READINESS_LABELS, ""),
     opsReadinessChecklist: normalizeOpsReadinessChecklist(source.opsReadinessChecklist),
@@ -622,6 +626,20 @@ function normalizeDocumentLinks(links = []) {
       };
     })
     .filter(Boolean);
+}
+
+function normalizeHandoffHistory(history = []) {
+  return (Array.isArray(history) ? history : [])
+    .filter(isPlainObject)
+    .map((entry) => ({
+      ...entry,
+      action: toSafeText(entry.action),
+      at: toIsoDateTime(entry.at || entry.createdAt || entry.timestamp),
+      notes: toSafeText(entry.notes),
+      recordId: toSafeText(entry.recordId),
+      recordType: toSafeText(entry.recordType),
+    }))
+    .filter((entry) => entry.action || entry.recordId || entry.notes);
 }
 
 function normalizeTextList(value = []) {

@@ -6,6 +6,7 @@ import { BackupView } from "./components/backup/BackupView.jsx";
 import { Badge, StatusBadge } from "./components/common/Badges.jsx";
 import { JobHandoffsView } from "./components/jobHandoffs/JobHandoffsView.jsx";
 import { LeadFinderView } from "./components/leadFinder/LeadFinderView.jsx";
+import { OpsJobDraftsView } from "./components/opsJobDrafts/OpsJobDraftsView.jsx";
 import { CloudStatusCard } from "./components/settings/CloudStatusCard.jsx";
 import { TeamAccessPanel } from "./components/settings/TeamAccessPanel.jsx";
 import { AppChrome } from "./components/shell/AppChrome.jsx";
@@ -222,6 +223,15 @@ import {
   upsertJobHandoff,
 } from "./utils/jobHandoffs.js";
 import {
+  createOpsJobDraftFromHandoff,
+  findOpsJobDraftForHandoff,
+  getOpsJobDraftById,
+  mergeOpsJobDrafts,
+  normalizeOpsJobDraft,
+  normalizeOpsJobDrafts,
+  upsertOpsJobDraft,
+} from "./utils/opsJobDrafts.js";
+import {
   applyCustomerSelectionToProposal,
   buildCustomerApprovalRecord,
   buildCustomerChangeRequestRecord,
@@ -271,6 +281,7 @@ const priceLibraryStorageKey = "last-yard-price-library-v1";
 const bidsStorageKey = "last-yard-bids-v1";
 const leadFinderStorageKey = "last-yard-lead-finder-v1";
 const jobHandoffsStorageKey = "last-yard-job-handoffs-v1";
+const opsJobDraftsStorageKey = "last-yard-ops-job-drafts-v1";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
 const demoContactId = "demo-contact-abc-prime-contractors";
@@ -645,6 +656,10 @@ export default function App() {
     getJobHandoffsFromSettings(initialAppState.companySettings, loadJobHandoffsData()),
   );
   const [jobHandoffMessage, setJobHandoffMessage] = useState("");
+  const [opsJobDrafts, setOpsJobDrafts] = useState(() =>
+    getOpsJobDraftsFromSettings(initialAppState.companySettings, loadOpsJobDraftsData()),
+  );
+  const [opsJobDraftMessage, setOpsJobDraftMessage] = useState("");
   const [leadAiConfigured, setLeadAiConfigured] = useState(null);
   const [activityLog, setActivityLog] = useState(() => loadActivityLogFromLocalStorage());
   const [bidDraft, setBidDraft] = useState(() => createEmptyBid());
@@ -707,6 +722,7 @@ export default function App() {
   const isBidsView = route.view === "bids";
   const isLeadFinderView = route.view === "leadFinder";
   const isJobHandoffsView = route.view === "jobHandoffs";
+  const isOpsJobDraftsView = route.view === "opsJobDrafts";
   const isActivityView = route.view === "activity";
   const isCustomerPortalView = route.view === "customerPortal";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
@@ -769,6 +785,10 @@ export default function App() {
   useEffect(() => {
     saveJobHandoffsData(jobHandoffs);
   }, [jobHandoffs]);
+
+  useEffect(() => {
+    saveOpsJobDraftsData(opsJobDrafts);
+  }, [opsJobDrafts]);
 
   useEffect(() => {
     if (!isLeadFinderView) {
@@ -1093,7 +1113,8 @@ export default function App() {
         isPriceLibraryView ||
         isBidsView ||
         isLeadFinderView ||
-        isJobHandoffsView
+        isJobHandoffsView ||
+        isOpsJobDraftsView
       ) {
         return;
       }
@@ -1108,7 +1129,7 @@ export default function App() {
 
     window.addEventListener("keydown", handlePrintShortcut);
     return () => window.removeEventListener("keydown", handlePrintShortcut);
-  }, [isActivityView, isBackupView, isBidsView, isContactsView, isDashboardView, isJobHandoffsView, isLeadFinderView, isListView, isLoginView, isPriceLibraryView, isSettingsView, proposalDraft]);
+  }, [isActivityView, isBackupView, isBidsView, isContactsView, isDashboardView, isJobHandoffsView, isLeadFinderView, isListView, isLoginView, isOpsJobDraftsView, isPriceLibraryView, isSettingsView, proposalDraft]);
 
   useEffect(() => {
     if (validationNotice && proposalValidation.errors.length === 0) {
@@ -1145,12 +1166,13 @@ export default function App() {
     const activityPriceLibrary = Array.isArray(event.priceLibrary) ? event.priceLibrary : priceLibrary;
     const activityLeadFinder = isPlainObject(event.leadFinder) ? event.leadFinder : leadFinderData;
     const activityJobHandoffs = Array.isArray(event.jobHandoffs) ? event.jobHandoffs : jobHandoffs;
+    const activityOpsJobDrafts = Array.isArray(event.opsJobDrafts) ? event.opsJobDrafts : opsJobDrafts;
     const nextLog = normalizeActivityLog([record, ...baseLog]);
-    const settingsWithActivity = getSettingsWithPriceLibraryAndBids(baseSettings, activityPriceLibrary, activityBids, nextLog, activityLeadFinder, activityJobHandoffs);
+    const settingsWithActivity = getSettingsWithPriceLibraryAndBids(baseSettings, activityPriceLibrary, activityBids, nextLog, activityLeadFinder, activityJobHandoffs, activityOpsJobDrafts);
 
     setActivityLog(nextLog);
     setCompanySettings(settingsWithActivity);
-    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, activityPriceLibrary, activityBids, nextLog, activityLeadFinder, activityJobHandoffs));
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, activityPriceLibrary, activityBids, nextLog, activityLeadFinder, activityJobHandoffs, activityOpsJobDrafts));
 
     if (canUseCloudSync(authUser)) {
       syncActivityLogToCloud(settingsWithActivity);
@@ -1791,7 +1813,7 @@ export default function App() {
       return;
     }
 
-    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs);
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs, opsJobDrafts);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     setSettingsMessage(getCloudReadyMessage(authUser, "Company settings saved locally. Syncing to cloud...", "Company settings saved locally."));
@@ -1825,7 +1847,7 @@ export default function App() {
     try {
       const companyRecord = await ensureCloudCompany(
         user,
-        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs),
+        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs, opsJobDrafts),
         companyCloudDeps,
       );
 
@@ -1835,7 +1857,7 @@ export default function App() {
 
       const settingsResult = await loadOrSeedCloudCompanySettings(
         companyRecord.id,
-        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs),
+        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs, opsJobDrafts),
         companyCloudDeps,
       );
 
@@ -1866,12 +1888,14 @@ export default function App() {
       const syncedActivityLog = getActivityLogFromSettings(settingsResult.settings, activityLog);
       const syncedLeadFinder = getLeadFinderFromSettings(settingsResult.settings, leadFinderData);
       const syncedJobHandoffs = getJobHandoffsFromSettings(settingsResult.settings, jobHandoffs);
-      const syncedSettings = getSettingsWithPriceLibraryAndBids(settingsResult.settings, syncedPriceLibrary, syncedBids, syncedActivityLog, syncedLeadFinder, syncedJobHandoffs);
+      const syncedOpsJobDrafts = getOpsJobDraftsFromSettings(settingsResult.settings, opsJobDrafts);
+      const syncedSettings = getSettingsWithPriceLibraryAndBids(settingsResult.settings, syncedPriceLibrary, syncedBids, syncedActivityLog, syncedLeadFinder, syncedJobHandoffs, syncedOpsJobDrafts);
 
       setPriceLibrary(syncedPriceLibrary);
       setSavedBids(syncedBids);
       setLeadFinderData(syncedLeadFinder);
       setJobHandoffs(syncedJobHandoffs);
+      setOpsJobDrafts(syncedOpsJobDrafts);
       setActivityLog(syncedActivityLog);
       setCompanySettings(syncedSettings);
       setSettingsDraft(syncedSettings);
@@ -1924,6 +1948,7 @@ export default function App() {
     const activityForSettings = Array.isArray(settings?.activityLog) ? settings.activityLog : activityLog;
     const leadFinderForSettings = isPlainObject(settings?.leadFinder) ? settings.leadFinder : leadFinderData;
     const jobHandoffsForSettings = Array.isArray(settings?.jobHandoffs) ? settings.jobHandoffs : jobHandoffs;
+    const opsJobDraftsForSettings = Array.isArray(settings?.opsJobDrafts) ? settings.opsJobDrafts : opsJobDrafts;
     const normalizedSettings = getSettingsWithPriceLibraryAndBids(
       settings,
       libraryForSettings,
@@ -1931,6 +1956,7 @@ export default function App() {
       activityForSettings,
       leadFinderForSettings,
       jobHandoffsForSettings,
+      opsJobDraftsForSettings,
     );
 
     if (!canUseCloudSync(authUser)) {
@@ -2110,7 +2136,7 @@ export default function App() {
       return;
     }
 
-    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs);
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs, opsJobDrafts);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     await syncSettingsToCloud(normalizedSettings);
@@ -2810,11 +2836,11 @@ export default function App() {
 
   async function commitBids(nextBids, message = "Bid pipeline saved locally.") {
     const normalizedBids = normalizeBids(nextBids);
-    const settingsWithBids = getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, normalizedBids, activityLog, leadFinderData, jobHandoffs);
+    const settingsWithBids = getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, normalizedBids, activityLog, leadFinderData, jobHandoffs, opsJobDrafts);
 
     setSavedBids(normalizedBids);
     setCompanySettings(settingsWithBids);
-    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, normalizedBids, activityLog, leadFinderData, jobHandoffs));
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, normalizedBids, activityLog, leadFinderData, jobHandoffs, opsJobDrafts));
     setBidMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
     if (canUseCloudSync(authUser)) {
@@ -2832,12 +2858,13 @@ export default function App() {
       activityLog,
       normalizedLeadFinderData,
       jobHandoffs,
+      opsJobDrafts,
     );
 
     setLeadFinderData(normalizedLeadFinderData);
     setCompanySettings(settingsWithLeadFinder);
     setSettingsDraft((currentSettings) =>
-      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, normalizedLeadFinderData, jobHandoffs),
+      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, normalizedLeadFinderData, jobHandoffs, opsJobDrafts),
     );
     setLeadFinderMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
@@ -2858,12 +2885,13 @@ export default function App() {
       activityLog,
       leadFinderData,
       normalizedHandoffs,
+      opsJobDrafts,
     );
 
     setJobHandoffs(normalizedHandoffs);
     setCompanySettings(settingsWithHandoffs);
     setSettingsDraft((currentSettings) =>
-      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, leadFinderData, normalizedHandoffs),
+      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, leadFinderData, normalizedHandoffs, opsJobDrafts),
     );
     setJobHandoffMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
@@ -2885,13 +2913,14 @@ export default function App() {
       activityLog,
       normalizedLeadFinderData,
       normalizedHandoffs,
+      opsJobDrafts,
     );
 
     setLeadFinderData(normalizedLeadFinderData);
     setJobHandoffs(normalizedHandoffs);
     setCompanySettings(settingsWithBoth);
     setSettingsDraft((currentSettings) =>
-      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, normalizedLeadFinderData, normalizedHandoffs),
+      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, normalizedLeadFinderData, normalizedHandoffs, opsJobDrafts),
     );
     setLeadFinderMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
     setJobHandoffMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
@@ -2906,6 +2935,68 @@ export default function App() {
     return {
       handoffs: normalizedHandoffs,
       leadFinder: normalizedLeadFinderData,
+    };
+  }
+
+  async function commitOpsJobDrafts(nextDrafts, message = "Concrete Ops job drafts saved locally.") {
+    const normalizedDrafts = normalizeOpsJobDrafts(nextDrafts);
+    const settingsWithDrafts = getSettingsWithPriceLibraryAndBids(
+      companySettings,
+      priceLibrary,
+      savedBids,
+      activityLog,
+      leadFinderData,
+      jobHandoffs,
+      normalizedDrafts,
+    );
+
+    setOpsJobDrafts(normalizedDrafts);
+    setCompanySettings(settingsWithDrafts);
+    setSettingsDraft((currentSettings) =>
+      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs, normalizedDrafts),
+    );
+    setOpsJobDraftMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
+
+    if (canUseCloudSync(authUser)) {
+      const synced = await syncSettingsToCloud(settingsWithDrafts);
+      setOpsJobDraftMessage(synced ? `${message} Synced to cloud settings.` : `${message} Cloud sync failed. See Settings for details.`);
+    }
+
+    return normalizedDrafts;
+  }
+
+  async function commitJobHandoffsAndOpsJobDrafts(nextHandoffs, nextDrafts, message = "Job Handoff and Concrete Ops draft data saved locally.") {
+    const normalizedHandoffs = normalizeJobHandoffs(nextHandoffs);
+    const normalizedDrafts = normalizeOpsJobDrafts(nextDrafts);
+    const settingsWithBoth = getSettingsWithPriceLibraryAndBids(
+      companySettings,
+      priceLibrary,
+      savedBids,
+      activityLog,
+      leadFinderData,
+      normalizedHandoffs,
+      normalizedDrafts,
+    );
+
+    setJobHandoffs(normalizedHandoffs);
+    setOpsJobDrafts(normalizedDrafts);
+    setCompanySettings(settingsWithBoth);
+    setSettingsDraft((currentSettings) =>
+      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, leadFinderData, normalizedHandoffs, normalizedDrafts),
+    );
+    setJobHandoffMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
+    setOpsJobDraftMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
+
+    if (canUseCloudSync(authUser)) {
+      const synced = await syncSettingsToCloud(settingsWithBoth);
+      const syncMessage = synced ? `${message} Synced to cloud settings.` : `${message} Cloud sync failed. See Settings for details.`;
+      setJobHandoffMessage(syncMessage);
+      setOpsJobDraftMessage(syncMessage);
+    }
+
+    return {
+      drafts: normalizedDrafts,
+      handoffs: normalizedHandoffs,
     };
   }
 
@@ -3522,6 +3613,120 @@ export default function App() {
     navigate(`/job-handoffs/${handoff.id}`, { skipUnsavedCheck: true });
 
     return { handoff, message: `Created Job Handoff Packet for ${handoff.projectName || "proposal"}.` };
+  }
+
+  async function saveOpsJobDraft(draft) {
+    if (!canPerform("editBid", setOpsJobDraftMessage)) {
+      return null;
+    }
+
+    const normalizedDraft = normalizeOpsJobDraft({
+      ...draft,
+      updatedAt: new Date().toISOString(),
+    });
+    const nextDrafts = upsertOpsJobDraft(opsJobDrafts, normalizedDraft);
+
+    await commitOpsJobDrafts(nextDrafts, `Saved ${normalizedDraft.jobName || "Concrete Ops job draft"} locally.`);
+    recordActivity({
+      action: opsJobDrafts.some((item) => item.id === normalizedDraft.id) ? "Concrete Ops job draft updated" : "Concrete Ops job draft created",
+      entityType: "ops_job_draft",
+      entityId: normalizedDraft.id,
+      entityLabel: normalizedDraft.jobName || "Concrete Ops job draft",
+      opsJobDrafts: nextDrafts,
+      notes: normalizedDraft.draftStatus,
+    });
+
+    return getOpsJobDraftById(nextDrafts, normalizedDraft.id) || normalizedDraft;
+  }
+
+  async function createOpsJobDraftFromHandoffAction(handoff, options = {}) {
+    if (!canPerform("editBid", setJobHandoffMessage)) {
+      return null;
+    }
+
+    const normalizedHandoff = normalizeJobHandoff(handoff);
+
+    if (!normalizedHandoff.id) {
+      setJobHandoffMessage("Save this Job Handoff Packet before creating a Concrete Ops Job Draft.");
+      return null;
+    }
+
+    const existingDraft =
+      (normalizedHandoff.opsJobDraftId ? getOpsJobDraftById(opsJobDrafts, normalizedHandoff.opsJobDraftId) : null) ||
+      findOpsJobDraftForHandoff(opsJobDrafts, normalizedHandoff.id);
+
+    if (existingDraft && !options.forceDuplicate) {
+      const message = `Opened existing Concrete Ops Job Draft for ${normalizedHandoff.projectName || "handoff"}.`;
+      setJobHandoffMessage(message);
+      setOpsJobDraftMessage(message);
+      navigate(`/ops-job-drafts/${existingDraft.id}`, { skipUnsavedCheck: true });
+      return {
+        draft: existingDraft,
+        handoff: normalizedHandoff,
+        message,
+        recordId: existingDraft.id,
+        recordType: "ops_job_draft",
+      };
+    }
+
+    if (existingDraft && options.forceDuplicate && !window.confirm("A Concrete Ops Job Draft already exists for this handoff. Create another draft anyway?")) {
+      const message = "Opened existing Concrete Ops Job Draft.";
+      setJobHandoffMessage(message);
+      setOpsJobDraftMessage(message);
+      navigate(`/ops-job-drafts/${existingDraft.id}`, { skipUnsavedCheck: true });
+      return { cancelled: true, draft: existingDraft, handoff: normalizedHandoff, message };
+    }
+
+    const shouldWarnNotReady = normalizedHandoff.opsReadinessLabel === "Not Ready" && !normalizedHandoff.opsReadinessOverride;
+
+    if (
+      shouldWarnNotReady &&
+      !window.confirm("This handoff is not ready for Concrete Ops yet. You can still create a draft, but review missing items first.")
+    ) {
+      setJobHandoffMessage("Concrete Ops Job Draft creation cancelled.");
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const draft = createOpsJobDraftFromHandoff(normalizedHandoff, { createdAt: now, updatedAt: now });
+    const nextDrafts = upsertOpsJobDraft(opsJobDrafts, draft);
+    const linkedHandoff = normalizeJobHandoff({
+      ...normalizedHandoff,
+      opsJobDraftId: draft.id,
+      handoffHistory: [
+        ...(Array.isArray(normalizedHandoff.handoffHistory) ? normalizedHandoff.handoffHistory : []),
+        {
+          action: "Concrete Ops job draft created",
+          at: now,
+          notes: "Created prep-only Concrete Ops Job Draft. No real Concrete Ops job was created.",
+          recordId: draft.id,
+          recordType: "ops_job_draft",
+        },
+      ],
+      updatedAt: now,
+    });
+    const nextHandoffs = upsertJobHandoff(jobHandoffs, linkedHandoff);
+    const message = `Created Concrete Ops Job Draft for ${draft.jobName || "handoff"}.`;
+
+    await commitJobHandoffsAndOpsJobDrafts(nextHandoffs, nextDrafts, `${message} Handoff link and draft saved locally.`);
+    recordActivity({
+      action: "Concrete Ops job draft created",
+      entityType: "ops_job_draft",
+      entityId: draft.id,
+      entityLabel: draft.jobName || "Concrete Ops job draft",
+      jobHandoffs: nextHandoffs,
+      opsJobDrafts: nextDrafts,
+      notes: `Job Handoff: ${linkedHandoff.projectName || linkedHandoff.id}`,
+    });
+    navigate(`/ops-job-drafts/${draft.id}`, { skipUnsavedCheck: true });
+
+    return {
+      draft,
+      handoff: linkedHandoff,
+      message,
+      recordId: draft.id,
+      recordType: "ops_job_draft",
+    };
   }
 
   async function handleLeadHandoff(lead, actionType) {
@@ -5067,11 +5272,11 @@ export default function App() {
 
   async function commitPriceLibrary(nextLibrary, message = "Price library saved locally.") {
     const normalizedLibrary = normalizePriceLibrary(nextLibrary);
-    const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(companySettings, normalizedLibrary, savedBids, activityLog, leadFinderData, jobHandoffs);
+    const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(companySettings, normalizedLibrary, savedBids, activityLog, leadFinderData, jobHandoffs, opsJobDrafts);
 
     setPriceLibrary(normalizedLibrary);
     setCompanySettings(settingsWithLibrary);
-    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, normalizedLibrary, savedBids, activityLog, leadFinderData, jobHandoffs));
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, normalizedLibrary, savedBids, activityLog, leadFinderData, jobHandoffs, opsJobDrafts));
     setPriceLibraryMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
     if (canUseCloudSync(authUser)) {
@@ -6940,7 +7145,7 @@ export default function App() {
       }
 
       if (type === "settings") {
-        downloadJsonFile(createCompanySettingsExport(getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs)), getCompanySettingsBackupFileName());
+        downloadJsonFile(createCompanySettingsExport(getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs, opsJobDrafts)), getCompanySettingsBackupFileName());
         setBackupMessage("Exported company settings.");
         recordActivity({
           action: "Backup exported",
@@ -6979,7 +7184,7 @@ export default function App() {
 
       if (type === "full") {
         downloadJsonFile(
-          createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs),
+          createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs, opsJobDrafts),
           getFullBackupFileName(),
         );
         setBackupMessage(
@@ -7059,13 +7264,15 @@ export default function App() {
         const importedActivityLog = getActivityLogFromSettings(importedSettings, activityLog);
         const importedLeadFinder = getLeadFinderFromSettings(importedSettings, leadFinderData);
         const importedJobHandoffs = getJobHandoffsFromSettings(importedSettings, jobHandoffs);
-        const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog, importedLeadFinder, importedJobHandoffs);
+        const importedOpsJobDrafts = getOpsJobDraftsFromSettings(importedSettings, opsJobDrafts);
+        const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog, importedLeadFinder, importedJobHandoffs, importedOpsJobDrafts);
 
         setPriceLibrary(importedPriceLibrary);
         setSavedBids(importedBids);
         setActivityLog(importedActivityLog);
         setLeadFinderData(importedLeadFinder);
         setJobHandoffs(importedJobHandoffs);
+        setOpsJobDrafts(importedOpsJobDrafts);
         setCompanySettings(settingsWithLibrary);
         setSettingsDraft(settingsWithLibrary);
         setBackupMessage("Imported company settings. New proposals will use the restored defaults.");
@@ -7078,6 +7285,7 @@ export default function App() {
           bids: importedBids,
           jobHandoffs: importedJobHandoffs,
           leadFinder: importedLeadFinder,
+          opsJobDrafts: importedOpsJobDrafts,
           priceLibrary: importedPriceLibrary,
           settings: settingsWithLibrary,
         });
@@ -7170,6 +7378,10 @@ export default function App() {
           mode === "replace"
             ? normalizeJobHandoffs(importedBackup.jobHandoffs)
             : mergeJobHandoffs(jobHandoffs, importedBackup.jobHandoffs);
+        const nextOpsJobDrafts =
+          mode === "replace"
+            ? normalizeOpsJobDrafts(importedBackup.opsJobDrafts)
+            : mergeOpsJobDrafts(opsJobDrafts, importedBackup.opsJobDrafts);
         const importedSettings = getSettingsWithPriceLibraryAndBids(
           importedBackup.companySettings,
           importedPriceLibrary,
@@ -7177,12 +7389,14 @@ export default function App() {
           nextActivityLog,
           nextLeadFinder,
           nextJobHandoffs,
+          nextOpsJobDrafts,
         );
 
         setPriceLibrary(importedPriceLibrary);
         setSavedBids(nextBids);
         setLeadFinderData(nextLeadFinder);
         setJobHandoffs(nextJobHandoffs);
+        setOpsJobDrafts(nextOpsJobDrafts);
         setActivityLog(nextActivityLog);
         setCompanySettings(importedSettings);
         setSettingsDraft(importedSettings);
@@ -7205,6 +7419,7 @@ export default function App() {
           bids: nextBids,
           jobHandoffs: nextJobHandoffs,
           leadFinder: nextLeadFinder,
+          opsJobDrafts: nextOpsJobDrafts,
           priceLibrary: importedPriceLibrary,
           settings: importedSettings,
         });
@@ -7419,17 +7634,31 @@ export default function App() {
           onUpdateLeadReviewStatus={updateLeadReviewStatus}
           onUpdateLeadStatus={updateLeadStatus}
           jobHandoffs={jobHandoffs}
+          opsJobDrafts={opsJobDrafts}
           onCreateJobHandoff={createJobHandoffFromLeadAction}
+          onCreateOpsJobDraft={createOpsJobDraftFromHandoffAction}
         />
       ) : isJobHandoffsView ? (
         <JobHandoffsView
           handoffs={jobHandoffs}
           message={jobHandoffMessage}
+          opsJobDrafts={opsJobDrafts}
+          permissions={permissions}
+          route={route}
+          onBackToDashboard={() => navigate("/dashboard")}
+          onCreateOpsJobDraft={createOpsJobDraftFromHandoffAction}
+          onNavigate={navigate}
+          onSaveHandoff={saveJobHandoff}
+        />
+      ) : isOpsJobDraftsView ? (
+        <OpsJobDraftsView
+          drafts={opsJobDrafts}
+          message={opsJobDraftMessage}
           permissions={permissions}
           route={route}
           onBackToDashboard={() => navigate("/dashboard")}
           onNavigate={navigate}
-          onSaveHandoff={saveJobHandoff}
+          onSaveDraft={saveOpsJobDraft}
         />
       ) : isBidsView ? (
         <BidsRouteErrorBoundary onBackToDashboard={() => navigate("/dashboard")} onNewBid={startNewBid} resetKey={route.path}>
@@ -14211,6 +14440,14 @@ function parseRoute(pathname) {
     return { view: "jobHandoffs", section: "list", path: "/job-handoffs" };
   }
 
+  if (segments[0] === "ops-job-drafts") {
+    if (segments[1]) {
+      return { view: "opsJobDrafts", section: "detail", id: decodeURIComponent(segments[1]), path: `/ops-job-drafts/${segments[1]}` };
+    }
+
+    return { view: "opsJobDrafts", section: "list", path: "/ops-job-drafts" };
+  }
+
   if (segments[0] === "lead-finder") {
     if (segments[1] === "command-center") {
       return { view: "leadFinder", section: "commandCenter", path: "/lead-finder/command-center" };
@@ -14907,6 +15144,38 @@ function saveJobHandoffsData(handoffs) {
   }
 }
 
+function loadOpsJobDraftsData() {
+  const draftSources = [];
+
+  try {
+    const storedValue = window.localStorage.getItem(opsJobDraftsStorageKey);
+
+    if (storedValue) {
+      draftSources.push(JSON.parse(storedValue));
+    }
+
+    const storedSettings = window.localStorage.getItem(companySettingsStorageKey);
+
+    if (storedSettings) {
+      const parsedSettings = JSON.parse(storedSettings);
+
+      draftSources.push(extractOpsJobDraftsFromSettingsPaths(parsedSettings));
+    }
+  } catch {
+    // Fall through to any Concrete Ops job draft data collected before malformed local storage was encountered.
+  }
+
+  return mergeOpsJobDrafts(...draftSources);
+}
+
+function saveOpsJobDraftsData(drafts) {
+  try {
+    window.localStorage.setItem(opsJobDraftsStorageKey, JSON.stringify(normalizeOpsJobDrafts(drafts)));
+  } catch {
+    // Local Concrete Ops job draft saving is best-effort for this bridge phase.
+  }
+}
+
 function loadPriceLibrary() {
   try {
     const storedValue = window.localStorage.getItem(priceLibraryStorageKey);
@@ -14950,23 +15219,26 @@ function getSettingsWithPriceLibrary(settings = {}, priceLibrary = []) {
   });
 }
 
-function getSettingsWithPriceLibraryAndBids(settings = {}, priceLibrary = [], bids = [], activityLog = [], leadFinderData = null, jobHandoffsData = null) {
+function getSettingsWithPriceLibraryAndBids(settings = {}, priceLibrary = [], bids = [], activityLog = [], leadFinderData = null, jobHandoffsData = null, opsJobDraftsData = null) {
   const normalizedLeadFinderData = mergeLeadFinderData(extractLeadFinderFromSettingsPaths(settings), leadFinderData);
   const normalizedJobHandoffs = mergeJobHandoffs(extractJobHandoffsFromSettingsPaths(settings), jobHandoffsData);
+  const normalizedOpsJobDrafts = mergeOpsJobDrafts(extractOpsJobDraftsFromSettingsPaths(settings), opsJobDraftsData);
 
   return normalizeCompanySettings({
     ...(settings || {}),
     activityLog: normalizeActivityLog(Array.isArray(activityLog) && activityLog.length > 0 ? activityLog : settings?.activityLog),
     bidPipeline: normalizeBids(bids),
     company: isPlainObject(settings?.company)
-      ? {
+        ? {
           ...settings.company,
           jobHandoffs: mergeJobHandoffs(settings.company.jobHandoffs, normalizedJobHandoffs),
           leadFinder: mergeLeadFinderData(settings.company.leadFinder, normalizedLeadFinderData),
+          opsJobDrafts: mergeOpsJobDrafts(settings.company.opsJobDrafts, normalizedOpsJobDrafts),
         }
       : settings?.company,
     jobHandoffs: normalizedJobHandoffs,
     leadFinder: normalizedLeadFinderData,
+    opsJobDrafts: normalizedOpsJobDrafts,
     priceLibrary: normalizePriceLibrary(priceLibrary),
   });
 }
@@ -15003,6 +15275,15 @@ function getJobHandoffsFromSettings(settings = {}, fallbackJobHandoffs = []) {
 function extractJobHandoffsFromSettingsPaths(settings = {}) {
   const source = isPlainObject(settings) ? settings : {};
   return mergeJobHandoffs(source.jobHandoffs, source.company?.jobHandoffs);
+}
+
+function getOpsJobDraftsFromSettings(settings = {}, fallbackDrafts = []) {
+  return mergeOpsJobDrafts(fallbackDrafts, extractOpsJobDraftsFromSettingsPaths(settings));
+}
+
+function extractOpsJobDraftsFromSettingsPaths(settings = {}) {
+  const source = isPlainObject(settings) ? settings : {};
+  return mergeOpsJobDrafts(source.opsJobDrafts, source.company?.opsJobDrafts);
 }
 
 function isDemoRecord(record = {}) {
@@ -15074,12 +15355,13 @@ function createPriceLibraryExport(priceLibrary = []) {
   };
 }
 
-function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = [], bids = [], activityLog = [], leadFinderData = {}, jobHandoffsData = []) {
+function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = [], bids = [], activityLog = [], leadFinderData = {}, jobHandoffsData = [], opsJobDraftsData = []) {
   const normalizedPriceLibrary = normalizePriceLibrary(priceLibrary);
   const normalizedBids = normalizeBids(bids);
   const normalizedActivityLog = normalizeActivityLog(activityLog);
   const normalizedLeadFinderData = normalizeLeadFinderData(leadFinderData);
   const normalizedJobHandoffs = normalizeJobHandoffs(jobHandoffsData);
+  const normalizedOpsJobDrafts = normalizeOpsJobDrafts(opsJobDraftsData);
 
   return {
     backupVersion,
@@ -15093,17 +15375,19 @@ function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = 
       bids: bidsStorageKey,
       leadFinder: leadFinderStorageKey,
       jobHandoffs: jobHandoffsStorageKey,
+      opsJobDrafts: opsJobDraftsStorageKey,
       priceLibrary: priceLibraryStorageKey,
       activityLog: activityLogStorageKey,
     },
     proposals: cloneObject(proposals),
     companySettings: cloneObject(
-      getSettingsWithPriceLibraryAndBids(settings, normalizedPriceLibrary, normalizedBids, normalizedActivityLog, normalizedLeadFinderData, normalizedJobHandoffs),
+      getSettingsWithPriceLibraryAndBids(settings, normalizedPriceLibrary, normalizedBids, normalizedActivityLog, normalizedLeadFinderData, normalizedJobHandoffs, normalizedOpsJobDrafts),
     ),
     contacts: cloneObject(contacts),
     bids: cloneObject(normalizedBids),
     leadFinder: cloneObject(normalizedLeadFinderData),
     jobHandoffs: cloneObject(normalizedJobHandoffs),
+    opsJobDrafts: cloneObject(normalizedOpsJobDrafts),
     priceLibrary: cloneObject(normalizedPriceLibrary),
     activityLog: cloneObject(normalizedActivityLog),
   };
@@ -15218,6 +15502,10 @@ function parseJobHandoffsImport(importedJson) {
   return normalizeJobHandoffs(importedJson?.jobHandoffs || importedJson?.companySettings?.jobHandoffs || importedJson?.companySettings?.company?.jobHandoffs);
 }
 
+function parseOpsJobDraftsImport(importedJson) {
+  return normalizeOpsJobDrafts(importedJson?.opsJobDrafts || importedJson?.companySettings?.opsJobDrafts || importedJson?.companySettings?.company?.opsJobDrafts);
+}
+
 function parseFullAppBackupImport(importedJson) {
   if (!isPlainObject(importedJson) || (!Array.isArray(importedJson.proposals) && !isPlainObject(importedJson.companySettings))) {
     throw new Error("This file does not look like a full app backup.");
@@ -15235,14 +15523,16 @@ function parseFullAppBackupImport(importedJson) {
     : [];
   const importedLeadFinder = parseLeadFinderImport(importedJson);
   const importedJobHandoffs = parseJobHandoffsImport(importedJson);
+  const importedOpsJobDrafts = parseOpsJobDraftsImport(importedJson);
 
   return {
     proposals: parseProposalCollectionImport(importedJson),
-    companySettings: getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog, importedLeadFinder, importedJobHandoffs),
+    companySettings: getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog, importedLeadFinder, importedJobHandoffs, importedOpsJobDrafts),
     contacts: Array.isArray(importedJson.contacts) ? parseContactCollectionImport(importedJson) : [],
     bids: importedBids,
     leadFinder: importedLeadFinder,
     jobHandoffs: importedJobHandoffs,
+    opsJobDrafts: importedOpsJobDrafts,
     priceLibrary: importedPriceLibrary,
     activityLog: importedActivityLog,
   };
@@ -17283,6 +17573,7 @@ function getDefaultCompanySettings() {
     defaultSignatureBlock: terms.acceptance,
     proposalPdfStyle: getDefaultProposalPdfStyleSettings(),
     jobHandoffs: normalizeJobHandoffs(),
+    opsJobDrafts: normalizeOpsJobDrafts(),
     leadFinder: normalizeLeadFinderData(),
   };
 }
@@ -17291,6 +17582,7 @@ function normalizeCompanySettings(settings = {}) {
   const defaults = getDefaultCompanySettings();
   const normalizedLeadFinderData = mergeLeadFinderData(settings.leadFinder, settings.company?.leadFinder, defaults.leadFinder);
   const normalizedJobHandoffs = mergeJobHandoffs(settings.jobHandoffs, settings.company?.jobHandoffs, defaults.jobHandoffs);
+  const normalizedOpsJobDrafts = mergeOpsJobDrafts(settings.opsJobDrafts, settings.company?.opsJobDrafts, defaults.opsJobDrafts);
 
   return {
     ...defaults,
@@ -17300,6 +17592,7 @@ function normalizeCompanySettings(settings = {}) {
           ...settings.company,
           jobHandoffs: mergeJobHandoffs(settings.company.jobHandoffs, normalizedJobHandoffs),
           leadFinder: mergeLeadFinderData(settings.company.leadFinder, normalizedLeadFinderData),
+          opsJobDrafts: mergeOpsJobDrafts(settings.company.opsJobDrafts, normalizedOpsJobDrafts),
         }
       : settings.company,
     companyName: hasTextValue(settings.companyName) ? settings.companyName : defaults.companyName,
@@ -17351,6 +17644,7 @@ function normalizeCompanySettings(settings = {}) {
       ? settings.defaultWarrantyLimitation
       : defaults.defaultWarrantyLimitation,
     jobHandoffs: normalizedJobHandoffs,
+    opsJobDrafts: normalizedOpsJobDrafts,
     defaultGcScopeControlNote: hasTextValue(settings.defaultGcScopeControlNote)
       ? settings.defaultGcScopeControlNote
       : defaults.defaultGcScopeControlNote,
