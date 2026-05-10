@@ -21,6 +21,7 @@ export function OpsJobDraftsView({
   onExportDraftPackage,
   onNavigate,
   onSaveDraft,
+  onSendDraftToConcreteOps,
 }) {
   const normalizedDrafts = normalizeOpsJobDrafts(drafts);
   const section = route.section || "list";
@@ -51,6 +52,7 @@ export function OpsJobDraftsView({
           onExportDraftPackage={onExportDraftPackage}
           onNavigate={onNavigate}
           onSaveDraft={onSaveDraft}
+          onSendDraftToConcreteOps={onSendDraftToConcreteOps}
         />
       ) : (
         <OpsJobDraftListPage drafts={normalizedDrafts} onNavigate={onNavigate} />
@@ -178,10 +180,12 @@ function OpsJobDraftListPage({ drafts = [], onNavigate }) {
   );
 }
 
-function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, onExportDraftPackage, onNavigate, onSaveDraft }) {
+function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, onExportDraftPackage, onNavigate, onSaveDraft, onSendDraftToConcreteOps }) {
   const existingDraft = getOpsJobDraftById(drafts, draftId);
   const [draftForm, setDraftForm] = useState(() => (existingDraft ? normalizeOpsJobDraft(existingDraft) : null));
   const [localMessage, setLocalMessage] = useState("");
+  const [directSendUrl, setDirectSendUrl] = useState("");
+  const [directSendLoading, setDirectSendLoading] = useState(false);
 
   if (!existingDraft || !draftForm) {
     return (
@@ -235,7 +239,39 @@ function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, on
     }
   }
 
+  async function sendToConcreteOps() {
+    setDirectSendLoading(true);
+    setLocalMessage("Sending job draft to Concrete Ops...");
+
+    try {
+      const result = await onSendDraftToConcreteOps?.(draftForm);
+
+      if (!result) {
+        setLocalMessage("Concrete Ops direct send failed. Use Export Job Draft Package for now.");
+        return;
+      }
+
+      if (result.draft) {
+        setDraftForm(result.draft);
+      }
+
+      setDirectSendUrl(result.concreteOpsUrl || "");
+      setLocalMessage(
+        result.duplicate
+          ? "Already sent / duplicate found. Open the imported draft in Concrete Ops when ready."
+          : result.ok
+            ? "Concrete Ops job draft sent. Open the imported draft in Concrete Ops when ready."
+            : result.error || result.message || "Concrete Ops direct send failed. Use Export Job Draft Package for now.",
+      );
+    } catch (error) {
+      setLocalMessage(error.message || "Concrete Ops direct send failed. Use Export Job Draft Package for now.");
+    } finally {
+      setDirectSendLoading(false);
+    }
+  }
+
   const shouldShowExportWarning = draftForm.opsReadinessLabel === "Not Ready";
+  const openConcreteOpsUrl = directSendUrl;
 
   return (
     <form className="lead-finder-card lead-detail-card job-handoff-detail" onSubmit={saveDraft}>
@@ -254,6 +290,9 @@ function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, on
           </button>
           <button type="button" onClick={exportDraftPackage} disabled={!permissions.backupExport}>
             Export Job Draft Package
+          </button>
+          <button type="button" onClick={sendToConcreteOps} disabled={!permissions.backupExport || directSendLoading}>
+            {directSendLoading ? "Sending..." : "Send to Concrete Ops"}
           </button>
           <button type="button" onClick={() => window.print()}>
             Print / Save as PDF
@@ -321,6 +360,27 @@ function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, on
             ]}
           />
           <TextList title="Readiness Issues" items={draftForm.opsReadinessIssues} />
+        </DraftSection>
+
+        <DraftSection title="Concrete Ops Direct Send">
+          <InfoGrid
+            rows={[
+              ["Send Status", draftForm.concreteOpsSendStatus],
+              ["Imported Draft ID", draftForm.concreteOpsImportedDraftId],
+              ["Open Path", draftForm.concreteOpsOpenPath],
+              ["Last Sent", draftForm.concreteOpsLastSentAt],
+              ["Message", draftForm.concreteOpsSendMessage],
+              ["Error", draftForm.concreteOpsSendError],
+            ]}
+          />
+          {openConcreteOpsUrl ? (
+            <p className="lead-action-message">
+              <a href={openConcreteOpsUrl} rel="noreferrer" target="_blank">
+                Open in Concrete Ops
+              </a>
+            </p>
+          ) : null}
+          <p className="empty-list-message">Direct send imports this draft into Concrete Ops for review. It does not create a real Concrete Ops job.</p>
         </DraftSection>
 
         <fieldset className="editor-permission-fieldset" disabled={!permissions.editBid}>

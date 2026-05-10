@@ -187,11 +187,16 @@ test("Concrete Ops job draft bridge adds prep-only routes, UI, and persistence",
   assert.match(opsJobDraftsViewSource, /Draft Status/);
   assert.match(opsJobDraftsViewSource, /Copy Concrete Ops Job Draft Summary/);
   assert.match(opsJobDraftsViewSource, /Export Job Draft Package/);
+  assert.match(opsJobDraftsViewSource, /Send to Concrete Ops/);
+  assert.match(opsJobDraftsViewSource, /Concrete Ops Direct Send/);
   assert.match(opsJobDraftsViewSource, /This draft is not marked ready\. Export is allowed/);
   assert.match(appSource, /findOpsJobDraftForHandoff/);
   assert.match(appSource, /exportOpsJobDraftPackage/);
+  assert.match(appSource, /sendOpsJobDraftToConcreteOps/);
+  assert.match(appSource, /\/api\/integrations\/send-job-draft-to-concrete-ops/);
   assert.match(appSource, /downloadJsonFile\(packagePayload, fileName\)/);
   assert.match(appSource, /onExportDraftPackage=\{exportOpsJobDraftPackage\}/);
+  assert.match(appSource, /onSendDraftToConcreteOps=\{sendOpsJobDraftToConcreteOps\}/);
   assert.match(appSource, /opsJobDraftId/);
   assert.match(appSource, /No real Concrete Ops job was created/);
   assert.match(appSource, /\/ops-job-drafts\/\$\{draft\.id\}/);
@@ -281,6 +286,9 @@ test("Supabase schema includes future lead finder tables and RLS policies", () =
   assert.match(schemaSource, /job_handoffs_company_ops_readiness_idx/);
   assert.match(schemaSource, /create table if not exists public\.ops_job_drafts/);
   assert.match(schemaSource, /ops_job_drafts_company_status_idx/);
+  assert.match(schemaSource, /concrete_ops_send_status text/);
+  assert.match(schemaSource, /concrete_ops_imported_draft_id text/);
+  assert.match(schemaSource, /ops_job_drafts_company_send_status_idx/);
   assert.match(schemaSource, /Users can read ops job drafts/);
   assert.match(schemaSource, /next_follow_up_date date/);
   assert.match(schemaSource, /follow_up_status text/);

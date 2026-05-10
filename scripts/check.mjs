@@ -56,6 +56,8 @@ const filesToCheck = [
   "api/ai/extract-proposal.js",
   "api/ai/score-lead.test.js",
   "api/ai/score-lead.js",
+  "api/integrations/send-job-draft-to-concrete-ops.test.js",
+  "api/integrations/send-job-draft-to-concrete-ops.js",
   "api/customer-proposal.js",
 ];
 

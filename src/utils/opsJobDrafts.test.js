@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CONCRETE_OPS_SEND_STATUSES,
   OPS_JOB_DRAFT_STATUSES,
+  applyConcreteOpsSendResultToDraft,
   createConcreteOpsJobDraftExportPackage,
   createOpsJobDraftFromHandoff,
   filterOpsJobDrafts,
@@ -24,6 +26,7 @@ test("ops job draft statuses are prep-only Concrete Ops states", () => {
     "Created in Concrete Ops Later",
     "Cancelled",
   ]);
+  assert.deepEqual(CONCRETE_OPS_SEND_STATUSES, ["Not Sent", "Sent", "Duplicate", "Failed"]);
 });
 
 test("creates Concrete Ops job draft from ready job handoff data", () => {
@@ -331,4 +334,46 @@ test("not-ready draft can still create an export package with readiness issues",
   assert.equal(exportPackage.opsReadinessScore, 45);
   assert.deepEqual(exportPackage.opsReadinessIssues, ["Add customer phone.", "Confirm start date."]);
   assert.match(exportPackage.jobDraftSummary, /Concrete Ops Job Draft: Incomplete slab/);
+});
+
+test("applies Concrete Ops direct send results to persisted draft fields", () => {
+  const sentDraft = applyConcreteOpsSendResultToDraft(
+    {
+      id: "draft-send",
+      jobName: "Albany slab",
+    },
+    {
+      ok: true,
+      importedDraftId: "import-1",
+      openPath: "/job-draft-imports/import-1",
+      message: "Imported draft.",
+    },
+    {
+      sentAt: "2026-05-10T12:00:00.000Z",
+      updatedAt: "2026-05-10T12:01:00.000Z",
+    },
+  );
+  const duplicateDraft = applyConcreteOpsSendResultToDraft(sentDraft, {
+    ok: true,
+    duplicate: true,
+    importedDraftId: "import-1",
+    openPath: "/job-draft-imports/import-1",
+    message: "Duplicate import found.",
+  });
+  const failedDraft = applyConcreteOpsSendResultToDraft(sentDraft, {
+    ok: false,
+    error: "Concrete Ops direct send failed.",
+  });
+
+  assert.equal(sentDraft.concreteOpsSendStatus, "Sent");
+  assert.equal(sentDraft.concreteOpsImportedDraftId, "import-1");
+  assert.equal(sentDraft.concreteOpsOpenPath, "/job-draft-imports/import-1");
+  assert.equal(sentDraft.concreteOpsLastSentAt, "2026-05-10T12:00:00.000Z");
+  assert.equal(sentDraft.concreteOpsSendMessage, "Imported draft.");
+  assert.equal(sentDraft.concreteOpsSendError, "");
+  assert.equal(duplicateDraft.concreteOpsSendStatus, "Duplicate");
+  assert.equal(duplicateDraft.concreteOpsImportedDraftId, "import-1");
+  assert.equal(failedDraft.concreteOpsSendStatus, "Failed");
+  assert.equal(failedDraft.concreteOpsSendError, "Concrete Ops direct send failed.");
+  assert.equal(failedDraft.concreteOpsLastSentAt, "2026-05-10T12:00:00.000Z");
 });

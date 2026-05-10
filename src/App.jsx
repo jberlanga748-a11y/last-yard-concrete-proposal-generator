@@ -223,6 +223,7 @@ import {
   upsertJobHandoff,
 } from "./utils/jobHandoffs.js";
 import {
+  applyConcreteOpsSendResultToDraft,
   createConcreteOpsJobDraftExportPackage,
   createOpsJobDraftFromHandoff,
   findOpsJobDraftForHandoff,
@@ -3673,6 +3674,94 @@ export default function App() {
     });
 
     return { fileName, package: packagePayload };
+  }
+
+  async function sendOpsJobDraftToConcreteOps(draft) {
+    if (!canPerform("backupExport", setOpsJobDraftMessage)) {
+      return null;
+    }
+
+    const normalizedDraft = normalizeOpsJobDraft(draft);
+    const linkedHandoff = normalizedDraft.sourceHandoffId ? getJobHandoffById(jobHandoffs, normalizedDraft.sourceHandoffId) : null;
+    const linkedLead = normalizedDraft.sourceLeadId ? getLeadById(leadFinderData, normalizedDraft.sourceLeadId) : null;
+    const linkedProposal = normalizedDraft.sourceProposalId ? savedProposals.find((proposal) => proposal.id === normalizedDraft.sourceProposalId) || null : null;
+
+    if (!normalizedDraft.id) {
+      setOpsJobDraftMessage("Save this Concrete Ops Job Draft before sending it.");
+      return null;
+    }
+
+    setOpsJobDraftMessage(`Sending ${normalizedDraft.jobName || "Concrete Ops job draft"} to Concrete Ops...`);
+
+    let responseData = null;
+
+    try {
+      const response = await fetch("/api/integrations/send-job-draft-to-concrete-ops", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          opsJobDraftId: normalizedDraft.id,
+          draft: normalizedDraft,
+          handoff: linkedHandoff,
+          lead: linkedLead,
+          proposal: linkedProposal
+            ? {
+                id: linkedProposal.id,
+                client: linkedProposal.client,
+                project: linkedProposal.project,
+              }
+            : null,
+        }),
+      });
+
+      responseData = await response.json().catch(() => ({}));
+
+      if (!response.ok && !responseData.duplicate) {
+        throw new Error(responseData.error || responseData.message || "Concrete Ops direct send failed.");
+      }
+    } catch (error) {
+      responseData = {
+        ok: false,
+        message: "Concrete Ops direct send failed. Use Export Job Draft Package for now.",
+        error: error.message || "Concrete Ops direct send failed.",
+      };
+    }
+
+    const updatedDraft = applyConcreteOpsSendResultToDraft(normalizedDraft, responseData, {
+      sentAt: responseData.ok || responseData.duplicate ? new Date().toISOString() : "",
+      updatedAt: new Date().toISOString(),
+    });
+    const nextDrafts = upsertOpsJobDraft(opsJobDrafts, updatedDraft);
+    const syncedDrafts = await commitOpsJobDrafts(
+      nextDrafts,
+      responseData.ok || responseData.duplicate
+        ? `${responseData.duplicate ? "Already sent / duplicate found" : "Sent"} ${updatedDraft.jobName || "Concrete Ops job draft"} to Concrete Ops.`
+        : `Concrete Ops direct send failed for ${updatedDraft.jobName || "job draft"}.`,
+    );
+    const savedDraft = getOpsJobDraftById(syncedDrafts, updatedDraft.id) || updatedDraft;
+
+    recordActivity({
+      action:
+        responseData.ok || responseData.duplicate
+          ? responseData.duplicate
+            ? "Concrete Ops job draft duplicate found"
+            : "Concrete Ops job draft sent"
+          : "Concrete Ops job draft send failed",
+      entityType: "ops_job_draft",
+      entityId: savedDraft.id,
+      entityLabel: savedDraft.jobName || "Concrete Ops job draft",
+      opsJobDrafts: syncedDrafts,
+      notes: savedDraft.concreteOpsSendMessage || savedDraft.concreteOpsSendError,
+    });
+
+    setOpsJobDraftMessage(savedDraft.concreteOpsSendMessage || savedDraft.concreteOpsSendError || "Concrete Ops send status updated.");
+
+    return {
+      ...responseData,
+      draft: savedDraft,
+    };
   }
 
   async function createOpsJobDraftFromHandoffAction(handoff, options = {}) {
@@ -7696,6 +7785,7 @@ export default function App() {
           onExportDraftPackage={exportOpsJobDraftPackage}
           onNavigate={navigate}
           onSaveDraft={saveOpsJobDraft}
+          onSendDraftToConcreteOps={sendOpsJobDraftToConcreteOps}
         />
       ) : isBidsView ? (
         <BidsRouteErrorBoundary onBackToDashboard={() => navigate("/dashboard")} onNewBid={startNewBid} resetKey={route.path}>

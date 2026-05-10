@@ -9,6 +9,7 @@ export const OPS_JOB_DRAFT_STATUSES = [
 export const CONCRETE_OPS_JOB_DRAFT_PACKAGE_VERSION = "1.0";
 export const CONCRETE_OPS_JOB_DRAFT_PACKAGE_TYPE = "concrete_ops_job_draft";
 export const CONCRETE_OPS_JOB_DRAFT_SOURCE_APP = "Last Yard Concrete Proposal / GC Packet Generator";
+export const CONCRETE_OPS_SEND_STATUSES = ["Not Sent", "Sent", "Duplicate", "Failed"];
 
 const READY_DRAFT_STATUS = "Ready to Create in Concrete Ops";
 const NEEDS_REVIEW_DRAFT_STATUS = "Needs Ops Review";
@@ -66,6 +67,12 @@ export function createEmptyOpsJobDraft(seed = {}) {
     proposalLinkOrId: "",
     handoffStatus: "",
     draftStatus: "Draft",
+    concreteOpsSendStatus: "Not Sent",
+    concreteOpsImportedDraftId: "",
+    concreteOpsOpenPath: "",
+    concreteOpsLastSentAt: "",
+    concreteOpsSendMessage: "",
+    concreteOpsSendError: "",
     createdAt: now,
     updatedAt: now,
     ...seed,
@@ -113,6 +120,12 @@ export function normalizeOpsJobDraft(draft = {}) {
     proposalLinkOrId: toSafeText(source.proposalLinkOrId),
     handoffStatus: toSafeText(source.handoffStatus),
     draftStatus: normalizeOption(source.draftStatus, OPS_JOB_DRAFT_STATUSES, "Draft"),
+    concreteOpsSendStatus: normalizeOption(source.concreteOpsSendStatus, CONCRETE_OPS_SEND_STATUSES, "Not Sent"),
+    concreteOpsImportedDraftId: toSafeText(source.concreteOpsImportedDraftId),
+    concreteOpsOpenPath: toSafeText(source.concreteOpsOpenPath),
+    concreteOpsLastSentAt: toIsoDateTime(source.concreteOpsLastSentAt),
+    concreteOpsSendMessage: toSafeText(source.concreteOpsSendMessage),
+    concreteOpsSendError: toSafeText(source.concreteOpsSendError),
     createdAt,
     updatedAt: toIsoDateTime(source.updatedAt) || createdAt,
   };
@@ -359,6 +372,28 @@ export function getConcreteOpsJobDraftExportFileName(draft = {}, date = new Date
       .slice(0, 80) || "draft";
 
   return `concrete-ops-job-draft-${slug}-${dateStamp}.json`;
+}
+
+export function applyConcreteOpsSendResultToDraft(draft = {}, result = {}, options = {}) {
+  const sourceDraft = normalizeOpsJobDraft(draft);
+  const isDuplicate = result?.duplicate === true;
+  const isSent = result?.ok === true || isDuplicate;
+  const status = isDuplicate ? "Duplicate" : isSent ? "Sent" : "Failed";
+  const now = new Date().toISOString();
+  const sentAt = toIsoDateTime(options.sentAt) || (isSent ? now : sourceDraft.concreteOpsLastSentAt);
+
+  return normalizeOpsJobDraft({
+    ...sourceDraft,
+    concreteOpsSendStatus: status,
+    concreteOpsImportedDraftId: toSafeText(result?.importedDraftId) || sourceDraft.concreteOpsImportedDraftId,
+    concreteOpsOpenPath: toSafeText(result?.openPath) || sourceDraft.concreteOpsOpenPath,
+    concreteOpsLastSentAt: sentAt,
+    concreteOpsSendMessage:
+      toSafeText(result?.message) ||
+      (isDuplicate ? "Already sent / duplicate found." : isSent ? "Sent to Concrete Ops." : "Concrete Ops direct send failed."),
+    concreteOpsSendError: isSent ? "" : toSafeText(result?.error) || toSafeText(result?.message) || "Concrete Ops direct send failed.",
+    updatedAt: toIsoDateTime(options.updatedAt) || now,
+  });
 }
 
 function resolveOpsJobDraftExportLocation(draft = {}, options = {}) {

@@ -991,15 +991,29 @@ create table if not exists public.ops_job_drafts (
   proposal_link_or_id text,
   handoff_status text,
   draft_status text,
+  concrete_ops_send_status text,
+  concrete_ops_imported_draft_id text,
+  concrete_ops_open_path text,
+  concrete_ops_last_sent_at timestamptz,
+  concrete_ops_send_message text,
+  concrete_ops_send_error text,
   draft_data jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
+alter table public.ops_job_drafts add column if not exists concrete_ops_send_status text;
+alter table public.ops_job_drafts add column if not exists concrete_ops_imported_draft_id text;
+alter table public.ops_job_drafts add column if not exists concrete_ops_open_path text;
+alter table public.ops_job_drafts add column if not exists concrete_ops_last_sent_at timestamptz;
+alter table public.ops_job_drafts add column if not exists concrete_ops_send_message text;
+alter table public.ops_job_drafts add column if not exists concrete_ops_send_error text;
+
 create index if not exists ops_job_drafts_company_id_idx on public.ops_job_drafts(company_id);
 create index if not exists ops_job_drafts_company_status_idx on public.ops_job_drafts(company_id, draft_status);
 create index if not exists ops_job_drafts_company_readiness_idx on public.ops_job_drafts(company_id, ops_readiness_label);
 create index if not exists ops_job_drafts_source_handoff_id_idx on public.ops_job_drafts(source_handoff_id);
+create index if not exists ops_job_drafts_company_send_status_idx on public.ops_job_drafts(company_id, concrete_ops_send_status);
 
 drop trigger if exists set_ops_job_drafts_updated_at on public.ops_job_drafts;
 create trigger set_ops_job_drafts_updated_at
