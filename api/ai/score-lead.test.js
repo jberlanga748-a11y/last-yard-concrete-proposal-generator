@@ -97,8 +97,63 @@ test("lead scoring API returns structured lead score fields", async () => {
   assert.equal(response.payload.ok, true);
   assert.equal(response.payload.result.aiFitScore, 82);
   assert.equal(response.payload.result.aiFitLabel, "Good Fit");
+  assert.equal(response.payload.result.aiFitReason, "Concrete sidewalk replacement in Oregon fits Last Yard.");
+  assert.equal(response.payload.result.aiRisks, "Confirm access and schedule.");
+  assert.equal(response.payload.result.aiNextStep, "Call the source and confirm bid documents.");
   assert.equal(response.payload.result.suggestedCompanyMode, "Last Yard Concrete");
   assert.match(requestBody.input[0].content, /Be conservative/);
+
+  globalThis.fetch = originalFetch;
+  if (originalKey) {
+    process.env.OPENAI_API_KEY = originalKey;
+  } else {
+    delete process.env.OPENAI_API_KEY;
+  }
+});
+
+test("lead scoring API normalizes alternate AI response keys into canonical fields", async () => {
+  const originalKey = process.env.OPENAI_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "server-only-test-key";
+
+  globalThis.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      output_text: JSON.stringify({
+        score: 71,
+        label: "Maybe",
+        reason: "Concrete scope may fit, but location and documents need confirmation.",
+        risks: ["Missing plans", "Confirm Oregon location"],
+        nextStep: "Ask for plans and site access details.",
+        companyMode: "Last Yard Concrete",
+      }),
+    }),
+  });
+
+  const response = createMockResponse();
+  await handler(
+    {
+      method: "POST",
+      body: {
+        lead: {
+          title: "Potential slab replacement",
+          serviceType: "Concrete",
+          description: "Replace damaged slab.",
+        },
+      },
+      readable: false,
+    },
+    response,
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.payload.result.aiFitScore, 71);
+  assert.equal(response.payload.result.aiFitLabel, "Maybe");
+  assert.equal(response.payload.result.aiFitReason, "Concrete scope may fit, but location and documents need confirmation.");
+  assert.equal(response.payload.result.aiRisks, "Missing plans\nConfirm Oregon location");
+  assert.equal(response.payload.result.aiNextStep, "Ask for plans and site access details.");
+  assert.equal(response.payload.result.suggestedCompanyMode, "Last Yard Concrete");
 
   globalThis.fetch = originalFetch;
   if (originalKey) {

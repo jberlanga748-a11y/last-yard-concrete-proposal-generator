@@ -3012,7 +3012,7 @@ export default function App() {
       }
 
       setLeadAiConfigured(true);
-      return await saveLeadScoreResult(normalizedLead, data.result, "AI score");
+      return await saveLeadScoreResult(normalizedLead, data.result, "AI score", "ai");
     } catch (error) {
       const message = error?.message || "AI lead scoring failed.";
       setLeadFinderMessage(message);
@@ -3033,11 +3033,14 @@ export default function App() {
     const normalizedLead = normalizeLead(lead);
     const score = scoreLeadWithLocalRules(normalizedLead);
 
-    return await saveLeadScoreResult(normalizedLead, score, "Rule-based test score");
+    return await saveLeadScoreResult(normalizedLead, score, "Rule-based test score", "rule_based");
   }
 
-  async function saveLeadScoreResult(lead, result, scoreLabel = "AI score") {
-    const scoredLead = applyLeadAiScore(lead, result);
+  async function saveLeadScoreResult(lead, result, scoreLabel = "AI score", scoreSource = "ai") {
+    const scoredLead = applyLeadAiScore(lead, {
+      ...result,
+      scoreSource: result?.scoreSource || scoreSource,
+    });
     const nextLeadFinderData = upsertLead(leadFinderData, scoredLead, leadFinderData.sources);
 
     await commitLeadFinderData(nextLeadFinderData, `Saved ${scoreLabel} for ${scoredLead.title || "lead"} locally.`);

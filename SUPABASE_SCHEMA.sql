@@ -753,6 +753,8 @@ create table if not exists public.leads (
   ai_risks text,
   ai_next_step text,
   suggested_company_mode text,
+  score_source text,
+  scored_at timestamptz,
   status text,
   notes text,
   estimate_id text,
@@ -774,6 +776,8 @@ create table if not exists public.leads (
 alter table public.leads add column if not exists ai_fit_label text;
 alter table public.leads add column if not exists ai_risks text;
 alter table public.leads add column if not exists suggested_company_mode text;
+alter table public.leads add column if not exists score_source text;
+alter table public.leads add column if not exists scored_at timestamptz;
 alter table public.leads add column if not exists estimate_id text;
 alter table public.leads add column if not exists proposal_id text;
 alter table public.leads add column if not exists packet_id text;

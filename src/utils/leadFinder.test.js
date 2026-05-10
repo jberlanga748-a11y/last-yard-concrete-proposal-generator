@@ -89,6 +89,8 @@ test("normalizes lead source and lead records with safe defaults", () => {
   assert.equal(lead.estimatedValue, 12500);
   assert.equal(lead.aiFitLabel, "");
   assert.equal(lead.suggestedCompanyMode, "Unknown");
+  assert.equal(lead.scoreSource, "");
+  assert.equal(lead.scoredAt, "");
   assert.equal(lead.estimateId, "");
   assert.deepEqual(lead.handoffHistory, []);
   assert.equal(lead.followUpStatus, "Not Contacted");
@@ -104,6 +106,8 @@ test("normalizes and applies AI scoring fields conservatively", () => {
     aiRisks: ["Missing due date", "Confirm Oregon location"],
     aiNextStep: "Call the GC contact.",
     suggestedCompanyMode: "Last Yard Concrete",
+    scoreSource: "ai",
+    scoredAt: "2026-05-09T12:00:00.000Z",
   });
   const lead = applyLeadAiScore(createEmptyLead({ id: "lead-ai", title: "ADA ramp", serviceType: "ADA Ramp" }), score);
 
@@ -113,8 +117,38 @@ test("normalizes and applies AI scoring fields conservatively", () => {
   assert.equal(lead.aiFitScore, 100);
   assert.equal(lead.aiFitLabel, "Maybe");
   assert.equal(lead.suggestedCompanyMode, "Last Yard Concrete");
+  assert.equal(lead.scoreSource, "ai");
+  assert.equal(lead.scoredAt, "2026-05-09T12:00:00.000Z");
   assert.equal(hasLeadAiScore(lead), true);
   assert.equal(hasLeadAiScore(createEmptyLead()), false);
+});
+
+test("normalizes alternate live AI scoring keys into persisted lead fields", () => {
+  const score = normalizeLeadAiScoreResult({
+    score: 73.4,
+    label: "Good Fit",
+    reason: "Sidewalk replacement in Oregon is a likely Last Yard fit.",
+    risks: ["Confirm quantities", "Confirm bid path"],
+    nextStep: "Request plans and schedule details.",
+    companyMode: "Last Yard Concrete",
+    scoreSource: "live-ai",
+  });
+  const lead = applyLeadAiScore(createEmptyLead({ id: "lead-alias", title: "Sidewalk lead" }), score);
+  const reloaded = normalizeLead({ ...lead });
+
+  assert.equal(score.aiFitScore, 73);
+  assert.equal(score.aiFitLabel, "Good Fit");
+  assert.equal(score.aiFitReason, "Sidewalk replacement in Oregon is a likely Last Yard fit.");
+  assert.equal(score.aiRisks, "Confirm quantities\nConfirm bid path");
+  assert.equal(score.aiNextStep, "Request plans and schedule details.");
+  assert.equal(score.suggestedCompanyMode, "Last Yard Concrete");
+  assert.equal(score.scoreSource, "ai");
+  assert.equal(reloaded.aiFitReason, "Sidewalk replacement in Oregon is a likely Last Yard fit.");
+  assert.equal(reloaded.aiRisks, "Confirm quantities\nConfirm bid path");
+  assert.equal(reloaded.aiNextStep, "Request plans and schedule details.");
+  assert.equal(reloaded.suggestedCompanyMode, "Last Yard Concrete");
+  assert.equal(reloaded.scoreSource, "ai");
+  assert.match(reloaded.scoredAt, /^\d{4}-\d{2}-\d{2}T/);
 });
 
 test("normalizes AI proposal draft fields without inventing missing data", () => {
@@ -160,8 +194,11 @@ test("rule-based test scoring handles Live Your Future and Last Yard good-fit le
 
   assert.equal(lyfScore.aiFitLabel, "Good Fit");
   assert.equal(lyfScore.suggestedCompanyMode, "Live Your Future");
+  assert.equal(lyfScore.scoreSource, "rule_based");
+  assert.match(lyfScore.aiFitReason, /Rule-based test score/);
   assert.equal(concreteScore.aiFitLabel, "Good Fit");
   assert.equal(concreteScore.suggestedCompanyMode, "Last Yard Concrete");
+  assert.equal(concreteScore.scoreSource, "rule_based");
 });
 
 test("rule-based test scoring is conservative for missing or bad-fit details", () => {

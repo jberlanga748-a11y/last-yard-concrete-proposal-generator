@@ -63,6 +63,7 @@ test("lead finder screens include dashboard sources inbox new lead and detail be
   assert.match(leadFinderViewSource, /Add \/ Link Contact/);
   assert.match(leadFinderViewSource, /Score This Lead/);
   assert.match(leadFinderViewSource, /Rule-Based Test Score/);
+  assert.match(leadFinderViewSource, /Score Source/);
   assert.match(leadFinderViewSource, /Generate Proposal Draft/);
   assert.match(leadFinderViewSource, /Apply to New Proposal/);
   assert.match(leadFinderViewSource, /Copy Draft/);
@@ -108,6 +109,10 @@ test("lead finder scoring is server-backed and does not add daily search yet", (
   assert.match(appSource, /fetch\("\/api\/ai\/score-lead"/);
   assert.match(appSource, /scoreLeadWithLocalRules/);
   assert.match(scoreLeadApiSource, /process\.env\.OPENAI_API_KEY/);
+  assert.match(appSource, /scoreSource:\s*result\?\.scoreSource \|\| scoreSource/);
+  assert.match(leadFinderSource, /source\.aiFitReason \?\? source\.fitReason \?\? source\.reason/);
+  assert.match(leadFinderSource, /scoreSource/);
+  assert.match(leadFinderSource, /scoredAt/);
   assert.doesNotMatch(scoreLeadApiSource, /VITE_OPENAI_API_KEY|import\.meta\.env/);
   assert.match(draftProposalApiSource, /process\.env\.OPENAI_API_KEY/);
   assert.match(draftProposalApiSource, /AI proposal drafting is not configured yet/);
@@ -126,6 +131,8 @@ test("Supabase schema includes future lead finder tables and RLS policies", () =
   assert.match(schemaSource, /leads_company_status_idx/);
   assert.match(schemaSource, /ai_fit_label text/);
   assert.match(schemaSource, /suggested_company_mode text/);
+  assert.match(schemaSource, /score_source text/);
+  assert.match(schemaSource, /scored_at timestamptz/);
   assert.match(schemaSource, /estimate_id text/);
   assert.match(schemaSource, /handoff_history jsonb/);
   assert.match(schemaSource, /next_follow_up_date date/);

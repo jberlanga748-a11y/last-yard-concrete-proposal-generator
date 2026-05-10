@@ -1197,12 +1197,41 @@ function AiScoreSummary({ lead = {} }) {
         <span>Suggested Mode</span>
         <strong>{lead.suggestedCompanyMode || "Unknown"}</strong>
       </div>
+      <div>
+        <span>Score Source</span>
+        <strong>{formatLeadScoreSource(lead.scoreSource)}</strong>
+      </div>
       <p>{lead.aiFitReason || "No AI reason saved."}</p>
       {lead.aiRisks ? <p><strong>Risks:</strong> {lead.aiRisks}</p> : null}
       {lead.aiNextStep ? <p><strong>Next step:</strong> {lead.aiNextStep}</p> : null}
-      <small>Manual lead status is separate from this AI label.</small>
+      <small>
+        Manual lead status is separate from this AI label.
+        {lead.scoredAt ? ` Scored ${formatLeadScoredAt(lead.scoredAt)}.` : ""}
+      </small>
     </div>
   );
+}
+
+function formatLeadScoreSource(scoreSource = "") {
+  if (scoreSource === "ai") {
+    return "AI";
+  }
+
+  if (scoreSource === "rule_based") {
+    return "Rule-Based Test Score";
+  }
+
+  return "Not saved";
+}
+
+function formatLeadScoredAt(scoredAt = "") {
+  const date = new Date(scoredAt);
+
+  if (!Number.isFinite(date.valueOf())) {
+    return "";
+  }
+
+  return date.toLocaleString();
 }
 
 function LeadProposalDraftReview({ draft = {}, isApplying = false, onApply, onCancel, onCopy }) {

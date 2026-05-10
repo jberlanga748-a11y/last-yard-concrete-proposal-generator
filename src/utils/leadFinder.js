@@ -504,6 +504,8 @@ export function createEmptyLead(seed = {}) {
     aiRisks: "",
     aiNextStep: "",
     suggestedCompanyMode: "Unknown",
+    scoreSource: "",
+    scoredAt: "",
     status: "New",
     notes: "",
     estimateId: "",
@@ -659,6 +661,8 @@ export function normalizeLead(lead = {}) {
     aiRisks: normalizeAiRisks(leadRecord.aiRisks),
     aiNextStep: toSafeText(leadRecord.aiNextStep),
     suggestedCompanyMode: normalizeOption(leadRecord.suggestedCompanyMode, LEAD_SUGGESTED_COMPANY_MODES, "Unknown"),
+    scoreSource: normalizeLeadScoreSource(leadRecord.scoreSource),
+    scoredAt: toIsoDateTime(leadRecord.scoredAt),
     status: normalizeOption(leadRecord.status, LEAD_STATUSES, "New"),
     notes: toSafeText(leadRecord.notes),
     estimateId: toSafeText(leadRecord.estimateId),
@@ -961,14 +965,22 @@ export function hasLeadAiScore(lead = {}) {
 
 export function normalizeLeadAiScoreResult(result = {}) {
   const source = isPlainObject(result) ? result : {};
+  const fitScore = source.aiFitScore ?? source.fitScore ?? source.score;
+  const fitLabel = source.aiFitLabel ?? source.fitLabel ?? source.label;
+  const fitReason = source.aiFitReason ?? source.fitReason ?? source.reason;
+  const risks = source.aiRisks ?? source.risks;
+  const nextStep = source.aiNextStep ?? source.nextStep;
+  const companyMode = source.suggestedCompanyMode ?? source.companyMode ?? source.suggestedCompany ?? source.recommendedCompanyMode;
 
   return {
-    aiFitScore: clampScore(source.aiFitScore),
-    aiFitLabel: normalizeOption(source.aiFitLabel, LEAD_AI_FIT_LABELS, "Maybe"),
-    aiFitReason: toSafeText(source.aiFitReason),
-    aiRisks: normalizeAiRisks(source.aiRisks),
-    aiNextStep: toSafeText(source.aiNextStep),
-    suggestedCompanyMode: normalizeOption(source.suggestedCompanyMode, LEAD_SUGGESTED_COMPANY_MODES, "Unknown"),
+    aiFitScore: clampScore(fitScore),
+    aiFitLabel: normalizeOption(fitLabel, LEAD_AI_FIT_LABELS, "Maybe"),
+    aiFitReason: toSafeText(fitReason),
+    aiRisks: normalizeAiRisks(risks),
+    aiNextStep: toSafeText(nextStep),
+    suggestedCompanyMode: normalizeOption(companyMode, LEAD_SUGGESTED_COMPANY_MODES, "Unknown"),
+    scoreSource: normalizeLeadScoreSource(source.scoreSource),
+    scoredAt: toIsoDateTime(source.scoredAt),
   };
 }
 
@@ -994,9 +1006,12 @@ export function normalizeLeadProposalDraftResult(result = {}) {
 }
 
 export function applyLeadAiScore(lead = {}, result = {}) {
+  const normalizedScore = normalizeLeadAiScoreResult(result);
+
   return normalizeLead({
     ...lead,
-    ...normalizeLeadAiScoreResult(result),
+    ...normalizedScore,
+    scoredAt: normalizedScore.scoredAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
 }
@@ -1210,6 +1225,7 @@ export function scoreLeadWithLocalRules(lead = {}) {
       aiRisks: risks.join("\n"),
       aiNextStep: "Clarify scope and only pursue if it can be handled as a narrow subcontracted package.",
       suggestedCompanyMode: hugePublicWork ? "General Contractor" : "Unknown",
+      scoreSource: "rule_based",
     });
   }
 
@@ -1221,6 +1237,7 @@ export function scoreLeadWithLocalRules(lead = {}) {
       aiRisks: risks.join("\n") || "Confirm access, timing, and scope size before committing.",
       aiNextStep: "Contact the lead, confirm scope details, and decide whether to start an estimate.",
       suggestedCompanyMode: "Live Your Future",
+      scoreSource: "rule_based",
     });
   }
 
@@ -1232,6 +1249,7 @@ export function scoreLeadWithLocalRules(lead = {}) {
       aiRisks: risks.join("\n") || "Confirm bid path, access, quantities, schedule, and whether the work is subcontractor-friendly.",
       aiNextStep: "Review documents and contact the GC/source to confirm concrete scope and bid deadline.",
       suggestedCompanyMode: "Last Yard Concrete",
+      scoreSource: "rule_based",
     });
   }
 
@@ -1242,6 +1260,7 @@ export function scoreLeadWithLocalRules(lead = {}) {
     aiRisks: risks.join("\n") || "Preferred company fit is not obvious from the current lead details.",
     aiNextStep: "Fill in missing trade, location, scope, deadline, and value details before pursuing.",
     suggestedCompanyMode: "Unknown",
+    scoreSource: "rule_based",
   });
 }
 
@@ -1544,6 +1563,20 @@ function normalizeAiRisks(value = "") {
   return toSafeText(value);
 }
 
+function normalizeLeadScoreSource(value = "") {
+  const text = toSafeText(value).toLowerCase().replace(/[\s-]+/g, "_");
+
+  if (text === "ai" || text === "openai" || text === "live_ai") {
+    return "ai";
+  }
+
+  if (text === "rule_based" || text === "rules" || text === "local_rules" || text === "rule_based_test_score") {
+    return "rule_based";
+  }
+
+  return "";
+}
+
 function normalizeTextList(value = []) {
   if (Array.isArray(value)) {
     return value.map((item) => toSafeText(item)).filter(Boolean);
@@ -1567,6 +1600,17 @@ function toDateInputValue(value = "") {
   }
 
   return date.toISOString().slice(0, 10);
+}
+
+function toIsoDateTime(value = "") {
+  const text = toSafeText(value);
+
+  if (!text) {
+    return "";
+  }
+
+  const date = new Date(text);
+  return Number.isFinite(date.valueOf()) ? date.toISOString() : "";
 }
 
 function getTodayInputValue() {

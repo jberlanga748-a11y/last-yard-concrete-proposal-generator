@@ -192,16 +192,21 @@ function parseOpenAiJsonResponse(data) {
 }
 
 function normalizeScoreResult(result = {}) {
-  const score = Number(result.aiFitScore);
+  const score = Number(result.aiFitScore ?? result.fitScore ?? result.score);
+  const fitLabel = result.aiFitLabel ?? result.fitLabel ?? result.label;
+  const fitReason = result.aiFitReason ?? result.fitReason ?? result.reason;
+  const risks = result.aiRisks ?? result.risks;
+  const nextStep = result.aiNextStep ?? result.nextStep;
+  const companyMode = result.suggestedCompanyMode ?? result.companyMode ?? result.suggestedCompany ?? result.recommendedCompanyMode;
 
   return {
     aiFitScore: Number.isFinite(score) ? Math.min(100, Math.max(0, Math.round(score))) : 0,
-    aiFitLabel: ["Good Fit", "Maybe", "Bad Fit"].includes(result.aiFitLabel) ? result.aiFitLabel : "Maybe",
-    aiFitReason: safeText(result.aiFitReason),
-    aiRisks: Array.isArray(result.aiRisks) ? result.aiRisks.map((item) => safeText(item)).filter(Boolean).join("\n") : safeText(result.aiRisks),
-    aiNextStep: safeText(result.aiNextStep),
-    suggestedCompanyMode: ["Live Your Future", "Last Yard Concrete", "General Contractor", "Unknown"].includes(result.suggestedCompanyMode)
-      ? result.suggestedCompanyMode
+    aiFitLabel: ["Good Fit", "Maybe", "Bad Fit"].includes(fitLabel) ? fitLabel : "Maybe",
+    aiFitReason: safeText(fitReason),
+    aiRisks: Array.isArray(risks) ? risks.map((item) => safeText(item)).filter(Boolean).join("\n") : safeText(risks),
+    aiNextStep: safeText(nextStep),
+    suggestedCompanyMode: ["Live Your Future", "Last Yard Concrete", "General Contractor", "Unknown"].includes(companyMode)
+      ? companyMode
       : "Unknown",
   };
 }
