@@ -6,6 +6,10 @@ export const OPS_JOB_DRAFT_STATUSES = [
   "Cancelled",
 ];
 
+export const CONCRETE_OPS_JOB_DRAFT_PACKAGE_VERSION = "1.0";
+export const CONCRETE_OPS_JOB_DRAFT_PACKAGE_TYPE = "concrete_ops_job_draft";
+export const CONCRETE_OPS_JOB_DRAFT_SOURCE_APP = "Last Yard Concrete Proposal / GC Packet Generator";
+
 const READY_DRAFT_STATUS = "Ready to Create in Concrete Ops";
 const NEEDS_REVIEW_DRAFT_STATUS = "Needs Ops Review";
 
@@ -284,6 +288,68 @@ export function formatOpsJobDraftSummary(draft = {}) {
   ];
 
   return lines.filter(Boolean).join("\n\n");
+}
+
+export function createConcreteOpsJobDraftExportPackage(draft = {}, options = {}) {
+  const normalizedDraft = normalizeOpsJobDraft(draft);
+  const exportedAt = toIsoDateTime(options.exportedAt) || new Date().toISOString();
+
+  return {
+    packageVersion: CONCRETE_OPS_JOB_DRAFT_PACKAGE_VERSION,
+    exportedAt,
+    sourceApp: CONCRETE_OPS_JOB_DRAFT_SOURCE_APP,
+    packageType: CONCRETE_OPS_JOB_DRAFT_PACKAGE_TYPE,
+    opsJobDraftId: normalizedDraft.id,
+    sourceHandoffId: normalizedDraft.sourceHandoffId,
+    sourceLeadId: normalizedDraft.sourceLeadId,
+    sourceProposalId: normalizedDraft.sourceProposalId,
+    sourceEstimateId: normalizedDraft.sourceEstimateId,
+    sourcePacketId: normalizedDraft.sourcePacketId,
+    customerName: normalizedDraft.customerName,
+    contactName: normalizedDraft.contactName,
+    contactEmail: normalizedDraft.contactEmail,
+    contactPhone: normalizedDraft.contactPhone,
+    jobName: normalizedDraft.jobName,
+    jobAddress: normalizedDraft.jobAddress,
+    city: normalizedDraft.city,
+    state: normalizedDraft.state,
+    serviceType: normalizedDraft.serviceType,
+    projectType: normalizedDraft.projectType,
+    scopeSummary: normalizedDraft.scopeSummary,
+    includedScope: [...normalizedDraft.includedScope],
+    exclusions: [...normalizedDraft.exclusions],
+    assumptions: [...normalizedDraft.assumptions],
+    operationsNotes: normalizedDraft.operationsNotes,
+    crewNotes: normalizedDraft.crewNotes,
+    scheduleNotes: normalizedDraft.scheduleNotes,
+    startDateTarget: normalizedDraft.startDateTarget,
+    assignedCrewPlaceholder: normalizedDraft.assignedCrewPlaceholder,
+    foremanPlaceholder: normalizedDraft.foremanPlaceholder,
+    draftStatus: normalizedDraft.draftStatus,
+    opsReadinessScore: normalizedDraft.opsReadinessScore,
+    opsReadinessLabel: normalizedDraft.opsReadinessLabel,
+    opsReadinessIssues: [...normalizedDraft.opsReadinessIssues],
+    proposalAmount: normalizedDraft.proposalAmount,
+    proposalLinkOrId: normalizedDraft.proposalLinkOrId,
+    handoffStatus: normalizedDraft.handoffStatus,
+    createdAt: normalizedDraft.createdAt,
+    updatedAt: normalizedDraft.updatedAt,
+    jobDraftSummary: formatOpsJobDraftSummary(normalizedDraft),
+  };
+}
+
+export function getConcreteOpsJobDraftExportFileName(draft = {}, date = new Date()) {
+  const normalizedDraft = normalizeOpsJobDraft(draft);
+  const dateValue = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
+  const dateStamp = dateValue.toISOString().slice(0, 10);
+  const slug =
+    (normalizedDraft.jobName || normalizedDraft.id || "draft")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "draft";
+
+  return `concrete-ops-job-draft-${slug}-${dateStamp}.json`;
 }
 
 function clampScoreOrBlank(value) {

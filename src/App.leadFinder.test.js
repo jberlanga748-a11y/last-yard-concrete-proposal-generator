@@ -172,6 +172,10 @@ test("Concrete Ops job draft bridge adds prep-only routes, UI, and persistence",
   assert.match(opsJobDraftsSource, /OPS_JOB_DRAFT_STATUSES/);
   assert.match(opsJobDraftsSource, /createOpsJobDraftFromHandoff/);
   assert.match(opsJobDraftsSource, /formatOpsJobDraftSummary/);
+  assert.match(opsJobDraftsSource, /createConcreteOpsJobDraftExportPackage/);
+  assert.match(opsJobDraftsSource, /getConcreteOpsJobDraftExportFileName/);
+  assert.match(opsJobDraftsSource, /packageType: CONCRETE_OPS_JOB_DRAFT_PACKAGE_TYPE/);
+  assert.match(opsJobDraftsSource, /jobDraftSummary: formatOpsJobDraftSummary/);
   assert.match(opsJobDraftsViewSource, /Concrete Ops Job Drafts/);
   assert.match(opsJobDraftsViewSource, /Customer \/ Contact/);
   assert.match(opsJobDraftsViewSource, /Job Info/);
@@ -181,10 +185,16 @@ test("Concrete Ops job draft bridge adds prep-only routes, UI, and persistence",
   assert.match(opsJobDraftsViewSource, /Crew \/ Schedule Placeholders/);
   assert.match(opsJobDraftsViewSource, /Draft Status/);
   assert.match(opsJobDraftsViewSource, /Copy Concrete Ops Job Draft Summary/);
+  assert.match(opsJobDraftsViewSource, /Export Job Draft Package/);
+  assert.match(opsJobDraftsViewSource, /This draft is not marked ready\. Export is allowed/);
   assert.match(appSource, /findOpsJobDraftForHandoff/);
+  assert.match(appSource, /exportOpsJobDraftPackage/);
+  assert.match(appSource, /downloadJsonFile\(packagePayload, fileName\)/);
+  assert.match(appSource, /onExportDraftPackage=\{exportOpsJobDraftPackage\}/);
   assert.match(appSource, /opsJobDraftId/);
   assert.match(appSource, /No real Concrete Ops job was created/);
   assert.match(appSource, /\/ops-job-drafts\/\$\{draft\.id\}/);
+  assert.match(appSource, /opsJobDrafts: cloneObject\(normalizedOpsJobDrafts\)/);
 });
 
 test("lead finder handoff uses existing proposal and contact paths", () => {

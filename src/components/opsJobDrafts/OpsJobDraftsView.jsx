@@ -3,6 +3,7 @@ import { formatCurrency } from "../../proposalData.js";
 import { Badge } from "../common/Badges.jsx";
 import {
   OPS_JOB_DRAFT_STATUSES,
+  createConcreteOpsJobDraftExportPackage,
   filterOpsJobDrafts,
   formatOpsJobDraftSummary,
   getOpsJobDraftById,
@@ -17,6 +18,7 @@ export function OpsJobDraftsView({
   permissions = {},
   route = {},
   onBackToDashboard,
+  onExportDraftPackage,
   onNavigate,
   onSaveDraft,
 }) {
@@ -46,6 +48,7 @@ export function OpsJobDraftsView({
           draftId={route.id}
           drafts={normalizedDrafts}
           permissions={permissions}
+          onExportDraftPackage={onExportDraftPackage}
           onNavigate={onNavigate}
           onSaveDraft={onSaveDraft}
         />
@@ -175,7 +178,7 @@ function OpsJobDraftListPage({ drafts = [], onNavigate }) {
   );
 }
 
-function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, onNavigate, onSaveDraft }) {
+function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, onExportDraftPackage, onNavigate, onSaveDraft }) {
   const existingDraft = getOpsJobDraftById(drafts, draftId);
   const [draftForm, setDraftForm] = useState(() => (existingDraft ? normalizeOpsJobDraft(existingDraft) : null));
   const [localMessage, setLocalMessage] = useState("");
@@ -212,6 +215,28 @@ function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, on
     }
   }
 
+  async function exportDraftPackage() {
+    try {
+      const result = await onExportDraftPackage?.(draftForm);
+
+      if (!result) {
+        setLocalMessage("Export failed. Check permissions or try again.");
+        return;
+      }
+
+      const exportedPackage = result.package || createConcreteOpsJobDraftExportPackage(draftForm);
+      const warning =
+        exportedPackage.opsReadinessLabel === "Not Ready"
+          ? "This draft is not marked ready. Export is allowed, but review missing readiness items first. "
+          : "";
+      setLocalMessage(`${warning}Exported Job Draft Package: ${result.fileName || "downloaded JSON file"}.`);
+    } catch {
+      setLocalMessage("Export failed. Try again or use the full backup tools.");
+    }
+  }
+
+  const shouldShowExportWarning = draftForm.opsReadinessLabel === "Not Ready";
+
   return (
     <form className="lead-finder-card lead-detail-card job-handoff-detail" onSubmit={saveDraft}>
       <div className="recent-heading">
@@ -227,6 +252,9 @@ function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, on
           <button type="button" onClick={copySummary}>
             Copy Concrete Ops Job Draft Summary
           </button>
+          <button type="button" onClick={exportDraftPackage} disabled={!permissions.backupExport}>
+            Export Job Draft Package
+          </button>
           <button type="button" onClick={() => window.print()}>
             Print / Save as PDF
           </button>
@@ -236,6 +264,9 @@ function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, on
         </div>
       </div>
       {localMessage ? <p className="backup-message no-print">{localMessage}</p> : null}
+      {shouldShowExportWarning ? (
+        <p className="backup-message backup-message-error no-print">This draft is not marked ready. Export is allowed, but review missing readiness items first.</p>
+      ) : null}
       <div className="bid-form-sections">
         <DraftSection title="Customer / Contact">
           <InfoGrid

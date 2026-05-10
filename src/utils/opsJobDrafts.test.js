@@ -3,10 +3,12 @@ import test from "node:test";
 
 import {
   OPS_JOB_DRAFT_STATUSES,
+  createConcreteOpsJobDraftExportPackage,
   createOpsJobDraftFromHandoff,
   filterOpsJobDrafts,
   findOpsJobDraftForHandoff,
   formatOpsJobDraftSummary,
+  getConcreteOpsJobDraftExportFileName,
   getOpsJobDraftStats,
   mergeOpsJobDrafts,
   normalizeOpsJobDraft,
@@ -135,4 +137,122 @@ test("formats a copyable Concrete Ops job draft summary", () => {
   assert.match(summary, /Customer\/Company: ABC Apartments/);
   assert.match(summary, /Included Scope/);
   assert.match(summary, /Coordinate access/);
+});
+
+test("creates a clean Concrete Ops job draft export package", () => {
+  const exportPackage = createConcreteOpsJobDraftExportPackage(
+    {
+      id: "draft-export",
+      sourceHandoffId: "handoff-1",
+      sourceLeadId: "lead-1",
+      sourceProposalId: "proposal-1",
+      customerName: "ABC Apartments",
+      contactName: "Alex GC",
+      contactEmail: "alex@example.com",
+      contactPhone: "555-0100",
+      jobName: "Albany Sidewalk Repair",
+      jobAddress: "123 Main St",
+      city: "Albany",
+      state: "OR",
+      serviceType: "Sidewalk",
+      projectType: "Replacement",
+      scopeSummary: "Replace damaged sidewalk panels.",
+      includedScope: ["Demo panels", "Place broom finish concrete"],
+      exclusions: ["Traffic control by GC"],
+      assumptions: ["Normal working hours"],
+      operationsNotes: "Coordinate access.",
+      crewNotes: "Two-person crew.",
+      scheduleNotes: "Coordinate after demo.",
+      startDateTarget: "2026-05-20",
+      assignedCrewPlaceholder: "Concrete crew",
+      foremanPlaceholder: "TBD",
+      draftStatus: "Ready to Create in Concrete Ops",
+      opsReadinessScore: 92,
+      opsReadinessLabel: "Ready",
+      proposalAmount: 18500,
+      proposalLinkOrId: "proposal-1",
+      handoffStatus: "Ready for Ops Review",
+      createdAt: "2026-05-01T00:00:00.000Z",
+      updatedAt: "2026-05-02T00:00:00.000Z",
+      apiKey: "secret-api-key",
+      authToken: "secret-auth-token",
+      session: { accessToken: "secret-session" },
+    },
+    { exportedAt: "2026-05-10T12:00:00.000Z" },
+  );
+
+  assert.deepEqual(Object.keys(exportPackage), [
+    "packageVersion",
+    "exportedAt",
+    "sourceApp",
+    "packageType",
+    "opsJobDraftId",
+    "sourceHandoffId",
+    "sourceLeadId",
+    "sourceProposalId",
+    "sourceEstimateId",
+    "sourcePacketId",
+    "customerName",
+    "contactName",
+    "contactEmail",
+    "contactPhone",
+    "jobName",
+    "jobAddress",
+    "city",
+    "state",
+    "serviceType",
+    "projectType",
+    "scopeSummary",
+    "includedScope",
+    "exclusions",
+    "assumptions",
+    "operationsNotes",
+    "crewNotes",
+    "scheduleNotes",
+    "startDateTarget",
+    "assignedCrewPlaceholder",
+    "foremanPlaceholder",
+    "draftStatus",
+    "opsReadinessScore",
+    "opsReadinessLabel",
+    "opsReadinessIssues",
+    "proposalAmount",
+    "proposalLinkOrId",
+    "handoffStatus",
+    "createdAt",
+    "updatedAt",
+    "jobDraftSummary",
+  ]);
+  assert.equal(exportPackage.packageVersion, "1.0");
+  assert.equal(exportPackage.packageType, "concrete_ops_job_draft");
+  assert.equal(exportPackage.sourceApp, "Last Yard Concrete Proposal / GC Packet Generator");
+  assert.equal(exportPackage.exportedAt, "2026-05-10T12:00:00.000Z");
+  assert.equal(exportPackage.opsJobDraftId, "draft-export");
+  assert.equal(exportPackage.proposalAmount, 18500);
+  assert.deepEqual(exportPackage.includedScope, ["Demo panels", "Place broom finish concrete"]);
+  assert.match(exportPackage.jobDraftSummary, /Concrete Ops Job Draft: Albany Sidewalk Repair/);
+  assert.doesNotMatch(JSON.stringify(exportPackage), /secret-api-key|secret-auth-token|secret-session|apiKey|authToken|session/);
+});
+
+test("export package filename uses job name or draft id with date stamp", () => {
+  const fileName = getConcreteOpsJobDraftExportFileName({ id: "draft-1", jobName: "Albany Sidewalk Repair!" }, new Date("2026-05-10T12:00:00.000Z"));
+  const fallbackFileName = getConcreteOpsJobDraftExportFileName({ id: "draft-1" }, new Date("2026-05-10T12:00:00.000Z"));
+
+  assert.equal(fileName, "concrete-ops-job-draft-albany-sidewalk-repair-2026-05-10.json");
+  assert.equal(fallbackFileName, "concrete-ops-job-draft-draft-1-2026-05-10.json");
+});
+
+test("not-ready draft can still create an export package with readiness issues", () => {
+  const exportPackage = createConcreteOpsJobDraftExportPackage({
+    id: "draft-not-ready",
+    jobName: "Incomplete slab",
+    opsReadinessLabel: "Not Ready",
+    opsReadinessScore: 45,
+    opsReadinessIssues: ["Add customer phone.", "Confirm start date."],
+  });
+
+  assert.equal(exportPackage.opsReadinessLabel, "Not Ready");
+  assert.equal(exportPackage.opsReadinessScore, 45);
+  assert.deepEqual(exportPackage.opsReadinessIssues, ["Add customer phone.", "Confirm start date."]);
+  assert.match(exportPackage.jobDraftSummary, /Concrete Ops Job Draft: Incomplete slab/);
 });

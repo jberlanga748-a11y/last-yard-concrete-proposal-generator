@@ -223,8 +223,10 @@ import {
   upsertJobHandoff,
 } from "./utils/jobHandoffs.js";
 import {
+  createConcreteOpsJobDraftExportPackage,
   createOpsJobDraftFromHandoff,
   findOpsJobDraftForHandoff,
+  getConcreteOpsJobDraftExportFileName,
   getOpsJobDraftById,
   mergeOpsJobDrafts,
   normalizeOpsJobDraft,
@@ -3637,6 +3639,33 @@ export default function App() {
     });
 
     return getOpsJobDraftById(nextDrafts, normalizedDraft.id) || normalizedDraft;
+  }
+
+  function exportOpsJobDraftPackage(draft) {
+    if (!canPerform("backupExport", setOpsJobDraftMessage)) {
+      return null;
+    }
+
+    const normalizedDraft = normalizeOpsJobDraft(draft);
+    const packagePayload = createConcreteOpsJobDraftExportPackage(normalizedDraft);
+    const fileName = getConcreteOpsJobDraftExportFileName(normalizedDraft);
+    const notReadyWarning =
+      normalizedDraft.opsReadinessLabel === "Not Ready"
+        ? "This draft is not marked ready. Export is allowed, but review missing readiness items first. "
+        : "";
+
+    downloadJsonFile(packagePayload, fileName);
+    setOpsJobDraftMessage(`${notReadyWarning}Exported Concrete Ops Job Draft Package for ${normalizedDraft.jobName || normalizedDraft.id}.`);
+    recordActivity({
+      action: "Concrete Ops job draft package exported",
+      entityType: "ops_job_draft",
+      entityId: normalizedDraft.id,
+      entityLabel: normalizedDraft.jobName || "Concrete Ops job draft",
+      opsJobDrafts,
+      notes: `Export file: ${fileName}`,
+    });
+
+    return { fileName, package: packagePayload };
   }
 
   async function createOpsJobDraftFromHandoffAction(handoff, options = {}) {
@@ -7657,6 +7686,7 @@ export default function App() {
           permissions={permissions}
           route={route}
           onBackToDashboard={() => navigate("/dashboard")}
+          onExportDraftPackage={exportOpsJobDraftPackage}
           onNavigate={navigate}
           onSaveDraft={saveOpsJobDraft}
         />
