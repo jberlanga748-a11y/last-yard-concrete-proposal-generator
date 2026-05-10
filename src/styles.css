@@ -1020,7 +1020,13 @@ h4 {
   display: none;
 }
 
-.app-actions-menu summary {
+.app-mobile-nav-menu {
+  position: relative;
+  display: none;
+}
+
+.app-actions-menu summary,
+.app-mobile-nav-menu summary {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1035,28 +1041,35 @@ h4 {
   white-space: nowrap;
 }
 
-.app-actions-menu summary::-webkit-details-marker {
+.app-actions-menu summary::-webkit-details-marker,
+.app-mobile-nav-menu summary::-webkit-details-marker {
   display: none;
 }
 
-.app-actions-menu summary::after {
+.app-actions-menu summary::after,
+.app-mobile-nav-menu summary::after {
   content: "v";
   color: rgba(255, 255, 255, 0.82);
   font-size: 9px;
 }
 
 .app-actions-menu[open] summary,
-.app-actions-menu summary:hover {
+.app-actions-menu summary:hover,
+.app-mobile-nav-menu[open] summary,
+.app-mobile-nav-menu summary:hover {
   background: white;
   color: var(--blue);
 }
 
 .app-actions-menu[open] summary::after,
-.app-actions-menu summary:hover::after {
+.app-actions-menu summary:hover::after,
+.app-mobile-nav-menu[open] summary::after,
+.app-mobile-nav-menu summary:hover::after {
   color: var(--blue);
 }
 
-.app-actions-popover {
+.app-actions-popover,
+.app-mobile-nav-popover {
   position: absolute;
   right: 0;
   top: calc(100% + 8px);
@@ -1071,7 +1084,12 @@ h4 {
   box-shadow: 0 18px 38px rgba(4, 29, 47, 0.22);
 }
 
-.app-actions-popover button {
+.app-mobile-nav-popover {
+  width: 250px;
+}
+
+.app-actions-popover button,
+.app-mobile-nav-popover button {
   justify-content: flex-start;
   width: 100%;
   background: #eef3f7;
@@ -1079,7 +1097,9 @@ h4 {
   text-align: left;
 }
 
-.app-actions-popover button:hover {
+.app-mobile-nav-popover button.active,
+.app-actions-popover button:hover,
+.app-mobile-nav-popover button:hover {
   background: var(--blue);
   color: white;
 }
@@ -1196,7 +1216,26 @@ h4 {
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 768px) {
+  .app-chrome {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "brand actions";
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .app-nav {
+    display: none;
+  }
+
+  .app-mobile-nav-menu {
+    display: block;
+  }
+
+  .app-quick-actions {
+    gap: 6px;
+  }
+
   .app-primary-action {
     display: none;
   }
@@ -1208,6 +1247,45 @@ h4 {
   .app-actions-popover {
     right: 0;
     width: min(210px, calc(100vw - 24px));
+  }
+
+  .app-mobile-nav-popover {
+    right: 0;
+    width: min(260px, calc(100vw - 24px));
+  }
+}
+
+@media (max-width: 520px) {
+  .app-chrome {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "brand"
+      "actions";
+    align-items: stretch;
+  }
+
+  .app-brand p,
+  .app-brand h1 {
+    max-width: calc(100vw - 86px);
+  }
+
+  .app-quick-actions {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .app-auth-pill {
+    flex: 1 1 auto;
+    max-width: none;
+  }
+
+  .app-auth-pill span:first-child {
+    max-width: 100%;
+  }
+
+  .app-mobile-nav-menu,
+  .app-actions-menu {
+    flex: 0 0 auto;
   }
 }
 
@@ -2709,6 +2787,33 @@ h4 {
   margin-top: 0;
 }
 
+.lead-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.lead-filter-grid label {
+  display: grid;
+  gap: 5px;
+  color: var(--body);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.lead-filter-grid input,
+.lead-filter-grid select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #c9d1dc;
+  border-radius: 7px;
+  background: white;
+  color: var(--body);
+  min-height: 40px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
 .lead-finder-mini-list,
 .lead-source-list,
 .lead-inbox-list {
@@ -3049,6 +3154,20 @@ h4 {
 
   .lead-ai-score-card {
     grid-template-columns: 1fr;
+  }
+}
+
+@media screen and (max-width: 1100px) {
+  .dashboard-stat-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dashboard-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .follow-up-row {
+    grid-template-columns: minmax(0, 1fr) minmax(110px, 0.4fr) auto;
   }
 }
 
@@ -8344,7 +8463,7 @@ h4 {
 
 @media (max-width: 760px) {
   .app-shell {
-    padding: 18px 10px;
+    padding: 0;
   }
 
   .print-bar,
@@ -8483,6 +8602,224 @@ h4 {
 
   .compact-footer .logo-seal-small {
     margin-left: auto;
+  }
+}
+
+@media screen and (max-width: 768px) {
+  html,
+  body,
+  #root,
+  .app-shell,
+  .app-content {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .app-content {
+    padding: 12px;
+  }
+
+  .proposal-list-panel,
+  .company-settings-panel,
+  .dashboard-panel,
+  .activity-log-panel,
+  .backup-page-panel,
+  .contacts-panel,
+  .bids-panel,
+  .price-library-panel,
+  .login-panel {
+    border-radius: 10px;
+    margin-bottom: 14px;
+    padding: 14px;
+  }
+
+  .list-toolbar,
+  .recent-heading,
+  .proposal-action-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .recent-heading > div,
+  .list-toolbar > div,
+  .proposal-action-bar > div {
+    min-width: 0;
+  }
+
+  .list-toolbar h2,
+  .proposal-action-bar h2 {
+    font-size: 21px;
+  }
+
+  .settings-actions,
+  .proposal-actions,
+  .table-actions,
+  .send-submission-actions {
+    align-items: stretch;
+    width: 100%;
+  }
+
+  .settings-actions button,
+  .proposal-actions button,
+  .proposal-action-link,
+  .table-actions button,
+  .send-submission-actions button,
+  .table-actions .button-link {
+    min-height: 44px;
+  }
+
+  .lead-finder-panel,
+  .lead-finder-layout,
+  .lead-finder-grid,
+  .bid-form-sections,
+  .lead-inbox-list,
+  .lead-source-list {
+    gap: 12px;
+  }
+
+  .lead-finder-card,
+  .lead-proposal-draft-review,
+  .lead-source-row,
+  .lead-inbox-row,
+  .lead-next-action-row,
+  .lead-follow-up-card {
+    padding: 12px;
+  }
+
+  .lead-finder-heading {
+    gap: 12px;
+  }
+
+  .lead-finder-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .lead-finder-nav button {
+    width: 100%;
+  }
+
+  .dashboard-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-summary-grid,
+  .send-submission-grid,
+  .follow-up-row,
+  .lead-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lead-inbox-row,
+  .lead-source-row,
+  .lead-next-action-row,
+  .job-handoff-row {
+    align-items: stretch;
+  }
+
+  .lead-inbox-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-items: start;
+  }
+
+  .lead-inbox-meta strong,
+  .lead-inbox-meta span {
+    min-width: 0;
+  }
+
+  .lead-next-action-row .table-actions,
+  .lead-inbox-row .table-actions,
+  .lead-source-row .table-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+  }
+
+  .lead-ai-score-card,
+  .customer-selection-review-card,
+  .residential-approval-record > div {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-stat-card {
+    padding: 12px;
+  }
+
+  .dashboard-stat-card strong {
+    font-size: 24px;
+  }
+
+  .proposal-list-panel .proposal-table-wrap {
+    overflow-x: visible;
+  }
+
+  .proposal-list-panel .proposal-list-table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    border-collapse: separate;
+    border-spacing: 0 10px;
+  }
+
+  .proposal-list-panel .proposal-list-table thead {
+    display: none;
+  }
+
+  .proposal-list-panel .proposal-list-table tbody,
+  .proposal-list-panel .proposal-list-table tr,
+  .proposal-list-panel .proposal-list-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .proposal-list-panel .proposal-list-table tr {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #ffffff;
+    box-shadow: 0 8px 18px rgba(4, 29, 47, 0.05);
+    overflow: hidden;
+  }
+
+  .proposal-list-panel .proposal-list-table td {
+    border-bottom: 1px solid rgba(217, 222, 229, 0.85);
+    padding: 10px 12px;
+  }
+
+  .proposal-list-panel .proposal-list-table td:last-child {
+    border-bottom: 0;
+  }
+
+  .proposal-list-panel .proposal-list-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    color: #64748b;
+    font-size: 10px;
+    font-weight: 950;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+}
+
+@media screen and (max-width: 520px) {
+  .dashboard-stat-grid,
+  .lead-finder-stat-grid,
+  .lead-next-action-row .table-actions,
+  .lead-inbox-row .table-actions,
+  .lead-source-row .table-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-actions button,
+  .proposal-actions button,
+  .proposal-action-link,
+  .table-actions button,
+  .send-submission-actions button,
+  .table-actions .button-link {
+    justify-content: center;
+    width: 100%;
   }
 }
 

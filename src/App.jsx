@@ -10777,24 +10777,24 @@ function ProposalListView({
 
               return (
                 <tr key={summary.id} onClick={() => onOpen(summary.id)}>
-                  <td>
+                  <td data-label="Proposal #">
                     <strong>{summary.proposalNumber}</strong>
                     <span>{summary.revisionLabel || formatRevisionLabel(summary.revisionNumber)}</span>
                     {summary.isLatestRevision ? <Badge className="revision-latest">Latest</Badge> : null}
                   </td>
-                  <td>
+                  <td data-label="Client">
                     <strong>{summary.clientCompanyName}</strong>
                     <span>{summary.clientContactName}</span>
                     {summary.linkedContactLabel ? <span>Linked: {summary.linkedContactLabel}</span> : null}
                   </td>
-                  <td>{summary.projectName}</td>
-                  <td>{formatOptionLabel(summary.proposalType)}</td>
-                  <td>
+                  <td data-label="Project">{summary.projectName}</td>
+                  <td data-label="Type">{formatOptionLabel(summary.proposalType)}</td>
+                  <td data-label="Packet">
                     <Badge className={summary.packetMode === "Full GC Packet" ? "packet-full" : "packet-summary"}>
                       {summary.packetMode}
                     </Badge>
                   </td>
-                  <td>
+                  <td data-label="Packet Record">
                     {summary.latestPacketRecordCreatedAt ? (
                       <>
                         <Badge className={`packet-record-${summary.latestPacketRecordStatus}`}>
@@ -10810,7 +10810,7 @@ function ProposalListView({
                       <Badge className="packet-record-none">No packet record</Badge>
                     )}
                   </td>
-                  <td onClick={(event) => event.stopPropagation()}>
+                  <td data-label="Status" onClick={(event) => event.stopPropagation()}>
                     <StatusBadge status={summary.status} />
                     <select value={summary.status} onChange={(event) => onStatusChange(proposal, event.target.value)} disabled={!permissions.markProposalOutcome}>
                       {PROPOSAL_STATUSES.map((status) => (
@@ -10820,8 +10820,8 @@ function ProposalListView({
                       ))}
                     </select>
                   </td>
-                  <td>{formatDisplayDate(summary.sentDate) || "-"}</td>
-                  <td>
+                  <td data-label="Sent">{formatDisplayDate(summary.sentDate) || "-"}</td>
+                  <td data-label="Follow-Up">
                     {summary.followUpDate ? (
                       <Badge className={summary.followUpOverdue ? "follow-up-overdue" : "follow-up-due"}>
                         {formatDisplayDate(summary.followUpDate)}
@@ -10830,9 +10830,9 @@ function ProposalListView({
                       "-"
                     )}
                   </td>
-                  <td>{formatCurrency(summary.total)}</td>
-                  <td>{formatDashboardDate(summary.updatedAt)}</td>
-                  <td>
+                  <td data-label="Total">{formatCurrency(summary.total)}</td>
+                  <td data-label="Updated">{formatDashboardDate(summary.updatedAt)}</td>
+                  <td data-label="Actions">
                     <div className="table-actions" onClick={(event) => event.stopPropagation()}>
                       <button type="button" onClick={() => onOpen(summary.id)}>
                         Open

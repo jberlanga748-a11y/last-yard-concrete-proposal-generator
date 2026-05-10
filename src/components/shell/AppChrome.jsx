@@ -124,6 +124,21 @@ export function AppChrome({
         >
           New GC Packet
         </button>
+        <details className="app-mobile-nav-menu">
+          <summary title="Open main navigation">Menu</summary>
+          <div className="app-mobile-nav-popover">
+            {navItems.map(({ action, label, view }) => (
+              <button
+                className={activeView === view ? "active" : ""}
+                key={view}
+                type="button"
+                onClick={(event) => runMenuAction(event, action)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </details>
         <details className="app-actions-menu">
           <summary title="Open quick actions">Actions</summary>
           <div className="app-actions-popover">

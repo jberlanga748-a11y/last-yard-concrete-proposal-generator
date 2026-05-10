@@ -19,6 +19,8 @@ test("app shell exposes AI Lead Finder navigation and routes", () => {
   assert.match(chromeSource, /AI Lead Finder/);
   assert.match(chromeSource, /Job Handoffs/);
   assert.match(chromeSource, /Ops Job Drafts/);
+  assert.match(chromeSource, /app-mobile-nav-menu/);
+  assert.match(chromeSource, /app-mobile-nav-popover/);
   assert.match(chromeSource, /onNavigate\("\/lead-finder"\)/);
   assert.match(appSource, /segments\[0\] === "lead-finder"/);
   assert.match(appSource, /segments\[0\] === "job-handoffs"/);
@@ -33,6 +35,15 @@ test("app shell exposes AI Lead Finder navigation and routes", () => {
   assert.match(appSource, /<LeadFinderView/);
   assert.match(appSource, /<JobHandoffsView/);
   assert.match(appSource, /<OpsJobDraftsView/);
+});
+
+test("mobile proposal list cards keep key proposal actions and labels available", () => {
+  assert.match(appSource, /<td data-label="Proposal #">/);
+  assert.match(appSource, /<td data-label="Client">/);
+  assert.match(appSource, /<td data-label="Project">/);
+  assert.match(appSource, /<td data-label="Status"/);
+  assert.match(appSource, /<td data-label="Actions">/);
+  assert.match(appSource, /title="Open the print\/PDF view for this proposal\."/);
 });
 
 test("lead finder data follows local-first company settings persistence", () => {

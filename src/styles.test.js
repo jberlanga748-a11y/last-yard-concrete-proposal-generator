@@ -114,6 +114,21 @@ test("editor preview and residential terms controls use compact non-print cards"
   assert.match(warning, /background:\s*#fff7df/);
 });
 
+test("mobile app chrome collapses primary navigation into a menu", () => {
+  assert.match(styles, /\.app-mobile-nav-menu\s*\{[\s\S]*?display:\s*none/);
+  assert.match(styles, /@media \(max-width:\s*768px\)\s*\{[\s\S]*?\.app-nav\s*\{[\s\S]*?display:\s*none/);
+  assert.match(styles, /@media \(max-width:\s*768px\)\s*\{[\s\S]*?\.app-mobile-nav-menu\s*\{[\s\S]*?display:\s*block/);
+  assert.match(styles, /@media \(max-width:\s*520px\)\s*\{[\s\S]*?grid-template-areas:\s*"brand"\s*"actions"/);
+});
+
+test("lead finder and proposal list have small-screen card layouts", () => {
+  assert.match(styles, /@media screen and \(max-width:\s*768px\)\s*\{[\s\S]*?\.lead-finder-nav\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(styles, /@media screen and \(max-width:\s*768px\)\s*\{[\s\S]*?\.lead-inbox-row \.table-actions[\s\S]*?grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(126px,\s*1fr\)\)/);
+  assert.match(styles, /@media screen and \(max-width:\s*768px\)\s*\{[\s\S]*?\.proposal-list-panel \.proposal-list-table\s*\{[\s\S]*?display:\s*block/);
+  assert.match(styles, /\.proposal-list-panel \.proposal-list-table td\[data-label\]::before\s*\{[\s\S]*?content:\s*attr\(data-label\)/);
+  assert.match(styles, /@media screen and \(max-width:\s*520px\)\s*\{[\s\S]*?\.dashboard-stat-grid,[\s\S]*?\.lead-finder-stat-grid,[\s\S]*?\{[\s\S]*?grid-template-columns:\s*1fr/);
+});
+
 test("residential option SOV tables use compact readable spacing without page breaks between standard options", () => {
   const breakdowns = getCssBlock(".residential-option-breakdowns");
   const heading = getCssBlock(".residential-option-breakdown-heading");
