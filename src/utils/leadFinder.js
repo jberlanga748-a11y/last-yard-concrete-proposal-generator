@@ -1552,11 +1552,11 @@ export function checkLeadMissingInfoWithLocalRules(lead = {}) {
   });
 }
 
-export function getLeadFinderStats(data = {}) {
+export function getLeadFinderStats(data = {}, options = {}) {
   const { leads, sources } = normalizeLeadFinderData(data);
   const countStatus = (status) => leads.filter((lead) => lead.status === status).length;
   const countFollowUpStatus = (status) => leads.filter((lead) => lead.followUpStatus === status).length;
-  const today = getTodayInputValue();
+  const today = toDateInputValue(options.today) || getTodayInputValue();
 
   return {
     totalLeads: leads.length,
@@ -1576,13 +1576,13 @@ export function getLeadFinderStats(data = {}) {
     proposalsStarted: countStatus("Proposal Started"),
     wonLeads: countStatus("Won"),
     lostLeads: countStatus("Lost"),
-    followUpsDueToday: leads.filter((lead) => isLeadFollowUpDueToday(lead)).length,
-    overdueFollowUps: leads.filter((lead) => isLeadFollowUpOverdue(lead)).length,
+    followUpsDueToday: leads.filter((lead) => isLeadFollowUpDueToday(lead, { today })).length,
+    overdueFollowUps: leads.filter((lead) => isLeadFollowUpOverdue(lead, { today })).length,
     waitingOnResponse: countFollowUpStatus("Waiting on Response"),
     noFollowUpLeads: leads.filter((lead) => ["No Thanks", "Do Not Follow Up"].includes(lead.followUpStatus)).length,
-    sourcesDueToday: sources.filter((source) => isLeadSourceDueToday(source)).length,
-    overdueSources: sources.filter((source) => isLeadSourceOverdue(source)).length,
-    highPrioritySourcesDue: sources.filter((source) => source.sourcePriority === "High" && isLeadSourceDueOrOverdue(source)).length,
+    sourcesDueToday: sources.filter((source) => isLeadSourceDueToday(source, { today })).length,
+    overdueSources: sources.filter((source) => isLeadSourceOverdue(source, { today })).length,
+    highPrioritySourcesDue: sources.filter((source) => source.sourcePriority === "High" && isLeadSourceDueOrOverdue(source, { today })).length,
     activeSources: sources.filter((source) => source.active && source.sourceStatus === "Active").length,
   };
 }
@@ -1613,6 +1613,38 @@ export function getLeadReviewQueue(data = {}, filters = {}) {
       return matchesReview && matchesLabel && matchesCompany && matchesScoreSource && matchesSource && matchesService && matchesCity && matchesReadiness;
     })
     .sort(compareLeadReviewQueueItems);
+}
+
+export function getLeadFinderCommandCenterData(data = {}, options = {}) {
+  const normalizedData = normalizeLeadFinderData(data);
+  const today = toDateInputValue(options.today) || getTodayInputValue();
+  const stats = getLeadFinderStats(normalizedData, { today });
+  const sourcesDueToday = normalizedData.sources.filter((source) => isLeadSourceDueToday(source, { today }));
+  const overdueSources = normalizedData.sources.filter((source) => isLeadSourceOverdue(source, { today }));
+  const sourcesToCheckToday = [...overdueSources, ...sourcesDueToday.filter((source) => !overdueSources.some((item) => item.id === source.id))].sort(
+    compareLeadSourceCommandItems,
+  );
+  const leadsNeedingReview = getLeadReviewQueue(normalizedData, { reviewStatus: "Needs Review" });
+  const leadsMissingInfo = normalizedData.leads
+    .filter((lead) => ["Needs Info", "Not Ready"].includes(lead.proposalReadinessLabel))
+    .sort(compareLeadMissingInfoItems);
+  const followUpsDue = normalizedData.leads
+    .filter((lead) => isLeadFollowUpDueToday(lead, { today }) || isLeadFollowUpOverdue(lead, { today }))
+    .sort(compareLeadFollowUpCommandItems);
+  const readyToBid = normalizedData.leads
+    .filter((lead) => lead.aiFitLabel === "Good Fit" && (lead.proposalReadinessLabel === "Ready" || Number(lead.proposalReadinessScore) >= 80))
+    .sort(compareLeadReadyCommandItems);
+
+  return {
+    stats,
+    sourcesDueToday,
+    overdueSources,
+    sourcesToCheckToday,
+    leadsNeedingReview,
+    leadsMissingInfo,
+    followUpsDue,
+    readyToBid,
+  };
 }
 
 export function filterLeadSources(sources = [], filters = {}) {
@@ -2190,6 +2222,36 @@ function compareLeadReviewQueueItems(a = {}, b = {}) {
   return getTimeValue(b.updatedAt || b.createdAt) - getTimeValue(a.updatedAt || a.createdAt);
 }
 
+function compareLeadSourceCommandItems(a = {}, b = {}) {
+  const priorityOrder = { High: 0, Medium: 1, Low: 2 };
+  const dateDelta = getInputDateSortValue(a.nextCheckDate) - getInputDateSortValue(b.nextCheckDate);
+
+  if (dateDelta !== 0) {
+    return dateDelta;
+  }
+
+  return (priorityOrder[a.sourcePriority] ?? 1) - (priorityOrder[b.sourcePriority] ?? 1) || a.name.localeCompare(b.name);
+}
+
+function compareLeadMissingInfoItems(a = {}, b = {}) {
+  const labelOrder = { "Needs Info": 0, "Not Ready": 1 };
+  const labelDelta = (labelOrder[a.proposalReadinessLabel] ?? 2) - (labelOrder[b.proposalReadinessLabel] ?? 2);
+
+  if (labelDelta !== 0) {
+    return labelDelta;
+  }
+
+  return getTimeValue(b.missingInfoLastCheckedAt || b.updatedAt || b.createdAt) - getTimeValue(a.missingInfoLastCheckedAt || a.updatedAt || a.createdAt);
+}
+
+function compareLeadFollowUpCommandItems(a = {}, b = {}) {
+  return getInputDateSortValue(a.nextFollowUpDate) - getInputDateSortValue(b.nextFollowUpDate) || getTimeValue(b.updatedAt || b.createdAt) - getTimeValue(a.updatedAt || a.createdAt);
+}
+
+function compareLeadReadyCommandItems(a = {}, b = {}) {
+  return (Number(b.proposalReadinessScore) || 0) - (Number(a.proposalReadinessScore) || 0) || (Number(b.aiFitScore) || 0) - (Number(a.aiFitScore) || 0);
+}
+
 function normalizeTextList(value = []) {
   if (Array.isArray(value)) {
     return value.map((item) => toSafeText(item)).filter(Boolean);
@@ -2265,6 +2327,17 @@ function getDueDateSortValue(lead = {}) {
   }
 
   const timestamp = new Date(`${lead.dueDate}T00:00:00`).valueOf();
+  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
+}
+
+function getInputDateSortValue(value = "") {
+  const inputDate = toDateInputValue(value);
+
+  if (!inputDate) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  const timestamp = new Date(`${inputDate}T00:00:00`).valueOf();
   return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
 }
 

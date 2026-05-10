@@ -15,6 +15,7 @@ test("app shell exposes AI Lead Finder navigation and routes", () => {
   assert.match(chromeSource, /AI Lead Finder/);
   assert.match(chromeSource, /onNavigate\("\/lead-finder"\)/);
   assert.match(appSource, /segments\[0\] === "lead-finder"/);
+  assert.match(appSource, /section: "commandCenter"/);
   assert.match(appSource, /section: "review"/);
   assert.match(appSource, /section: "dailyCheck"/);
   assert.match(appSource, /section: "sources"/);
@@ -38,6 +39,7 @@ test("lead finder data follows local-first company settings persistence", () => 
 
 test("lead finder screens include dashboard sources inbox new lead and detail behavior", () => {
   assert.match(leadFinderViewSource, /function LeadFinderDashboard/);
+  assert.match(leadFinderViewSource, /function LeadCommandCenterPage/);
   assert.match(leadFinderViewSource, /function LeadReviewQueuePage/);
   assert.match(leadFinderViewSource, /function LeadFinderBackupTools/);
   assert.match(leadFinderViewSource, /function LeadDailySourceCheckPage/);
@@ -48,6 +50,14 @@ test("lead finder screens include dashboard sources inbox new lead and detail be
   assert.match(leadFinderViewSource, /Mark \{status\}/);
   assert.match(leadFinderViewSource, /New Lead/);
   assert.match(leadFinderViewSource, /Daily Source Check/);
+  assert.match(leadFinderViewSource, /Daily Command Center/);
+  assert.match(leadFinderViewSource, /Today's Priority Summary/);
+  assert.match(leadFinderViewSource, /Sources To Check Today/);
+  assert.match(leadFinderViewSource, /Leads Needing Review/);
+  assert.match(leadFinderViewSource, /Leads Missing Info/);
+  assert.match(leadFinderViewSource, /Follow-Ups Due/);
+  assert.match(leadFinderViewSource, /Ready To Bid \/ Ready To Proposal/);
+  assert.match(leadFinderViewSource, /Open Command Center/);
   assert.match(leadFinderViewSource, /Mark Checked/);
   assert.match(leadFinderViewSource, /Add Lead From This Source/);
   assert.match(leadFinderViewSource, /Open Source/);
@@ -137,6 +147,7 @@ test("lead finder scoring is server-backed and does not add daily search yet", (
   assert.match(leadFinderSource, /proposalReadinessScore/);
   assert.match(leadFinderSource, /markLeadMissingInfoRequested/);
   assert.match(leadFinderSource, /getLeadReviewQueue/);
+  assert.match(leadFinderSource, /getLeadFinderCommandCenterData/);
   assert.match(leadFinderSource, /hasCompleteLeadScore/);
   assert.match(leadFinderSource, /scoredAt/);
   assert.doesNotMatch(scoreLeadApiSource, /VITE_OPENAI_API_KEY|import\.meta\.env/);

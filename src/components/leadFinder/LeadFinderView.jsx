@@ -23,6 +23,7 @@ import {
   filterLeadRecords,
   filterLeadSources,
   getLeadById,
+  getLeadFinderCommandCenterData,
   getLeadFinderStats,
   getLeadReviewQueue,
   getLeadSourceOpenUrl,
@@ -95,6 +96,20 @@ export function LeadFinderView({
           onDeactivateSource={onDeactivateSource}
           onSaveSource={onSaveSource}
         />
+      ) : section === "commandCenter" ? (
+        <LeadCommandCenterPage
+          data={normalizedData}
+          permissions={permissions}
+          onAddLeadFromSource={addLeadFromSource}
+          onCheckMissingInfoWithRules={onCheckMissingInfoWithRules}
+          onGenerateProposalDraft={onGenerateProposalDraft}
+          onLeadHandoff={onLeadHandoff}
+          onMarkMissingInfoRequested={onMarkMissingInfoRequested}
+          onNavigate={navigateLeadFinder}
+          onSaveLead={onSaveLead}
+          onSaveSource={onSaveSource}
+          onUpdateLeadReviewStatus={onUpdateLeadReviewStatus}
+        />
       ) : section === "dailyCheck" ? (
         <LeadDailySourceCheckPage
           data={normalizedData}
@@ -166,6 +181,7 @@ export function LeadFinderView({
 function LeadFinderHeader({ section = "dashboard", onBackToDashboard, onNavigate }) {
   const navItems = [
     ["dashboard", "Dashboard", "/lead-finder"],
+    ["commandCenter", "Command Center", "/lead-finder/command-center"],
     ["review", "Review Queue", "/lead-finder/review"],
     ["dailyCheck", "Daily Source Check", "/lead-finder/daily-check"],
     ["sources", "Sources", "/lead-finder/sources"],
@@ -243,10 +259,13 @@ function LeadFinderDashboard({ data = {}, permissions = {}, onExportBackup, onIm
             <h3>Score and Review New Leads</h3>
             <p>Rule-based auto-scoring is free and does not call OpenAI. Live AI scoring stays manual on the lead detail page.</p>
           </div>
-          <div className="settings-actions">
-            <button type="button" onClick={() => onNavigate?.("/lead-finder/review")}>
-              Open Review Queue
-            </button>
+        <div className="settings-actions">
+          <button className="gold-action" type="button" onClick={() => onNavigate?.("/lead-finder/command-center")}>
+            Open Command Center
+          </button>
+          <button type="button" onClick={() => onNavigate?.("/lead-finder/review")}>
+            Open Review Queue
+          </button>
             <button type="button" onClick={scoreAllUnscored} disabled={!permissions.editBid || stats.unscoredLeads === 0}>
               Score All Unscored Leads
             </button>
@@ -307,6 +326,316 @@ function LeadFinderDashboard({ data = {}, permissions = {}, onExportBackup, onIm
         </article>
       </div>
     </>
+  );
+}
+
+function LeadCommandCenterPage({
+  data = {},
+  permissions = {},
+  onAddLeadFromSource,
+  onCheckMissingInfoWithRules,
+  onGenerateProposalDraft,
+  onLeadHandoff,
+  onMarkMissingInfoRequested,
+  onNavigate,
+  onSaveLead,
+  onSaveSource,
+  onUpdateLeadReviewStatus,
+}) {
+  const commandData = getLeadFinderCommandCenterData(data);
+  const [localMessage, setLocalMessage] = useState("");
+  const [actionLoading, setActionLoading] = useState("");
+  const statCards = [
+    ["Sources Due Today", commandData.stats.sourcesDueToday],
+    ["Overdue Sources", commandData.stats.overdueSources],
+    ["New Leads Needing Review", commandData.stats.newLeadsNeedingReview],
+    ["Good Fit Leads", commandData.stats.aiGoodFitLeads],
+    ["Maybe Leads", commandData.stats.aiMaybeLeads],
+    ["Leads Missing Info", commandData.stats.leadsNeedingInfo + commandData.stats.notReadyLeads],
+    ["Follow-Ups Due Today", commandData.stats.followUpsDueToday],
+    ["Overdue Follow-Ups", commandData.stats.overdueFollowUps],
+    ["Waiting on Response", commandData.stats.waitingOnResponse],
+    ["Proposals Started", commandData.stats.proposalsStarted],
+  ];
+
+  async function runLeadAction(lead, actionName, action) {
+    setActionLoading(`${lead.id}-${actionName}`);
+    setLocalMessage("");
+
+    try {
+      const result = await action();
+      const message = result?.message || `${lead.title || "Lead"} updated.`;
+      setLocalMessage(message);
+    } catch (error) {
+      setLocalMessage(error?.message || `${actionName} failed.`);
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function updateReviewStatus(lead, reviewStatus) {
+    await runLeadAction(lead, reviewStatus, async () => {
+      const updatedLead = await onUpdateLeadReviewStatus?.(lead.id, reviewStatus);
+      return { message: `${updatedLead?.title || lead.title || "Lead"} marked ${reviewStatus}.` };
+    });
+  }
+
+  async function checkMissingInfo(lead) {
+    await runLeadAction(lead, "missing-info", async () => {
+      const updatedLead = await onCheckMissingInfoWithRules?.(lead);
+      return { message: `Missing info checked for ${updatedLead?.title || lead.title || "lead"}.` };
+    });
+  }
+
+  async function generateDraft(lead) {
+    await runLeadAction(lead, "proposal-draft", async () => {
+      const draft = await onGenerateProposalDraft?.(lead);
+      return draft ? { message: `Generated a proposal draft for ${lead.title || "lead"}. Open the lead detail page to review and apply it.` } : null;
+    });
+  }
+
+  async function createHandoff(lead, actionType) {
+    await runLeadAction(lead, actionType, async () => onLeadHandoff?.(lead, actionType));
+  }
+
+  async function followUpAction(lead, actionType) {
+    await runLeadAction(lead, actionType, async () => {
+      const updatedLead = applyLeadFollowUpQuickAction(lead, actionType);
+      const savedLead = await onSaveLead?.(updatedLead);
+      return { message: `${savedLead?.title || lead.title || "Lead"} follow-up updated.` };
+    });
+  }
+
+  async function markMissingInfoRequested(lead) {
+    await runLeadAction(lead, "missing-info-requested", async () => {
+      const updatedLead = await onMarkMissingInfoRequested?.(lead);
+      return { message: `Missing info requested for ${updatedLead?.title || lead.title || "lead"}.` };
+    });
+  }
+
+  async function clearMissingInfo(lead) {
+    await runLeadAction(lead, "clear-missing-info", async () => {
+      const savedLead = await onSaveLead?.({
+        ...lead,
+        missingInfoChecklist: [],
+        criticalQuestions: [],
+        recommendedPhotosOrDocs: [],
+        missingInfoRiskFlags: [],
+        proposalReadinessScore: "",
+        proposalReadinessLabel: "",
+        missingInfoRecommendedNextStep: "",
+        customerQuestionDraft: "",
+        missingInfoLastCheckedAt: "",
+        missingInfoSource: "",
+        missingInfoStatus: "Not Checked",
+      });
+
+      return { message: `Missing info check cleared for ${savedLead?.title || lead.title || "lead"}.` };
+    });
+  }
+
+  async function copyQuestions(lead) {
+    await runLeadAction(lead, "copy-questions", async () => {
+      if (!lead.customerQuestionDraft) {
+        return { message: "No customer question draft saved yet." };
+      }
+
+      await navigator.clipboard.writeText(lead.customerQuestionDraft);
+      return { message: "Customer questions copied." };
+    });
+  }
+
+  async function markSourceChecked(source) {
+    setActionLoading(`${source.id}-checked`);
+    setLocalMessage("");
+
+    try {
+      const savedSource = await onSaveSource?.(applyLeadSourceChecked(source));
+      setLocalMessage(`Marked ${savedSource?.name || source.name || "source"} checked.`);
+    } catch (error) {
+      setLocalMessage(error?.message || "Mark checked failed.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  return (
+    <div className="lead-command-center">
+      <article className="lead-finder-card">
+        <div className="recent-heading">
+          <div>
+            <p className="list-kicker">Daily Command Center</p>
+            <h3>Morning Lead Finder Work</h3>
+            <p>Work through sources, lead review, missing info, follow-ups, and proposal-ready leads from one page. No web search, scraping, or messages are sent automatically.</p>
+          </div>
+          <div className="settings-actions">
+            <button type="button" onClick={() => onNavigate?.("/lead-finder/daily-check")}>
+              Daily Source Check
+            </button>
+            <button type="button" onClick={() => onNavigate?.("/lead-finder/review")}>
+              Review Queue
+            </button>
+          </div>
+        </div>
+        {localMessage ? <p className="backup-message">{localMessage}</p> : null}
+      </article>
+
+      <section className="lead-finder-card">
+        <div className="recent-heading">
+          <div>
+            <p className="list-kicker">Today's Priority Summary</p>
+            <h3>What Needs Attention</h3>
+          </div>
+        </div>
+        <div className="dashboard-stat-grid lead-finder-stat-grid">
+          {statCards.map(([label, value]) => (
+            <div className="dashboard-stat-card" key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <CommandCenterSection title="Sources To Check Today" emptyText="No sources are due or overdue.">
+        {commandData.sourcesToCheckToday.map((source) => (
+          <LeadSourceCheckRow
+            key={source.id}
+            source={source}
+            permissions={permissions}
+            onAddLeadFromSource={onAddLeadFromSource}
+            onMarkChecked={markSourceChecked}
+          />
+        ))}
+      </CommandCenterSection>
+
+      <CommandCenterSection title="Leads Needing Review" emptyText="No leads are waiting for review.">
+        {commandData.leadsNeedingReview.map((lead) => (
+          <CommandCenterLeadRow
+            actionLoading={actionLoading}
+            key={lead.id}
+            lead={lead}
+            permissions={permissions}
+            onNavigate={onNavigate}
+            actions={[
+              ["Mark Reviewed", () => updateReviewStatus(lead, "Reviewed"), permissions.editBid],
+              ["Reject Lead", () => updateReviewStatus(lead, "Rejected"), permissions.editBid],
+              ["Save for Later", () => updateReviewStatus(lead, "Saved for Later"), permissions.editBid],
+              ["Check Missing Info", () => checkMissingInfo(lead), permissions.editBid],
+              ["Generate Proposal Draft", () => generateDraft(lead), permissions.editBid],
+              ["Create Estimate", () => createHandoff(lead, "residential_estimate"), permissions.createProposal],
+              ["Create Proposal", () => createHandoff(lead, "commercial_proposal"), permissions.createProposal],
+              ["Follow Up Tomorrow", () => followUpAction(lead, "follow_up_tomorrow"), permissions.editBid],
+            ]}
+          />
+        ))}
+      </CommandCenterSection>
+
+      <CommandCenterSection title="Leads Missing Info" emptyText="No leads are currently marked Needs Info or Not Ready.">
+        {commandData.leadsMissingInfo.map((lead) => (
+          <CommandCenterLeadRow
+            actionLoading={actionLoading}
+            key={lead.id}
+            lead={lead}
+            permissions={permissions}
+            onNavigate={onNavigate}
+            actions={[
+              ["Copy Customer Questions", () => copyQuestions(lead), Boolean(lead.customerQuestionDraft)],
+              ["Mark Missing Info Requested", () => markMissingInfoRequested(lead), permissions.editBid],
+              ["Follow Up Tomorrow", () => followUpAction(lead, "follow_up_tomorrow"), permissions.editBid],
+              ["Clear Missing Info Check", () => clearMissingInfo(lead), permissions.editBid],
+            ]}
+          />
+        ))}
+      </CommandCenterSection>
+
+      <CommandCenterSection title="Follow-Ups Due" emptyText="No follow-ups are due or overdue.">
+        {commandData.followUpsDue.map((lead) => (
+          <CommandCenterLeadRow
+            actionLoading={actionLoading}
+            key={lead.id}
+            lead={lead}
+            permissions={permissions}
+            onNavigate={onNavigate}
+            actions={[
+              ["Mark Contacted", () => followUpAction(lead, "mark_contacted"), permissions.editBid],
+              ["Waiting on Response", () => followUpAction(lead, "waiting_on_response"), permissions.editBid],
+              ["Follow Up Tomorrow", () => followUpAction(lead, "follow_up_tomorrow"), permissions.editBid],
+              ["Follow Up in 2 Days", () => followUpAction(lead, "follow_up_two_days"), permissions.editBid],
+              ["No Thanks / Do Not Follow Up", () => followUpAction(lead, "do_not_follow_up"), permissions.editBid],
+            ]}
+          />
+        ))}
+      </CommandCenterSection>
+
+      <CommandCenterSection title="Ready To Bid / Ready To Proposal" emptyText="No Good Fit leads are ready for proposal work yet.">
+        {commandData.readyToBid.map((lead) => (
+          <CommandCenterLeadRow
+            actionLoading={actionLoading}
+            key={lead.id}
+            lead={lead}
+            permissions={permissions}
+            onNavigate={onNavigate}
+            actions={[
+              ["Generate Proposal Draft", () => generateDraft(lead), permissions.editBid],
+              ["Create Commercial Proposal", () => createHandoff(lead, "commercial_proposal"), permissions.createProposal],
+              ["Create Residential Estimate", () => createHandoff(lead, "residential_estimate"), permissions.createProposal],
+              ["Create GC Packet", () => createHandoff(lead, "gc_packet"), permissions.createProposal],
+            ]}
+          />
+        ))}
+      </CommandCenterSection>
+    </div>
+  );
+}
+
+function CommandCenterSection({ children, emptyText = "", title = "" }) {
+  const items = Array.isArray(children) ? children.filter(Boolean) : children ? [children] : [];
+
+  return (
+    <section className="lead-finder-card">
+      <div className="recent-heading">
+        <div>
+          <p className="list-kicker">Command Center</p>
+          <h3>{title}</h3>
+        </div>
+      </div>
+      {items.length > 0 ? <div className="lead-inbox-list">{items}</div> : <p className="empty-list-message">{emptyText}</p>}
+    </section>
+  );
+}
+
+function CommandCenterLeadRow({ actionLoading = "", actions = [], lead = {}, onNavigate, permissions = {} }) {
+  const isBusy = actionLoading.startsWith(`${lead.id}-`);
+
+  return (
+    <article className={`lead-inbox-row ${getLeadFollowUpClass(lead)}`}>
+      <div className="lead-inbox-main">
+        <div className="bid-card-title">
+          <strong>{lead.title || "Untitled lead"}</strong>
+          <Badge className={getLeadStatusClass(lead.aiFitLabel)}>{lead.aiFitLabel || "Unscored"}</Badge>
+          <Badge className={getLeadReadinessClass(lead.proposalReadinessLabel)}>{lead.proposalReadinessLabel || "Not Checked"}</Badge>
+          <Badge>{lead.reviewStatus}</Badge>
+        </div>
+        <p>{[lead.companyName, lead.city, lead.state, lead.serviceType, lead.sourceName].filter(Boolean).join(" | ") || "No lead details entered"}</p>
+        <small>{lead.missingInfoRecommendedNextStep || lead.aiNextStep || lead.contactNotes || lead.description || "No next step entered."}</small>
+      </div>
+      <div className="lead-inbox-meta">
+        <span>{lead.nextFollowUpDate ? `Follow-up ${formatDisplayDate(lead.nextFollowUpDate)}` : "No follow-up set"}</span>
+        <span>{lead.proposalReadinessScore !== "" ? `Ready ${lead.proposalReadinessScore}/100` : "Readiness not checked"}</span>
+        <strong>{lead.aiFitScore !== "" ? `${lead.aiFitScore}/100` : "No score"}</strong>
+      </div>
+      <div className="table-actions lead-review-actions">
+        {actions.map(([label, onClick, enabled = true]) => (
+          <button key={label} type="button" disabled={!enabled || isBusy} onClick={onClick}>
+            {label}
+          </button>
+        ))}
+        <button type="button" onClick={() => onNavigate?.(`/lead-finder/leads/${lead.id}`)}>
+          Open
+        </button>
+      </div>
+    </article>
   );
 }
 

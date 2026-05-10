@@ -13958,6 +13958,10 @@ function parseRoute(pathname) {
   }
 
   if (segments[0] === "lead-finder") {
+    if (segments[1] === "command-center") {
+      return { view: "leadFinder", section: "commandCenter", path: "/lead-finder/command-center" };
+    }
+
     if (segments[1] === "review") {
       return { view: "leadFinder", section: "review", path: "/lead-finder/review" };
     }

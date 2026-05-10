@@ -31,6 +31,7 @@ import {
   filterLeadSources,
   filterLeadRecords,
   getLeadFinderBackupFileName,
+  getLeadFinderCommandCenterData,
   getLeadById,
   getLeadReviewQueue,
   getLeadFinderStarterSources,
@@ -827,6 +828,71 @@ test("daily source check filters due today overdue and source attributes", () =>
   );
   assert.deepEqual(filterLeadSources(sources, { due: "overdue" }).map((source) => source.id), ["source-overdue"]);
   assert.deepEqual(filterLeadSources(sources, { sourceState: "paused" }).map((source) => source.id), ["source-paused"]);
+});
+
+test("command center groups due sources review leads missing info follow-ups and ready leads", () => {
+  const today = "2026-05-09";
+  const sources = [
+    createEmptyLeadSource({ id: "source-due-command", name: "Due source", nextCheckDate: today, sourcePriority: "High" }),
+    createEmptyLeadSource({ id: "source-overdue-command", name: "Overdue source", nextCheckDate: "2026-05-01", sourcePriority: "Medium" }),
+  ];
+  const goodLead = applyLeadMissingInfoCheck(
+    applyLeadAiScore(
+      createEmptyLead({
+        id: "lead-command-good",
+        title: "Good ready lead",
+        status: "New",
+        serviceType: "Fencing",
+        city: "Albany",
+        nextFollowUpDate: today,
+      }),
+      {
+        aiFitScore: 90,
+        aiFitLabel: "Good Fit",
+        aiFitReason: "Good fit.",
+        scoreSource: "rule_based",
+        scoredAt: "2026-05-09T12:00:00.000Z",
+      },
+    ),
+    {
+      proposalReadinessScore: 88,
+      proposalReadinessLabel: "Ready",
+      missingInfoSource: "rule_based",
+    },
+    "rule_based",
+  );
+  const maybeLead = applyLeadMissingInfoCheck(
+    applyLeadAiScore(createEmptyLead({ id: "lead-command-maybe", title: "Maybe lead", status: "New", serviceType: "Other" }), {
+      aiFitScore: 55,
+      aiFitLabel: "Maybe",
+      aiFitReason: "Needs review.",
+      scoreSource: "rule_based",
+      scoredAt: "2026-05-09T12:00:00.000Z",
+    }),
+    {
+      proposalReadinessScore: 62,
+      proposalReadinessLabel: "Needs Info",
+      customerQuestionDraft: "Can you send photos?",
+      missingInfoSource: "rule_based",
+    },
+    "rule_based",
+  );
+  const badLead = applyLeadAiScore(createEmptyLead({ id: "lead-command-bad", title: "Bad lead", status: "New" }), {
+    aiFitScore: 20,
+    aiFitLabel: "Bad Fit",
+    aiFitReason: "Bad fit.",
+    scoreSource: "rule_based",
+    scoredAt: "2026-05-09T12:00:00.000Z",
+  });
+  const command = getLeadFinderCommandCenterData({ sources, leads: [maybeLead, badLead, goodLead] }, { today });
+
+  assert.deepEqual(command.sourcesToCheckToday.map((source) => source.id), ["source-overdue-command", "source-due-command"]);
+  assert.deepEqual(command.leadsNeedingReview.map((lead) => lead.id), ["lead-command-good", "lead-command-maybe", "lead-command-bad"]);
+  assert.deepEqual(command.leadsMissingInfo.map((lead) => lead.id), ["lead-command-maybe"]);
+  assert.deepEqual(command.followUpsDue.map((lead) => lead.id), ["lead-command-good"]);
+  assert.deepEqual(command.readyToBid.map((lead) => lead.id), ["lead-command-good"]);
+  assert.equal(command.stats.sourcesDueToday, 1);
+  assert.equal(command.stats.overdueSources, 1);
 });
 
 test("adding a lead from a source prefills source defaults", () => {
