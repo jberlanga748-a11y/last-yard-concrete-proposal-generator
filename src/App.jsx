@@ -185,6 +185,7 @@ import {
   applyLeadHandoff,
   applyLeadAiScore,
   addLeadFinderStarterSources as addLeadFinderStarterSourcesRecord,
+  autoScoreLeadIfNeeded,
   createLeadFinderBackup,
   createEmptyLead,
   deactivateLeadSource as deactivateLeadSourceRecord,
@@ -197,9 +198,11 @@ import {
   normalizeLeadFinderData,
   normalizeLeadProposalDraftResult,
   normalizeLeadSource,
+  scoreUnscoredLeads,
   scoreLeadWithLocalRules,
   upsertLead,
   upsertLeadSource,
+  updateLeadReviewStatus as updateLeadReviewStatusRecord,
   updateLeadStatus as updateLeadStatusRecord,
 } from "./utils/leadFinder.js";
 import {
@@ -2944,7 +2947,7 @@ export default function App() {
     }
 
     const seed = lead?.id ? lead : { ...lead, id: createEmptyLead().id };
-    const normalizedLead = normalizeLead(seed);
+    const normalizedLead = autoScoreLeadIfNeeded(seed);
     const nextLeadFinderData = upsertLead(leadFinderData, normalizedLead, leadFinderData.sources);
 
     await commitLeadFinderData(nextLeadFinderData, `Saved ${normalizedLead.title || "lead"} locally.`);
@@ -2975,6 +2978,56 @@ export default function App() {
       entityLabel: lead?.title || "Lead",
       notes: status,
     });
+  }
+
+  async function updateLeadReviewStatus(leadId, reviewStatus) {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    const reviewer =
+      authUser?.email ||
+      authUser?.user_metadata?.email ||
+      authUser?.user_metadata?.full_name ||
+      authUser?.id ||
+      "";
+    const nextLeadFinderData = updateLeadReviewStatusRecord(leadFinderData, leadId, reviewStatus, {
+      reviewedBy: reviewer,
+    });
+    const lead = getLeadById(nextLeadFinderData, leadId);
+
+    await commitLeadFinderData(nextLeadFinderData, `Marked ${lead?.title || "lead"} review status as ${reviewStatus}.`);
+    recordActivity({
+      action: "Lead review updated",
+      entityType: "lead_finder",
+      entityId: leadId,
+      entityLabel: lead?.title || "Lead",
+      notes: reviewStatus,
+    });
+
+    return lead;
+  }
+
+  async function scoreAllUnscoredLeads() {
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    const { data: nextLeadFinderData, summary } = scoreUnscoredLeads(leadFinderData);
+
+    await commitLeadFinderData(
+      nextLeadFinderData,
+      `Rule-based scored ${summary.scoredCount} unscored or partial leads locally. Skipped ${summary.skippedCount} complete scores.`,
+    );
+    recordActivity({
+      action: "Lead Finder batch scored",
+      entityType: "lead_finder",
+      entityId: "rule-based-score-all",
+      entityLabel: "Score All Unscored Leads",
+      notes: `${summary.scoredCount} scored | ${summary.skippedCount} skipped`,
+    });
+
+    return summary;
   }
 
   async function scoreLeadWithAi(lead) {
@@ -7030,8 +7083,10 @@ export default function App() {
           onLeadHandoff={handleLeadHandoff}
           onSaveLead={saveLead}
           onSaveSource={saveLeadSource}
+          onScoreAllUnscoredLeads={scoreAllUnscoredLeads}
           onScoreLead={scoreLeadWithAi}
           onScoreLeadWithRules={scoreLeadWithRules}
+          onUpdateLeadReviewStatus={updateLeadReviewStatus}
           onUpdateLeadStatus={updateLeadStatus}
         />
       ) : isBidsView ? (
@@ -13800,6 +13855,10 @@ function parseRoute(pathname) {
   }
 
   if (segments[0] === "lead-finder") {
+    if (segments[1] === "review") {
+      return { view: "leadFinder", section: "review", path: "/lead-finder/review" };
+    }
+
     if (segments[1] === "daily-check") {
       return { view: "leadFinder", section: "dailyCheck", path: "/lead-finder/daily-check" };
     }

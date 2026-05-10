@@ -11,6 +11,8 @@ import {
   LEAD_SOURCE_TYPES,
   LEAD_STATUSES,
   LEAD_FINDER_STARTER_SOURCE_COUNT,
+  autoScoreLeadIfNeeded,
+  scoreUnscoredLeads,
   addLeadFinderStarterSources,
   applyLeadAiScore,
   applyLeadFollowUpQuickAction,
@@ -25,10 +27,13 @@ import {
   filterLeadSources,
   filterLeadRecords,
   getLeadFinderBackupFileName,
+  getLeadById,
+  getLeadReviewQueue,
   getLeadFinderStarterSources,
   getLeadFinderStats,
   getLeadSourceOpenUrl,
   hasLeadAiScore,
+  hasCompleteLeadScore,
   isLeadFollowUpOverdue,
   isLeadSourceOverdue,
   markLeadSourceChecked,
@@ -47,6 +52,7 @@ import {
   upsertLead,
   upsertLeadSource,
   updateLeadStatus,
+  updateLeadReviewStatus,
 } from "./leadFinder.js";
 
 test("lead finder constants include requested statuses, service types, and source types", () => {
@@ -89,8 +95,13 @@ test("normalizes lead source and lead records with safe defaults", () => {
   assert.equal(lead.estimatedValue, 12500);
   assert.equal(lead.aiFitLabel, "");
   assert.equal(lead.suggestedCompanyMode, "Unknown");
+  assert.equal(lead.scoreStatus, "unscored");
   assert.equal(lead.scoreSource, "");
   assert.equal(lead.scoredAt, "");
+  assert.equal(lead.scoreError, "");
+  assert.equal(lead.reviewStatus, "Needs Review");
+  assert.equal(lead.reviewedAt, "");
+  assert.equal(lead.reviewedBy, "");
   assert.equal(lead.estimateId, "");
   assert.deepEqual(lead.handoffHistory, []);
   assert.equal(lead.followUpStatus, "Not Contacted");
@@ -117,9 +128,11 @@ test("normalizes and applies AI scoring fields conservatively", () => {
   assert.equal(lead.aiFitScore, 100);
   assert.equal(lead.aiFitLabel, "Maybe");
   assert.equal(lead.suggestedCompanyMode, "Last Yard Concrete");
+  assert.equal(lead.scoreStatus, "scored");
   assert.equal(lead.scoreSource, "ai");
   assert.equal(lead.scoredAt, "2026-05-09T12:00:00.000Z");
   assert.equal(hasLeadAiScore(lead), true);
+  assert.equal(hasCompleteLeadScore(lead), true);
   assert.equal(hasLeadAiScore(createEmptyLead()), false);
 });
 
@@ -149,6 +162,135 @@ test("normalizes alternate live AI scoring keys into persisted lead fields", () 
   assert.equal(reloaded.suggestedCompanyMode, "Last Yard Concrete");
   assert.equal(reloaded.scoreSource, "ai");
   assert.match(reloaded.scoredAt, /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("auto-scores new and partial leads with rule-based scoring without overwriting complete scores", () => {
+  const completeLead = applyLeadAiScore(
+    createEmptyLead({ id: "lead-complete", title: "Complete concrete lead", serviceType: "Concrete", city: "Albany", state: "OR" }),
+    {
+      aiFitScore: 91,
+      aiFitLabel: "Good Fit",
+      aiFitReason: "Already reviewed by AI.",
+      aiNextStep: "Call.",
+      scoreSource: "ai",
+      scoredAt: "2026-05-09T12:00:00.000Z",
+      suggestedCompanyMode: "Last Yard Concrete",
+    },
+  );
+  const partialLead = normalizeLead({
+    id: "lead-partial",
+    title: "Partial score",
+    aiFitLabel: "Good Fit",
+    suggestedCompanyMode: "Last Yard Concrete",
+  });
+  const newLead = autoScoreLeadIfNeeded({
+    id: "lead-new",
+    title: "Albany fence repair",
+    city: "Albany",
+    state: "OR",
+    serviceType: "Fencing",
+    description: "Residential fence repair.",
+  });
+  const unchangedCompleteLead = autoScoreLeadIfNeeded(completeLead);
+  const rescoredPartialLead = autoScoreLeadIfNeeded(partialLead);
+
+  assert.equal(newLead.scoreSource, "rule_based");
+  assert.equal(newLead.scoreStatus, "scored");
+  assert.match(newLead.aiFitReason, /Rule-based test score/);
+  assert.equal(unchangedCompleteLead.aiFitReason, "Already reviewed by AI.");
+  assert.equal(unchangedCompleteLead.scoreSource, "ai");
+  assert.equal(hasLeadAiScore(partialLead), false);
+  assert.equal(partialLead.scoreStatus, "partial");
+  assert.equal(rescoredPartialLead.scoreSource, "rule_based");
+  assert.equal(rescoredPartialLead.scoreStatus, "scored");
+});
+
+test("batch scoring scores imported or partial leads and skips complete scores", () => {
+  const completeLead = applyLeadAiScore(
+    createEmptyLead({ id: "lead-complete-batch", title: "Complete sidewalk", serviceType: "Sidewalk", city: "Salem", state: "OR" }),
+    {
+      aiFitScore: 80,
+      aiFitReason: "Complete score should stay.",
+      scoreSource: "ai",
+      scoredAt: "2026-05-09T12:00:00.000Z",
+    },
+  );
+  const { data, summary } = scoreUnscoredLeads({
+    leads: [
+      completeLead,
+      { id: "lead-unscored", title: "Salem ADA ramp", serviceType: "ADA Ramp", city: "Salem", state: "OR", description: "Concrete ramp." },
+      { id: "lead-partial-batch", title: "Partial", aiFitLabel: "Maybe" },
+    ],
+    sources: [],
+  });
+
+  assert.equal(summary.scoredCount, 2);
+  assert.equal(summary.skippedCount, 1);
+  assert.equal(getLeadById(data, "lead-complete-batch").aiFitReason, "Complete score should stay.");
+  assert.equal(getLeadById(data, "lead-unscored").scoreSource, "rule_based");
+  assert.equal(getLeadById(data, "lead-partial-batch").scoreStatus, "scored");
+});
+
+test("imported unscored leads are auto-scored with rule-based scoring", () => {
+  const { data, summary } = mergeLeadFinderImportData(
+    { sources: [], leads: [] },
+    {
+      sources: [{ id: "source-import-score", name: "Manual source" }],
+      leads: [
+        {
+          id: "lead-import-score",
+          title: "Albany deck repair",
+          city: "Albany",
+          state: "OR",
+          serviceType: "Decking",
+          description: "Residential deck repair.",
+          sourceId: "source-import-score",
+        },
+      ],
+    },
+  );
+  const importedLead = getLeadById(data, "lead-import-score");
+
+  assert.equal(summary.leadsImported, 1);
+  assert.equal(importedLead.scoreSource, "rule_based");
+  assert.equal(importedLead.scoreStatus, "scored");
+  assert.match(importedLead.aiFitReason, /Rule-based test score/);
+});
+
+test("review queue filters and sorts Good Fit before Maybe before Bad Fit", () => {
+  const goodLead = applyLeadAiScore(createEmptyLead({ id: "lead-good", title: "Good", serviceType: "Fencing", city: "Albany", state: "OR" }), {
+    aiFitScore: 88,
+    aiFitLabel: "Good Fit",
+    aiFitReason: "Good fit.",
+    scoreSource: "rule_based",
+    scoredAt: "2026-05-09T12:00:00.000Z",
+    suggestedCompanyMode: "Live Your Future",
+  });
+  const maybeLead = applyLeadAiScore(createEmptyLead({ id: "lead-maybe", title: "Maybe", serviceType: "Other" }), {
+    aiFitScore: 50,
+    aiFitLabel: "Maybe",
+    aiFitReason: "Needs info.",
+    scoreSource: "rule_based",
+    scoredAt: "2026-05-09T12:00:00.000Z",
+  });
+  const badLead = applyLeadAiScore(createEmptyLead({ id: "lead-bad", title: "Bad", serviceType: "Other" }), {
+    aiFitScore: 20,
+    aiFitLabel: "Bad Fit",
+    aiFitReason: "Wrong trade.",
+    scoreSource: "ai",
+    scoredAt: "2026-05-09T12:00:00.000Z",
+  });
+  const reviewedData = updateLeadReviewStatus({ sources: [], leads: [goodLead, maybeLead, badLead] }, "lead-maybe", "Reviewed", {
+    reviewedBy: "tester",
+    reviewedAt: "2026-05-10T12:00:00.000Z",
+  });
+  const queue = getLeadReviewQueue(reviewedData, { reviewStatus: "all" });
+  const needsReviewQueue = getLeadReviewQueue(reviewedData);
+
+  assert.deepEqual(queue.map((lead) => lead.id), ["lead-good", "lead-maybe", "lead-bad"]);
+  assert.deepEqual(needsReviewQueue.map((lead) => lead.id), ["lead-good", "lead-bad"]);
+  assert.equal(getLeadById(reviewedData, "lead-maybe").reviewStatus, "Reviewed");
+  assert.equal(getLeadById(reviewedData, "lead-maybe").reviewedBy, "tester");
 });
 
 test("normalizes AI proposal draft fields without inventing missing data", () => {

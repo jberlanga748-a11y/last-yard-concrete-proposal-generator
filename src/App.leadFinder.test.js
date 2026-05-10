@@ -14,6 +14,7 @@ test("app shell exposes AI Lead Finder navigation and routes", () => {
   assert.match(chromeSource, /AI Lead Finder/);
   assert.match(chromeSource, /onNavigate\("\/lead-finder"\)/);
   assert.match(appSource, /segments\[0\] === "lead-finder"/);
+  assert.match(appSource, /section: "review"/);
   assert.match(appSource, /section: "dailyCheck"/);
   assert.match(appSource, /section: "sources"/);
   assert.match(appSource, /section: "leads"/);
@@ -36,6 +37,7 @@ test("lead finder data follows local-first company settings persistence", () => 
 
 test("lead finder screens include dashboard sources inbox new lead and detail behavior", () => {
   assert.match(leadFinderViewSource, /function LeadFinderDashboard/);
+  assert.match(leadFinderViewSource, /function LeadReviewQueuePage/);
   assert.match(leadFinderViewSource, /function LeadFinderBackupTools/);
   assert.match(leadFinderViewSource, /function LeadDailySourceCheckPage/);
   assert.match(leadFinderViewSource, /function LeadSourcesPage/);
@@ -64,6 +66,12 @@ test("lead finder screens include dashboard sources inbox new lead and detail be
   assert.match(leadFinderViewSource, /Score This Lead/);
   assert.match(leadFinderViewSource, /Rule-Based Test Score/);
   assert.match(leadFinderViewSource, /Score Source/);
+  assert.match(leadFinderViewSource, /Score All Unscored Leads/);
+  assert.match(leadFinderViewSource, /Lead Review Queue/);
+  assert.match(leadFinderViewSource, /Mark Reviewed/);
+  assert.match(leadFinderViewSource, /Reject Lead/);
+  assert.match(leadFinderViewSource, /Save for Later/);
+  assert.match(leadFinderViewSource, /Follow Up Tomorrow/);
   assert.match(leadFinderViewSource, /Generate Proposal Draft/);
   assert.match(leadFinderViewSource, /Apply to New Proposal/);
   assert.match(leadFinderViewSource, /Copy Draft/);
@@ -108,10 +116,17 @@ test("lead finder handoff uses existing proposal and contact paths", () => {
 test("lead finder scoring is server-backed and does not add daily search yet", () => {
   assert.match(appSource, /fetch\("\/api\/ai\/score-lead"/);
   assert.match(appSource, /scoreLeadWithLocalRules/);
+  assert.match(appSource, /scoreUnscoredLeads/);
+  assert.match(appSource, /updateLeadReviewStatus/);
+  assert.match(appSource, /autoScoreLeadIfNeeded/);
   assert.match(scoreLeadApiSource, /process\.env\.OPENAI_API_KEY/);
   assert.match(appSource, /scoreSource:\s*result\?\.scoreSource \|\| scoreSource/);
   assert.match(leadFinderSource, /source\.aiFitReason \?\? source\.fitReason \?\? source\.reason/);
   assert.match(leadFinderSource, /scoreSource/);
+  assert.match(leadFinderSource, /scoreStatus/);
+  assert.match(leadFinderSource, /reviewStatus/);
+  assert.match(leadFinderSource, /getLeadReviewQueue/);
+  assert.match(leadFinderSource, /hasCompleteLeadScore/);
   assert.match(leadFinderSource, /scoredAt/);
   assert.doesNotMatch(scoreLeadApiSource, /VITE_OPENAI_API_KEY|import\.meta\.env/);
   assert.match(draftProposalApiSource, /process\.env\.OPENAI_API_KEY/);
@@ -133,6 +148,9 @@ test("Supabase schema includes future lead finder tables and RLS policies", () =
   assert.match(schemaSource, /suggested_company_mode text/);
   assert.match(schemaSource, /score_source text/);
   assert.match(schemaSource, /scored_at timestamptz/);
+  assert.match(schemaSource, /score_status text/);
+  assert.match(schemaSource, /review_status text/);
+  assert.match(schemaSource, /reviewed_at timestamptz/);
   assert.match(schemaSource, /estimate_id text/);
   assert.match(schemaSource, /handoff_history jsonb/);
   assert.match(schemaSource, /next_follow_up_date date/);

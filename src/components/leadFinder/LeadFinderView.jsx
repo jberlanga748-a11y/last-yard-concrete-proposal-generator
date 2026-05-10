@@ -4,7 +4,9 @@ import { Badge } from "../common/Badges.jsx";
 import { formatDisplayDate } from "../../utils/formatting/display.js";
 import {
   LEAD_CONTACT_METHODS,
+  LEAD_AI_FIT_LABELS,
   LEAD_FOLLOW_UP_STATUSES,
+  LEAD_REVIEW_STATUSES,
   LEAD_SOURCE_CHECK_FREQUENCIES,
   LEAD_SOURCE_PRIORITIES,
   LEAD_SOURCE_STATUSES,
@@ -21,8 +23,10 @@ import {
   filterLeadSources,
   getLeadById,
   getLeadFinderStats,
+  getLeadReviewQueue,
   getLeadSourceOpenUrl,
   hasLeadAiScore,
+  hasCompleteLeadScore,
   isLeadFollowUpDueToday,
   isLeadFollowUpOverdue,
   isLeadSourceDueToday,
@@ -51,8 +55,10 @@ export function LeadFinderView({
   onApplyProposalDraft,
   onSaveLead,
   onSaveSource,
+  onScoreAllUnscoredLeads,
   onScoreLead,
   onScoreLeadWithRules,
+  onUpdateLeadReviewStatus,
   onUpdateLeadStatus,
 }) {
   const normalizedData = normalizeLeadFinderData(data);
@@ -90,6 +96,17 @@ export function LeadFinderView({
           permissions={permissions}
           onAddLeadFromSource={addLeadFromSource}
           onSaveSource={onSaveSource}
+        />
+      ) : section === "review" ? (
+        <LeadReviewQueuePage
+          data={normalizedData}
+          permissions={permissions}
+          onGenerateProposalDraft={onGenerateProposalDraft}
+          onLeadHandoff={onLeadHandoff}
+          onNavigate={navigateLeadFinder}
+          onSaveLead={onSaveLead}
+          onScoreAllUnscoredLeads={onScoreAllUnscoredLeads}
+          onUpdateLeadReviewStatus={onUpdateLeadReviewStatus}
         />
       ) : section === "leads" ? (
         <LeadInboxPage
@@ -131,6 +148,7 @@ export function LeadFinderView({
           onExportBackup={onExportBackup}
           onImportBackup={onImportBackup}
           onNavigate={navigateLeadFinder}
+          onScoreAllUnscoredLeads={onScoreAllUnscoredLeads}
         />
       )}
     </section>
@@ -140,6 +158,7 @@ export function LeadFinderView({
 function LeadFinderHeader({ section = "dashboard", onBackToDashboard, onNavigate }) {
   const navItems = [
     ["dashboard", "Dashboard", "/lead-finder"],
+    ["review", "Review Queue", "/lead-finder/review"],
     ["dailyCheck", "Daily Source Check", "/lead-finder/daily-check"],
     ["sources", "Sources", "/lead-finder/sources"],
     ["leads", "Lead Inbox", "/lead-finder/leads"],
@@ -167,12 +186,19 @@ function LeadFinderHeader({ section = "dashboard", onBackToDashboard, onNavigate
   );
 }
 
-function LeadFinderDashboard({ data = {}, permissions = {}, onExportBackup, onImportBackup, onNavigate }) {
+function LeadFinderDashboard({ data = {}, permissions = {}, onExportBackup, onImportBackup, onNavigate, onScoreAllUnscoredLeads }) {
   const stats = getLeadFinderStats(data);
+  const [scoreAllMessage, setScoreAllMessage] = useState("");
   const statCards = [
     ["Total Leads", stats.totalLeads],
     ["New Leads", stats.newLeads],
+    ["New Leads Needing Review", stats.newLeadsNeedingReview],
     ["Good Fit Leads", stats.goodFitLeads],
+    ["AI Good Fit Leads", stats.aiGoodFitLeads],
+    ["Maybe Leads", stats.aiMaybeLeads],
+    ["Bad Fit Leads", stats.aiBadFitLeads],
+    ["Unscored Leads", stats.unscoredLeads],
+    ["Auto-Scored Today", stats.autoScoredToday],
     ["Contacted Leads", stats.contactedLeads],
     ["Estimates Started", stats.estimatesStarted],
     ["Proposals Started", stats.proposalsStarted],
@@ -189,8 +215,35 @@ function LeadFinderDashboard({ data = {}, permissions = {}, onExportBackup, onIm
   ];
   const recentLeads = normalizeLeadFinderData(data).leads.slice(0, 5);
 
+  async function scoreAllUnscored() {
+    const summary = await onScoreAllUnscoredLeads?.();
+
+    if (summary) {
+      setScoreAllMessage(`Rule-based scored ${summary.scoredCount} leads and skipped ${summary.skippedCount} complete scores.`);
+    }
+  }
+
   return (
     <>
+      <article className="lead-finder-card">
+        <div className="recent-heading">
+          <div>
+            <p className="list-kicker">Review Queue</p>
+            <h3>Score and Review New Leads</h3>
+            <p>Rule-based auto-scoring is free and does not call OpenAI. Live AI scoring stays manual on the lead detail page.</p>
+          </div>
+          <div className="settings-actions">
+            <button type="button" onClick={() => onNavigate?.("/lead-finder/review")}>
+              Open Review Queue
+            </button>
+            <button type="button" onClick={scoreAllUnscored} disabled={!permissions.editBid || stats.unscoredLeads === 0}>
+              Score All Unscored Leads
+            </button>
+          </div>
+        </div>
+        {scoreAllMessage ? <p className="backup-message">{scoreAllMessage}</p> : null}
+      </article>
+
       <div className="dashboard-stat-grid lead-finder-stat-grid">
         {statCards.map(([label, value]) => (
           <div className="dashboard-stat-card" key={label}>
@@ -783,6 +836,257 @@ function LeadInboxRow({ lead, permissions = {}, onNavigate, onUpdateLeadStatus }
             </option>
           ))}
         </select>
+        <button type="button" onClick={() => onNavigate?.(`/lead-finder/leads/${lead.id}`)}>
+          Open
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function LeadReviewQueuePage({
+  data = {},
+  permissions = {},
+  onGenerateProposalDraft,
+  onLeadHandoff,
+  onNavigate,
+  onSaveLead,
+  onScoreAllUnscoredLeads,
+  onUpdateLeadReviewStatus,
+}) {
+  const normalizedData = normalizeLeadFinderData(data);
+  const stats = getLeadFinderStats(normalizedData);
+  const [aiFitLabelFilter, setAiFitLabelFilter] = useState("all");
+  const [companyModeFilter, setCompanyModeFilter] = useState("all");
+  const [scoreSourceFilter, setScoreSourceFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [serviceTypeFilter, setServiceTypeFilter] = useState("all");
+  const [cityFilter, setCityFilter] = useState("");
+  const [reviewStatusFilter, setReviewStatusFilter] = useState("Needs Review");
+  const [localMessage, setLocalMessage] = useState("");
+  const [actionLoading, setActionLoading] = useState("");
+  const filteredLeads = getLeadReviewQueue(normalizedData, {
+    aiFitLabel: aiFitLabelFilter,
+    city: cityFilter,
+    companyMode: companyModeFilter,
+    reviewStatus: reviewStatusFilter,
+    scoreSource: scoreSourceFilter,
+    serviceType: serviceTypeFilter,
+    sourceId: sourceFilter,
+  });
+
+  async function scoreAllUnscored() {
+    setActionLoading("score-all");
+    setLocalMessage("");
+
+    try {
+      const summary = await onScoreAllUnscoredLeads?.();
+
+      if (summary) {
+        setLocalMessage(`Rule-based scored ${summary.scoredCount} leads and skipped ${summary.skippedCount} complete scores.`);
+      }
+    } catch (error) {
+      setLocalMessage(error?.message || "Rule-based batch scoring failed.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function updateReviewStatus(lead, reviewStatus) {
+    setActionLoading(`${lead.id}-${reviewStatus}`);
+    setLocalMessage("");
+
+    try {
+      const updatedLead = await onUpdateLeadReviewStatus?.(lead.id, reviewStatus);
+
+      if (updatedLead) {
+        setLocalMessage(`${updatedLead.title || "Lead"} marked ${reviewStatus}.`);
+      }
+    } catch (error) {
+      setLocalMessage(error?.message || "Lead review update failed.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function followUpTomorrow(lead) {
+    setActionLoading(`${lead.id}-follow-up`);
+    setLocalMessage("");
+
+    try {
+      const savedLead = await onSaveLead?.(applyLeadFollowUpQuickAction(lead, "follow_up_tomorrow"));
+
+      if (savedLead) {
+        setLocalMessage(`${savedLead.title || "Lead"} follow-up set for tomorrow.`);
+      }
+    } catch (error) {
+      setLocalMessage(error?.message || "Follow-up update failed.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function createHandoff(lead, actionType) {
+    setActionLoading(`${lead.id}-${actionType}`);
+    setLocalMessage("");
+
+    try {
+      const result = await onLeadHandoff?.(lead, actionType);
+
+      if (result?.message) {
+        setLocalMessage(result.message);
+      }
+    } catch (error) {
+      setLocalMessage(error?.message || "Lead handoff failed.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function generateProposalDraft(lead) {
+    setActionLoading(`${lead.id}-proposal-draft`);
+    setLocalMessage("");
+
+    try {
+      const draft = await onGenerateProposalDraft?.(lead);
+
+      if (draft) {
+        setLocalMessage(`Generated a proposal draft for ${lead.title || "lead"}. Open the lead detail page to review and apply it.`);
+      }
+    } catch (error) {
+      setLocalMessage(error?.message || "AI proposal drafting failed.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  return (
+    <div className="lead-finder-card">
+      <div className="recent-heading">
+        <div>
+          <p className="list-kicker">Lead Review Queue</p>
+          <h3>Human Review</h3>
+          <p>New and auto-scored leads wait here until Last Yard reviews them. Batch scoring uses the free rule-based scorer only.</p>
+        </div>
+        <button type="button" onClick={scoreAllUnscored} disabled={!permissions.editBid || actionLoading === "score-all" || stats.unscoredLeads === 0}>
+          {actionLoading === "score-all" ? "Scoring..." : "Score All Unscored Leads"}
+        </button>
+      </div>
+      {localMessage ? <p className="backup-message">{localMessage}</p> : null}
+      <div className="list-filters lead-finder-filters">
+        <LeadFilterSelect label="AI Label" value={aiFitLabelFilter} options={LEAD_AI_FIT_LABELS} onChange={setAiFitLabelFilter} />
+        <LeadFilterSelect label="Suggested Company" value={companyModeFilter} options={LEAD_SUGGESTED_COMPANY_MODES} onChange={setCompanyModeFilter} />
+        <label>
+          <span>Score Source</span>
+          <select value={scoreSourceFilter} onChange={(event) => setScoreSourceFilter(event.target.value)}>
+            <option value="all">All Score Sources</option>
+            <option value="rule_based">Rule-Based</option>
+            <option value="ai">AI</option>
+            <option value="">Unscored</option>
+          </select>
+        </label>
+        <label>
+          <span>Review Status</span>
+          <select value={reviewStatusFilter} onChange={(event) => setReviewStatusFilter(event.target.value)}>
+            <option value="all">All Review Statuses</option>
+            {LEAD_REVIEW_STATUSES.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
+          </select>
+        </label>
+        <LeadFilterSelect label="Service Type" value={serviceTypeFilter} options={LEAD_SERVICE_TYPES} onChange={setServiceTypeFilter} />
+        <label>
+          <span>City</span>
+          <input value={cityFilter} placeholder="Any city" onChange={(event) => setCityFilter(event.target.value)} />
+        </label>
+        <label>
+          <span>Source</span>
+          <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
+            <option value="all">All Sources</option>
+            {normalizedData.sources.map((source) => (
+              <option key={source.id} value={source.id}>
+                {source.name || "Unnamed source"}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {filteredLeads.length > 0 ? (
+        <div className="lead-inbox-list">
+          {filteredLeads.map((lead) => (
+            <LeadReviewQueueRow
+              actionLoading={actionLoading}
+              key={lead.id}
+              lead={lead}
+              permissions={permissions}
+              onCreateHandoff={createHandoff}
+              onFollowUpTomorrow={followUpTomorrow}
+              onGenerateProposalDraft={generateProposalDraft}
+              onNavigate={onNavigate}
+              onUpdateReviewStatus={updateReviewStatus}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="empty-list-message">No leads match the review filters.</p>
+      )}
+    </div>
+  );
+}
+
+function LeadReviewQueueRow({
+  actionLoading = "",
+  lead = {},
+  permissions = {},
+  onCreateHandoff,
+  onFollowUpTomorrow,
+  onGenerateProposalDraft,
+  onNavigate,
+  onUpdateReviewStatus,
+}) {
+  const isBusy = actionLoading.startsWith(`${lead.id}-`);
+
+  return (
+    <article className="lead-inbox-row lead-review-row">
+      <div className="lead-inbox-main">
+        <div className="bid-card-title">
+          <strong>{lead.title || "Untitled lead"}</strong>
+          <Badge className={getLeadStatusClass(lead.aiFitLabel)}>{lead.aiFitLabel || "Unscored"}</Badge>
+          <Badge>{lead.reviewStatus}</Badge>
+          <Badge>{formatLeadScoreSource(lead.scoreSource)}</Badge>
+        </div>
+        <p>{[lead.companyName, lead.city, lead.state, lead.serviceType, lead.sourceName].filter(Boolean).join(" | ") || "No lead details entered"}</p>
+        <small>{lead.aiFitReason || lead.description || "No score reason saved."}</small>
+      </div>
+      <div className="lead-inbox-meta">
+        <span>{lead.suggestedCompanyMode || "Unknown"}</span>
+        <span>{hasCompleteLeadScore(lead) ? `Scored ${formatDisplayDate(lead.scoredAt)}` : "Needs score"}</span>
+        <strong>{lead.aiFitScore !== "" ? `${lead.aiFitScore}/100` : "No score"}</strong>
+      </div>
+      <div className="table-actions lead-review-actions">
+        <button type="button" disabled={!permissions.editBid || isBusy} onClick={() => onUpdateReviewStatus?.(lead, "Reviewed")}>
+          Mark Reviewed
+        </button>
+        <button type="button" disabled={!permissions.editBid || isBusy} onClick={() => onUpdateReviewStatus?.(lead, "Rejected")}>
+          Reject Lead
+        </button>
+        <button type="button" disabled={!permissions.editBid || isBusy} onClick={() => onUpdateReviewStatus?.(lead, "Saved for Later")}>
+          Save for Later
+        </button>
+        <button type="button" disabled={!permissions.createProposal || isBusy} onClick={() => onCreateHandoff?.(lead, "residential_estimate")}>
+          Create Estimate
+        </button>
+        <button type="button" disabled={!permissions.createProposal || isBusy} onClick={() => onCreateHandoff?.(lead, "commercial_proposal")}>
+          Create Proposal
+        </button>
+        <button type="button" disabled={!permissions.editBid || isBusy} onClick={() => onGenerateProposalDraft?.(lead)}>
+          Generate Proposal Draft
+        </button>
+        <button type="button" disabled={!permissions.editBid || isBusy} onClick={() => onFollowUpTomorrow?.(lead)}>
+          Follow Up Tomorrow
+        </button>
         <button type="button" onClick={() => onNavigate?.(`/lead-finder/leads/${lead.id}`)}>
           Open
         </button>

@@ -46,6 +46,10 @@ export const LEAD_AI_FIT_LABELS = ["Good Fit", "Maybe", "Bad Fit"];
 
 export const LEAD_SUGGESTED_COMPANY_MODES = ["Live Your Future", "Last Yard Concrete", "General Contractor", "Unknown"];
 
+export const LEAD_SCORE_STATUSES = ["unscored", "scored", "partial", "error"];
+
+export const LEAD_REVIEW_STATUSES = ["Needs Review", "Reviewed", "Rejected", "Saved for Later"];
+
 export const LEAD_FOLLOW_UP_STATUSES = [
   "Not Contacted",
   "Contacted",
@@ -504,8 +508,13 @@ export function createEmptyLead(seed = {}) {
     aiRisks: "",
     aiNextStep: "",
     suggestedCompanyMode: "Unknown",
+    scoreStatus: "unscored",
     scoreSource: "",
     scoredAt: "",
+    scoreError: "",
+    reviewStatus: "Needs Review",
+    reviewedAt: "",
+    reviewedBy: "",
     status: "New",
     notes: "",
     estimateId: "",
@@ -661,8 +670,13 @@ export function normalizeLead(lead = {}) {
     aiRisks: normalizeAiRisks(leadRecord.aiRisks),
     aiNextStep: toSafeText(leadRecord.aiNextStep),
     suggestedCompanyMode: normalizeOption(leadRecord.suggestedCompanyMode, LEAD_SUGGESTED_COMPANY_MODES, "Unknown"),
+    scoreStatus: normalizeLeadScoreStatus(leadRecord),
     scoreSource: normalizeLeadScoreSource(leadRecord.scoreSource),
     scoredAt: toIsoDateTime(leadRecord.scoredAt),
+    scoreError: toSafeText(leadRecord.scoreError),
+    reviewStatus: normalizeOption(leadRecord.reviewStatus, LEAD_REVIEW_STATUSES, "Needs Review"),
+    reviewedAt: toIsoDateTime(leadRecord.reviewedAt),
+    reviewedBy: toSafeText(leadRecord.reviewedBy),
     status: normalizeOption(leadRecord.status, LEAD_STATUSES, "New"),
     notes: toSafeText(leadRecord.notes),
     estimateId: toSafeText(leadRecord.estimateId),
@@ -803,7 +817,7 @@ export function mergeLeadFinderImportData(existingData = {}, importedData = {}) 
     }
 
     const leadId = existingLeadIds.has(leadWithResolvedSource.id) ? createLeadFinderId("lead") : leadWithResolvedSource.id;
-    const nextLead = normalizeLead({
+    const nextLead = autoScoreLeadIfNeeded({
       ...leadWithResolvedSource,
       id: leadId,
     });
@@ -931,6 +945,55 @@ export function upsertLead(data = {}, lead = {}, sources = []) {
   };
 }
 
+export function autoScoreLeadIfNeeded(lead = {}) {
+  const normalizedLead = normalizeLead(lead);
+
+  if (hasCompleteLeadScore(normalizedLead)) {
+    return normalizedLead;
+  }
+
+  return applyLeadAiScore(normalizedLead, {
+    ...scoreLeadWithLocalRules(normalizedLead),
+    scoreSource: "rule_based",
+  });
+}
+
+export function autoScoreLeadFinderData(data = {}) {
+  const normalizedData = normalizeLeadFinderData(data);
+
+  return {
+    ...normalizedData,
+    leads: normalizeLeads(normalizedData.leads.map((lead) => autoScoreLeadIfNeeded(lead))),
+  };
+}
+
+export function scoreUnscoredLeads(data = {}) {
+  const normalizedData = normalizeLeadFinderData(data);
+  let scoredCount = 0;
+  let skippedCount = 0;
+
+  const leads = normalizedData.leads.map((lead) => {
+    if (hasCompleteLeadScore(lead)) {
+      skippedCount += 1;
+      return lead;
+    }
+
+    scoredCount += 1;
+    return autoScoreLeadIfNeeded(lead);
+  });
+
+  return {
+    data: normalizeLeadFinderData({
+      ...normalizedData,
+      leads,
+    }),
+    summary: {
+      scoredCount,
+      skippedCount,
+    },
+  };
+}
+
 export function updateLeadStatus(data = {}, leadId = "", status = "New") {
   const normalizedStatus = normalizeOption(status, LEAD_STATUSES, "New");
   const now = new Date().toISOString();
@@ -952,15 +1015,56 @@ export function updateLeadStatus(data = {}, leadId = "", status = "New") {
   };
 }
 
+export function updateLeadReviewStatus(data = {}, leadId = "", reviewStatus = "Needs Review", options = {}) {
+  const normalizedReviewStatus = normalizeOption(reviewStatus, LEAD_REVIEW_STATUSES, "Needs Review");
+  const now = toIsoDateTime(options.reviewedAt) || new Date().toISOString();
+  const reviewedBy = toSafeText(options.reviewedBy);
+  const normalizedData = normalizeLeadFinderData(data);
+
+  return {
+    ...normalizedData,
+    leads: normalizeLeads(
+      normalizedData.leads.map((lead) =>
+        lead.id === leadId
+          ? {
+              ...lead,
+              reviewStatus: normalizedReviewStatus,
+              reviewedAt: ["Reviewed", "Rejected"].includes(normalizedReviewStatus) ? now : "",
+              reviewedBy: ["Reviewed", "Rejected"].includes(normalizedReviewStatus) ? reviewedBy : "",
+              updatedAt: now,
+            }
+          : lead,
+      ),
+    ),
+  };
+}
+
 export function hasLeadAiScore(lead = {}) {
+  return hasCompleteLeadScore(lead);
+}
+
+export function hasCompleteLeadScore(lead = {}) {
+  const normalizedLead = normalizeLead(lead);
+
+  return Boolean(
+    toNumberOrBlank(normalizedLead.aiFitScore) !== "" &&
+      toSafeText(normalizedLead.aiFitReason) &&
+      normalizeLeadScoreSource(normalizedLead.scoreSource) &&
+      toIsoDateTime(normalizedLead.scoredAt),
+  );
+}
+
+export function hasPartialLeadScore(lead = {}) {
   return Boolean(
     toNumberOrBlank(lead.aiFitScore) !== "" ||
       toSafeText(lead.aiFitLabel) ||
       toSafeText(lead.aiFitReason) ||
       normalizeAiRisks(lead.aiRisks) ||
       toSafeText(lead.aiNextStep) ||
+      normalizeLeadScoreSource(lead.scoreSource) ||
+      toIsoDateTime(lead.scoredAt) ||
       (toSafeText(lead.suggestedCompanyMode) && toSafeText(lead.suggestedCompanyMode) !== "Unknown"),
-  );
+  ) && !hasCompleteLeadScore(lead);
 }
 
 export function normalizeLeadAiScoreResult(result = {}) {
@@ -981,6 +1085,8 @@ export function normalizeLeadAiScoreResult(result = {}) {
     suggestedCompanyMode: normalizeOption(companyMode, LEAD_SUGGESTED_COMPANY_MODES, "Unknown"),
     scoreSource: normalizeLeadScoreSource(source.scoreSource),
     scoredAt: toIsoDateTime(source.scoredAt),
+    scoreStatus: normalizeOption(source.scoreStatus, LEAD_SCORE_STATUSES, ""),
+    scoreError: toSafeText(source.scoreError),
   };
 }
 
@@ -1012,6 +1118,8 @@ export function applyLeadAiScore(lead = {}, result = {}) {
     ...lead,
     ...normalizedScore,
     scoredAt: normalizedScore.scoredAt || new Date().toISOString(),
+    scoreStatus: normalizedScore.scoreStatus || "scored",
+    scoreError: normalizedScore.scoreError,
     updatedAt: new Date().toISOString(),
   });
 }
@@ -1268,11 +1376,18 @@ export function getLeadFinderStats(data = {}) {
   const { leads, sources } = normalizeLeadFinderData(data);
   const countStatus = (status) => leads.filter((lead) => lead.status === status).length;
   const countFollowUpStatus = (status) => leads.filter((lead) => lead.followUpStatus === status).length;
+  const today = getTodayInputValue();
 
   return {
     totalLeads: leads.length,
     newLeads: countStatus("New"),
     goodFitLeads: countStatus("Good Fit"),
+    aiGoodFitLeads: leads.filter((lead) => lead.aiFitLabel === "Good Fit").length,
+    aiMaybeLeads: leads.filter((lead) => lead.aiFitLabel === "Maybe").length,
+    aiBadFitLeads: leads.filter((lead) => lead.aiFitLabel === "Bad Fit").length,
+    newLeadsNeedingReview: leads.filter((lead) => lead.status === "New" && lead.reviewStatus === "Needs Review").length,
+    unscoredLeads: leads.filter((lead) => !hasCompleteLeadScore(lead)).length,
+    autoScoredToday: leads.filter((lead) => lead.scoreSource === "rule_based" && lead.scoredAt.slice(0, 10) === today).length,
     contactedLeads: countStatus("Contacted"),
     estimatesStarted: countStatus("Estimate Started"),
     proposalsStarted: countStatus("Proposal Started"),
@@ -1287,6 +1402,32 @@ export function getLeadFinderStats(data = {}) {
     highPrioritySourcesDue: sources.filter((source) => source.sourcePriority === "High" && isLeadSourceDueOrOverdue(source)).length,
     activeSources: sources.filter((source) => source.active && source.sourceStatus === "Active").length,
   };
+}
+
+export function getLeadReviewQueue(data = {}, filters = {}) {
+  const normalizedData = normalizeLeadFinderData(data);
+  const aiFitLabel = normalizeOption(filters.aiFitLabel, LEAD_AI_FIT_LABELS, "all");
+  const companyMode = normalizeOption(filters.companyMode, LEAD_SUGGESTED_COMPANY_MODES, "all");
+  const scoreSource = toSafeText(filters.scoreSource === undefined ? "all" : filters.scoreSource);
+  const sourceId = toSafeText(filters.sourceId || "all");
+  const serviceType = toSafeText(filters.serviceType || "all");
+  const city = toSafeText(filters.city).toLowerCase();
+  const requestedReviewStatus = toSafeText(filters.reviewStatus || "Needs Review");
+  const reviewStatus = requestedReviewStatus === "all" ? "all" : normalizeOption(requestedReviewStatus, LEAD_REVIEW_STATUSES, "Needs Review");
+
+  return normalizedData.leads
+    .filter((lead) => {
+      const matchesReview = reviewStatus === "all" || lead.reviewStatus === reviewStatus;
+      const matchesLabel = aiFitLabel === "all" || lead.aiFitLabel === aiFitLabel;
+      const matchesCompany = companyMode === "all" || lead.suggestedCompanyMode === companyMode;
+      const matchesScoreSource = scoreSource === "all" || lead.scoreSource === scoreSource;
+      const matchesSource = sourceId === "all" || lead.sourceId === sourceId;
+      const matchesService = serviceType === "all" || lead.serviceType === serviceType;
+      const matchesCity = !city || lead.city.toLowerCase().includes(city);
+
+      return matchesReview && matchesLabel && matchesCompany && matchesScoreSource && matchesSource && matchesService && matchesCity;
+    })
+    .sort(compareLeadReviewQueueItems);
 }
 
 export function filterLeadSources(sources = [], filters = {}) {
@@ -1575,6 +1716,74 @@ function normalizeLeadScoreSource(value = "") {
   }
 
   return "";
+}
+
+function normalizeLeadScoreStatus(leadRecord = {}) {
+  const explicitStatus = normalizeOption(leadRecord.scoreStatus, LEAD_SCORE_STATUSES, "");
+
+  if (explicitStatus === "error") {
+    return "error";
+  }
+
+  if (hasCompleteLeadScoreRecord(leadRecord)) {
+    return "scored";
+  }
+
+  if (hasPartialLeadScoreRecord(leadRecord)) {
+    return "partial";
+  }
+
+  return "unscored";
+}
+
+function hasCompleteLeadScoreRecord(leadRecord = {}) {
+  return Boolean(
+    toNumberOrBlank(leadRecord.aiFitScore) !== "" &&
+      toSafeText(leadRecord.aiFitReason ?? leadRecord.fitReason ?? leadRecord.reason) &&
+      normalizeLeadScoreSource(leadRecord.scoreSource) &&
+      toIsoDateTime(leadRecord.scoredAt),
+  );
+}
+
+function hasPartialLeadScoreRecord(leadRecord = {}) {
+  return Boolean(
+    toNumberOrBlank(leadRecord.aiFitScore) !== "" ||
+      toSafeText(leadRecord.aiFitLabel ?? leadRecord.fitLabel ?? leadRecord.label) ||
+      toSafeText(leadRecord.aiFitReason ?? leadRecord.fitReason ?? leadRecord.reason) ||
+      normalizeAiRisks(leadRecord.aiRisks ?? leadRecord.risks) ||
+      toSafeText(leadRecord.aiNextStep ?? leadRecord.nextStep) ||
+      normalizeLeadScoreSource(leadRecord.scoreSource) ||
+      toIsoDateTime(leadRecord.scoredAt) ||
+      (toSafeText(leadRecord.suggestedCompanyMode ?? leadRecord.companyMode) && toSafeText(leadRecord.suggestedCompanyMode ?? leadRecord.companyMode) !== "Unknown"),
+  );
+}
+
+function compareLeadReviewQueueItems(a = {}, b = {}) {
+  const labelOrder = {
+    "Good Fit": 0,
+    Maybe: 1,
+    "": 2,
+    "Bad Fit": 3,
+  };
+  const reviewOrder = {
+    "Needs Review": 0,
+    "Saved for Later": 1,
+    Reviewed: 2,
+    Rejected: 3,
+  };
+  const labelDelta = (labelOrder[a.aiFitLabel] ?? 2) - (labelOrder[b.aiFitLabel] ?? 2);
+
+  if (labelDelta !== 0) {
+    return labelDelta;
+  }
+
+  const reviewDelta = (reviewOrder[a.reviewStatus] ?? 0) - (reviewOrder[b.reviewStatus] ?? 0);
+
+  if (reviewDelta !== 0) {
+    return reviewDelta;
+  }
+
+  return getTimeValue(b.updatedAt || b.createdAt) - getTimeValue(a.updatedAt || a.createdAt);
 }
 
 function normalizeTextList(value = []) {
