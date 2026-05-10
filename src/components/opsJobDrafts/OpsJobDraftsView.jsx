@@ -261,7 +261,7 @@ function OpsJobDraftDetailPage({ draftId = "", drafts = [], permissions = {}, on
           ? "Already sent / duplicate found. Open the imported draft in Concrete Ops when ready."
           : result.ok
             ? "Concrete Ops job draft sent. Open the imported draft in Concrete Ops when ready."
-            : result.error || result.message || "Concrete Ops direct send failed. Use Export Job Draft Package for now.",
+            : result.message || result.error || "Concrete Ops direct send failed. Use Export Job Draft Package for now.",
       );
     } catch (error) {
       setLocalMessage(error.message || "Concrete Ops direct send failed. Use Export Job Draft Package for now.");

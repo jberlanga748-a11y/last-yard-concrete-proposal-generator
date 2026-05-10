@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   getConcreteOpsDirectSendConfig,
+  getConcreteOpsDirectSendStatus,
   handleSendJobDraftToConcreteOpsRequest,
   normalizeConcreteOpsImportResponse,
 } from "./send-job-draft-to-concrete-ops.js";
@@ -26,6 +27,36 @@ test("Concrete Ops direct send route uses server-only env names", () => {
   assert.equal(config.importToken, "server-token");
 });
 
+test("Concrete Ops direct send GET config status hides token", async () => {
+  const directStatus = getConcreteOpsDirectSendStatus({
+    CONCRETE_OPS_API_BASE_URL: "https://concrete-ops-2.fly.dev",
+    CONCRETE_OPS_IMPORT_TOKEN: "server-token",
+  });
+  const response = createMockResponse();
+
+  await handleSendJobDraftToConcreteOpsRequest(
+    { method: "GET", body: null, readable: false },
+    response,
+    {
+      env: {
+        CONCRETE_OPS_API_BASE_URL: "https://concrete-ops-2.fly.dev",
+        CONCRETE_OPS_IMPORT_TOKEN: "server-token",
+      },
+      logger: { error() {} },
+    },
+  );
+
+  assert.deepEqual(directStatus, {
+    configured: true,
+    hasBaseUrl: true,
+    hasToken: true,
+    baseUrlHost: "concrete-ops-2.fly.dev",
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body, directStatus);
+  assert.equal(JSON.stringify(response.body).includes("server-token"), false);
+});
+
 test("Concrete Ops direct send returns safe message when env vars are missing", async () => {
   let fetchCalled = false;
   const response = createMockResponse();
@@ -45,7 +76,7 @@ test("Concrete Ops direct send returns safe message when env vars are missing", 
 
   assert.equal(response.statusCode, 503);
   assert.equal(response.body.ok, false);
-  assert.equal(response.body.reason, "missing-concrete-ops-config");
+  assert.equal(response.body.reason, "env_missing");
   assert.equal(response.body.message, "Concrete Ops direct send is not configured yet. Use Export Job Draft Package for now.");
   assert.equal(JSON.stringify(response.body).includes("server-token"), false);
   assert.equal(fetchCalled, false);
@@ -112,6 +143,130 @@ test("Concrete Ops direct send posts export package with bearer auth and never r
   assert.equal(JSON.stringify(response.body).includes("server-token"), false);
 });
 
+test("Concrete Ops direct send maps missing draft package to package build failure", async () => {
+  let fetchCalled = false;
+  const response = createMockResponse();
+
+  await handleSendJobDraftToConcreteOpsRequest(
+    {
+      method: "POST",
+      body: { opsJobDraftId: "draft-missing" },
+      readable: false,
+    },
+    response,
+    {
+      env: {
+        CONCRETE_OPS_API_BASE_URL: "https://concrete-ops-2.fly.dev",
+        CONCRETE_OPS_IMPORT_TOKEN: "server-token",
+      },
+      fetchImpl: async () => {
+        fetchCalled = true;
+        return {};
+      },
+      logger: { error() {} },
+    },
+  );
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.reason, "package_build_failed");
+  assert.equal(fetchCalled, false);
+});
+
+test("Concrete Ops direct send maps wrong token response to unauthorized safely", async () => {
+  const response = createMockResponse();
+
+  await handleSendJobDraftToConcreteOpsRequest(
+    {
+      method: "POST",
+      body: { opsJobDraftId: "draft-unauth", draft: { id: "draft-unauth", jobName: "Albany Slab" } },
+      readable: false,
+    },
+    response,
+    {
+      env: {
+        CONCRETE_OPS_API_BASE_URL: "https://concrete-ops-2.fly.dev",
+        CONCRETE_OPS_IMPORT_TOKEN: "server-token",
+      },
+      fetchImpl: async () => ({
+        ok: false,
+        status: 401,
+        json: async () => ({
+          error: "Unauthorized Bearer server-token",
+        }),
+      }),
+      logger: { error() {} },
+    },
+  );
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.reason, "concrete_ops_unauthorized");
+  assert.match(response.body.message, /Concrete Ops token was rejected/);
+  assert.equal(JSON.stringify(response.body).includes("server-token"), false);
+  assert.match(response.body.error, /Bearer \[redacted\]/);
+});
+
+test("Concrete Ops direct send maps validation response to package validation failure", async () => {
+  const response = createMockResponse();
+
+  await handleSendJobDraftToConcreteOpsRequest(
+    {
+      method: "POST",
+      body: { opsJobDraftId: "draft-invalid", draft: { id: "draft-invalid", jobName: "No Location" } },
+      readable: false,
+    },
+    response,
+    {
+      env: {
+        CONCRETE_OPS_API_BASE_URL: "https://concrete-ops-2.fly.dev",
+        CONCRETE_OPS_IMPORT_TOKEN: "server-token",
+      },
+      fetchImpl: async () => ({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          error: "missing city/state",
+        }),
+      }),
+      logger: { error() {} },
+    },
+  );
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.reason, "concrete_ops_validation_failed");
+  assert.equal(response.body.message, "Concrete Ops rejected the package: missing city/state. Use Export Job Draft Package for now.");
+});
+
+test("Concrete Ops direct send maps network failure to unreachable", async () => {
+  const response = createMockResponse();
+
+  await handleSendJobDraftToConcreteOpsRequest(
+    {
+      method: "POST",
+      body: { opsJobDraftId: "draft-network", draft: { id: "draft-network", jobName: "Network Slab" } },
+      readable: false,
+    },
+    response,
+    {
+      env: {
+        CONCRETE_OPS_API_BASE_URL: "https://concrete-ops-2.fly.dev",
+        CONCRETE_OPS_IMPORT_TOKEN: "server-token",
+      },
+      fetchImpl: async () => {
+        throw new TypeError("fetch failed");
+      },
+      logger: { error() {} },
+    },
+  );
+
+  assert.equal(response.statusCode, 502);
+  assert.equal(response.body.ok, false);
+  assert.equal(response.body.reason, "concrete_ops_unreachable");
+  assert.equal(response.body.message, "Concrete Ops is unreachable right now. Use Export Job Draft Package for now.");
+});
+
 test("Concrete Ops direct send normalizes duplicate and failed responses safely", () => {
   const duplicate = normalizeConcreteOpsImportResponse(
     {
@@ -135,6 +290,7 @@ test("Concrete Ops direct send normalizes duplicate and failed responses safely"
   assert.equal(duplicate.concreteOpsUrl, "https://concrete-ops-2.fly.dev/job-draft-imports/existing-import");
   assert.equal(failed.ok, false);
   assert.equal(failed.status, "HTTP 401");
+  assert.equal(failed.reason, "concrete_ops_unauthorized");
   assert.equal(failed.error, "Unauthorized");
 });
 

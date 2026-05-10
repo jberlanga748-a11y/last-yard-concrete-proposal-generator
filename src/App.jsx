@@ -3719,12 +3719,19 @@ export default function App() {
       responseData = await response.json().catch(() => ({}));
 
       if (!response.ok && !responseData.duplicate) {
-        throw new Error(responseData.error || responseData.message || "Concrete Ops direct send failed.");
+        responseData = {
+          ...responseData,
+          ok: false,
+          error: responseData.error || responseData.message || "Concrete Ops direct send failed.",
+          message: responseData.message || responseData.error || "Concrete Ops direct send failed. Use Export Job Draft Package for now.",
+          reason: responseData.reason || "unknown_error",
+        };
       }
     } catch (error) {
       responseData = {
         ok: false,
-        message: "Concrete Ops direct send failed. Use Export Job Draft Package for now.",
+        message: getConcreteOpsDirectSendFallbackMessage("concrete_ops_unreachable"),
+        reason: "concrete_ops_unreachable",
         error: error.message || "Concrete Ops direct send failed.",
       };
     }
@@ -3762,6 +3769,30 @@ export default function App() {
       ...responseData,
       draft: savedDraft,
     };
+  }
+
+  function getConcreteOpsDirectSendFallbackMessage(reason = "") {
+    if (reason === "env_missing") {
+      return "Concrete Ops direct send is not configured yet. Use Export Job Draft Package for now.";
+    }
+
+    if (reason === "concrete_ops_unauthorized") {
+      return "Concrete Ops token was rejected. Check CONCRETE_OPS_IMPORT_TOKEN. Use Export Job Draft Package for now.";
+    }
+
+    if (reason === "concrete_ops_validation_failed") {
+      return "Concrete Ops rejected the package. Use Export Job Draft Package for now.";
+    }
+
+    if (reason === "concrete_ops_unreachable") {
+      return "Concrete Ops is unreachable right now. Use Export Job Draft Package for now.";
+    }
+
+    if (reason === "package_build_failed") {
+      return "Concrete Ops package could not be built. Use Export Job Draft Package for now.";
+    }
+
+    return "Concrete Ops direct send failed. Use Export Job Draft Package for now.";
   }
 
   async function createOpsJobDraftFromHandoffAction(handoff, options = {}) {

@@ -19,6 +19,11 @@ export async function handleSendJobDraftToConcreteOpsRequest(
     return;
   }
 
+  if (request.method === "GET") {
+    response.status(200).json(getConcreteOpsDirectSendStatus(env));
+    return;
+  }
+
   if (request.method !== "POST") {
     response.status(405).json({ ok: false, error: "Method not allowed." });
     return;
@@ -33,17 +38,18 @@ export async function handleSendJobDraftToConcreteOpsRequest(
       configured: false,
       error: missingConcreteOpsConfigMessage,
       message: missingConcreteOpsConfigMessage,
-      reason: "missing-concrete-ops-config",
+      reason: "env_missing",
     });
     return;
   }
 
   if (typeof fetchImpl !== "function") {
-    response.status(500).json({
+    response.status(getDirectSendFailureStatusCode("unknown_error")).json({
       ok: false,
       configured: true,
       error: "Concrete Ops direct send cannot run in this server environment.",
-      reason: "missing-fetch",
+      message: "Concrete Ops direct send cannot run in this server environment. Use Export Job Draft Package for now.",
+      reason: "unknown_error",
     });
     return;
   }
@@ -57,7 +63,8 @@ export async function handleSendJobDraftToConcreteOpsRequest(
         ok: false,
         configured: true,
         error: "Save or open a Concrete Ops Job Draft before sending it to Concrete Ops.",
-        reason: "missing-job-draft",
+        message: "Package could not be built. Save or open a Concrete Ops Job Draft before sending it.",
+        reason: "package_build_failed",
       });
       return;
     }
@@ -82,15 +89,20 @@ export async function handleSendJobDraftToConcreteOpsRequest(
       return;
     }
 
-    response.status(502).json(safePayload);
+    response.status(getDirectSendFailureStatusCode(safePayload.reason)).json(safePayload);
   } catch (error) {
-    logger.error?.("[concrete-ops-send] Direct send failed.", { message: error?.message || "Unknown error" });
-    response.status(500).json({
+    const reason = isNetworkOrFetchFailure(error) ? "concrete_ops_unreachable" : "unknown_error";
+    const safeError = formatSafeError(error);
+    logger.error?.("[concrete-ops-send] Direct send failed.", { message: safeError, reason });
+    response.status(getDirectSendFailureStatusCode(reason)).json({
       ok: false,
       configured: true,
-      error: formatSafeError(error),
-      message: "Concrete Ops direct send failed. Use Export Job Draft Package for now.",
-      reason: "send-failed",
+      error: safeError,
+      message:
+        reason === "concrete_ops_unreachable"
+          ? "Concrete Ops is unreachable right now. Use Export Job Draft Package for now."
+          : "Concrete Ops direct send failed. Use Export Job Draft Package for now.",
+      reason,
     });
   }
 }
@@ -113,6 +125,17 @@ export function getConcreteOpsDirectSendConfig(env = process.env) {
     configured: Boolean(apiBaseUrl && importToken),
     importToken,
     missing,
+  };
+}
+
+export function getConcreteOpsDirectSendStatus(env = process.env) {
+  const config = getConcreteOpsDirectSendConfig(env);
+
+  return {
+    configured: config.configured,
+    hasBaseUrl: Boolean(config.apiBaseUrl),
+    hasToken: Boolean(config.importToken),
+    baseUrlHost: getUrlHost(config.apiBaseUrl),
   };
 }
 
@@ -140,6 +163,7 @@ export function buildConcreteOpsJobDraftPackageFromRequest(body = {}) {
 
 export function normalizeConcreteOpsImportResponse(payload = {}, { apiBaseUrl = "", fallbackStatus = 0, ok = false } = {}) {
   const source = payload && typeof payload === "object" ? payload : {};
+  const reason = getConcreteOpsFailureReason(source, fallbackStatus, ok);
   const importedDraftId = safeText(
     source.importedDraftId ||
       source.importedJobDraftId ||
@@ -150,9 +174,9 @@ export function normalizeConcreteOpsImportResponse(payload = {}, { apiBaseUrl = 
   );
   const openPath = normalizeOpenPath(source.openPath || source.path || source.importedDraft?.openPath || source.import?.openPath);
   const duplicate = source.duplicate === true || /duplicate|already/i.test(safeText(source.reason || source.status || source.message || source.error));
+  const safeUpstreamError = redactSensitiveText(safeText(source.error?.message || source.error || source.reason || source.details || source.validationError));
   const message =
-    safeText(source.message) ||
-    (duplicate ? "Already sent / duplicate found." : ok ? "Concrete Ops Job Draft sent." : "Concrete Ops direct send failed. Use Export Job Draft Package for now.");
+    getConcreteOpsDirectSendMessage(source, { duplicate, ok, reason, safeUpstreamError });
 
   return {
     ok: ok || duplicate,
@@ -162,8 +186,73 @@ export function normalizeConcreteOpsImportResponse(payload = {}, { apiBaseUrl = 
     openPath,
     message,
     concreteOpsUrl: apiBaseUrl && openPath ? `${trimTrailingSlash(apiBaseUrl)}${openPath}` : "",
-    error: ok || duplicate ? "" : safeText(source.error) || message,
+    error: ok || duplicate ? "" : safeUpstreamError || message,
+    reason,
   };
+}
+
+function getConcreteOpsFailureReason(source = {}, status = 0, ok = false) {
+  if (ok) {
+    return "";
+  }
+
+  if ([401, 403].includes(Number(status))) {
+    return "concrete_ops_unauthorized";
+  }
+
+  if ([400, 422].includes(Number(status))) {
+    return "concrete_ops_validation_failed";
+  }
+
+  const combined = [source.reason, source.error?.message, source.error, source.message, source.details].filter(Boolean).join(" ");
+
+  if (/unauthorized|forbidden|token|bearer|auth/i.test(combined)) {
+    return "concrete_ops_unauthorized";
+  }
+
+  if (/validation|invalid|missing|required|city|state|package/i.test(combined)) {
+    return "concrete_ops_validation_failed";
+  }
+
+  return "unknown_error";
+}
+
+function getConcreteOpsDirectSendMessage(source = {}, { duplicate = false, ok = false, reason = "", safeUpstreamError = "" } = {}) {
+  const upstreamMessage = redactSensitiveText(safeText(source.message));
+
+  if (duplicate) {
+    return upstreamMessage || "Already sent / duplicate found.";
+  }
+
+  if (ok) {
+    return upstreamMessage || "Concrete Ops Job Draft sent.";
+  }
+
+  if (reason === "concrete_ops_unauthorized") {
+    return "Concrete Ops token was rejected. Check CONCRETE_OPS_IMPORT_TOKEN. Use Export Job Draft Package for now.";
+  }
+
+  if (reason === "concrete_ops_validation_failed") {
+    return `Concrete Ops rejected the package${safeUpstreamError || upstreamMessage ? `: ${safeUpstreamError || upstreamMessage}` : ""}. Use Export Job Draft Package for now.`;
+  }
+
+  return upstreamMessage || "Concrete Ops direct send failed. Use Export Job Draft Package for now.";
+}
+
+function getDirectSendFailureStatusCode(reason = "") {
+  if (reason === "concrete_ops_unauthorized") {
+    return 401;
+  }
+
+  if (reason === "concrete_ops_validation_failed" || reason === "package_build_failed") {
+    return 400;
+  }
+
+  if (reason === "concrete_ops_unreachable") {
+    return 502;
+  }
+
+  return 500;
 }
 
 async function readJsonBody(request) {
@@ -212,6 +301,20 @@ function normalizeOpenPath(value = "") {
   return text.startsWith("/") ? text : `/${text}`;
 }
 
+function getUrlHost(value = "") {
+  const text = safeText(value);
+
+  if (!text) {
+    return "";
+  }
+
+  try {
+    return new URL(text).host;
+  } catch {
+    return "";
+  }
+}
+
 function firstNonEmptyEnvValue(...values) {
   for (const value of values) {
     if (typeof value !== "string") {
@@ -240,14 +343,25 @@ function safeText(value = "") {
   return String(value).trim();
 }
 
+function isNetworkOrFetchFailure(error) {
+  const message = formatSafeError(error);
+  return /fetch|network|econn|enotfound|etimedout|timeout|socket|dns/i.test(message);
+}
+
+function redactSensitiveText(value = "") {
+  return safeText(value)
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/CONCRETE_OPS_IMPORT_TOKEN\s*[:=]\s*\S+/gi, "CONCRETE_OPS_IMPORT_TOKEN=[redacted]");
+}
+
 function formatSafeError(error) {
   if (!error) {
     return "Concrete Ops direct send failed.";
   }
 
   if (typeof error === "string") {
-    return error;
+    return redactSensitiveText(error);
   }
 
-  return error.message || "Concrete Ops direct send failed.";
+  return redactSensitiveText(error.message || "Concrete Ops direct send failed.");
 }
