@@ -777,6 +777,7 @@ create table if not exists public.leads (
   proposal_id text,
   packet_id text,
   contact_id text,
+  job_handoff_id text,
   handoff_history jsonb not null default '[]'::jsonb,
   last_contact_date date,
   last_contact_method text,
@@ -814,6 +815,7 @@ alter table public.leads add column if not exists estimate_id text;
 alter table public.leads add column if not exists proposal_id text;
 alter table public.leads add column if not exists packet_id text;
 alter table public.leads add column if not exists contact_id text;
+alter table public.leads add column if not exists job_handoff_id text;
 alter table public.leads add column if not exists handoff_history jsonb not null default '[]'::jsonb;
 alter table public.leads add column if not exists last_contact_date date;
 alter table public.leads add column if not exists last_contact_method text;
@@ -844,8 +846,88 @@ create index if not exists leads_estimate_id_idx on public.leads(estimate_id);
 create index if not exists leads_proposal_id_idx on public.leads(proposal_id);
 create index if not exists leads_packet_id_idx on public.leads(packet_id);
 create index if not exists leads_contact_id_idx on public.leads(contact_id);
+create index if not exists leads_job_handoff_id_idx on public.leads(job_handoff_id);
 create index if not exists leads_company_follow_up_status_idx on public.leads(company_id, follow_up_status);
 create index if not exists leads_company_next_follow_up_date_idx on public.leads(company_id, next_follow_up_date);
+
+-- Phase 40: Job Handoff Packet bridge.
+-- The app persists these packets through company_settings.jobHandoffs today.
+-- This table prepares future direct sync to Concrete Ops without creating jobs.
+
+create table if not exists public.job_handoffs (
+  id text primary key,
+  company_id uuid references public.companies(id) on delete cascade not null,
+  source_lead_id text,
+  source_proposal_id text,
+  source_estimate_id text,
+  source_packet_id text,
+  customer_name text,
+  contact_name text,
+  contact_email text,
+  contact_phone text,
+  project_name text,
+  project_address text,
+  city text,
+  state text,
+  service_type text,
+  project_type text,
+  accepted_proposal_amount numeric,
+  proposal_title text,
+  proposal_status text,
+  lead_status text,
+  scope_summary text,
+  included_scope jsonb not null default '[]'::jsonb,
+  exclusions jsonb not null default '[]'::jsonb,
+  assumptions jsonb not null default '[]'::jsonb,
+  missing_info_status text,
+  proposal_readiness_label text,
+  proposal_readiness_score numeric,
+  follow_up_status text,
+  next_follow_up_date date,
+  internal_notes text,
+  operations_notes text,
+  start_date_target date,
+  crew_notes text,
+  schedule_notes text,
+  document_links jsonb not null default '[]'::jsonb,
+  handoff_status text,
+  handoff_data jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists job_handoffs_company_id_idx on public.job_handoffs(company_id);
+create index if not exists job_handoffs_company_status_idx on public.job_handoffs(company_id, handoff_status);
+create index if not exists job_handoffs_source_lead_id_idx on public.job_handoffs(source_lead_id);
+create index if not exists job_handoffs_source_proposal_id_idx on public.job_handoffs(source_proposal_id);
+
+drop trigger if exists set_job_handoffs_updated_at on public.job_handoffs;
+create trigger set_job_handoffs_updated_at
+before update on public.job_handoffs
+for each row execute function public.set_updated_at();
+
+alter table public.job_handoffs enable row level security;
+
+drop policy if exists "Users can read job handoffs" on public.job_handoffs;
+create policy "Users can read job handoffs"
+on public.job_handoffs for select
+using (public.current_user_can_access_company(company_id));
+
+drop policy if exists "Users can insert job handoffs" on public.job_handoffs;
+create policy "Users can insert job handoffs"
+on public.job_handoffs for insert
+with check (public.current_user_can_edit_company(company_id));
+
+drop policy if exists "Users can update job handoffs" on public.job_handoffs;
+create policy "Users can update job handoffs"
+on public.job_handoffs for update
+using (public.current_user_can_edit_company(company_id))
+with check (public.current_user_can_edit_company(company_id));
+
+drop policy if exists "Users can delete job handoffs" on public.job_handoffs;
+create policy "Users can delete job handoffs"
+on public.job_handoffs for delete
+using (public.current_user_is_company_admin(company_id));
 
 drop trigger if exists set_lead_sources_updated_at on public.lead_sources;
 create trigger set_lead_sources_updated_at

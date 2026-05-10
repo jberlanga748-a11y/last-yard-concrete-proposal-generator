@@ -20,6 +20,7 @@ export function AppChrome({
     { view: "dashboard", label: "Dashboard", shortLabel: "Dash", action: () => onNavigate("/dashboard") },
     { view: "bids", label: "Bids", shortLabel: "Bids", action: () => onNavigate("/bids") },
     { view: "leadFinder", label: "AI Lead Finder", shortLabel: "Leads", action: () => onNavigate("/lead-finder") },
+    { view: "jobHandoffs", label: "Job Handoffs", shortLabel: "Jobs", action: () => onNavigate("/job-handoffs") },
     { view: "list", label: "Proposals", shortLabel: "Props", action: () => onNavigate("/proposals") },
     { view: "contacts", label: "Contacts", shortLabel: "Contacts", action: () => onNavigate("/contacts") },
     {

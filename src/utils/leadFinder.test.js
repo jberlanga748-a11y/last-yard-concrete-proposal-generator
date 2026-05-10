@@ -119,6 +119,7 @@ test("normalizes lead source and lead records with safe defaults", () => {
   assert.equal(lead.proposalReadinessLabel, "");
   assert.equal(lead.missingInfoStatus, "Not Checked");
   assert.equal(lead.estimateId, "");
+  assert.equal(lead.jobHandoffId, "");
   assert.deepEqual(lead.handoffHistory, []);
   assert.equal(lead.followUpStatus, "Not Contacted");
   assert.equal(lead.lastContactDate, "");
@@ -931,6 +932,7 @@ test("lead handoff fields normalize and survive merge/load cycles", () => {
     proposalId: "proposal-commercial-1",
     packetId: "proposal-packet-1",
     contactId: "contact-1",
+    jobHandoffId: "job-handoff-1",
     handoffHistory: [
       {
         id: "handoff-1",
@@ -947,6 +949,7 @@ test("lead handoff fields normalize and survive merge/load cycles", () => {
   assert.equal(data.leads[0].proposalId, "proposal-commercial-1");
   assert.equal(data.leads[0].packetId, "proposal-packet-1");
   assert.equal(data.leads[0].contactId, "contact-1");
+  assert.equal(data.leads[0].jobHandoffId, "job-handoff-1");
   assert.equal(data.leads[0].handoffHistory.length, 1);
   assert.equal(normalizeLeadHandoffHistory(data.leads[0].handoffHistory)[0].recordId, "proposal-estimate-1");
 });
@@ -973,6 +976,11 @@ test("applying lead handoffs stores record ids and updates lead status", () => {
     recordId: "proposal-ai-1",
     label: "AI Proposal Draft",
   });
+  const jobHandoffLead = applyLeadHandoff(packetLead, {
+    type: "job_handoff",
+    recordId: "job-handoff-1",
+    label: "Job Handoff Packet",
+  });
 
   assert.equal(estimateLead.estimateId, "estimate-1");
   assert.equal(estimateLead.status, "Estimate Started");
@@ -984,6 +992,9 @@ test("applying lead handoffs stores record ids and updates lead status", () => {
   assert.equal(aiProposalLead.proposalId, "proposal-ai-1");
   assert.equal(aiProposalLead.status, "Proposal Started");
   assert.equal(aiProposalLead.handoffHistory[0].type, "proposal_draft");
+  assert.equal(jobHandoffLead.jobHandoffId, "job-handoff-1");
+  assert.equal(jobHandoffLead.status, "Proposal Started");
+  assert.equal(jobHandoffLead.handoffHistory[0].type, "job_handoff");
 });
 
 test("follow-up fields persist and quick actions update dates and statuses", () => {

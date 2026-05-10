@@ -40,9 +40,11 @@ import {
   previewLeadFinderBackupImport,
   previewLeadFinderStarterSources,
 } from "../../utils/leadFinder.js";
+import { findJobHandoffForLead, getJobHandoffStats, normalizeJobHandoffs } from "../../utils/jobHandoffs.js";
 
 export function LeadFinderView({
   data = {},
+  jobHandoffs = [],
   leadAiConfigured = null,
   message = "",
   permissions = {},
@@ -55,6 +57,7 @@ export function LeadFinderView({
   onExportBackup,
   onGenerateProposalDraft,
   onImportBackup,
+  onCreateJobHandoff,
   onLeadHandoff,
   onMarkMissingInfoRequested,
   onNavigate,
@@ -99,9 +102,11 @@ export function LeadFinderView({
       ) : section === "commandCenter" ? (
         <LeadCommandCenterPage
           data={normalizedData}
+          jobHandoffs={jobHandoffs}
           permissions={permissions}
           onAddLeadFromSource={addLeadFromSource}
           onCheckMissingInfoWithRules={onCheckMissingInfoWithRules}
+          onCreateJobHandoff={onCreateJobHandoff}
           onGenerateProposalDraft={onGenerateProposalDraft}
           onLeadHandoff={onLeadHandoff}
           onMarkMissingInfoRequested={onMarkMissingInfoRequested}
@@ -148,6 +153,7 @@ export function LeadFinderView({
       ) : section === "leadDetail" ? (
         <LeadEditPage
           data={normalizedData}
+          jobHandoffs={jobHandoffs}
           leadAiConfigured={leadAiConfigured}
           leadId={route.id}
           mode="detail"
@@ -158,6 +164,7 @@ export function LeadFinderView({
           onGenerateProposalDraft={onGenerateProposalDraft}
           onCheckMissingInfo={onCheckMissingInfo}
           onCheckMissingInfoWithRules={onCheckMissingInfoWithRules}
+          onCreateJobHandoff={onCreateJobHandoff}
           onMarkMissingInfoRequested={onMarkMissingInfoRequested}
           onSaveLead={onSaveLead}
           onScoreLead={onScoreLead}
@@ -187,6 +194,7 @@ function LeadFinderHeader({ section = "dashboard", onBackToDashboard, onNavigate
     ["sources", "Sources", "/lead-finder/sources"],
     ["leads", "Lead Inbox", "/lead-finder/leads"],
     ["newLead", "New Lead", "/lead-finder/leads/new"],
+    ["jobHandoffs", "Job Handoffs", "/job-handoffs"],
   ];
 
   return (
@@ -266,6 +274,9 @@ function LeadFinderDashboard({ data = {}, permissions = {}, onExportBackup, onIm
           <button type="button" onClick={() => onNavigate?.("/lead-finder/review")}>
             Open Review Queue
           </button>
+          <button type="button" onClick={() => onNavigate?.("/job-handoffs")}>
+            Open Job Handoffs
+          </button>
             <button type="button" onClick={scoreAllUnscored} disabled={!permissions.editBid || stats.unscoredLeads === 0}>
               Score All Unscored Leads
             </button>
@@ -331,9 +342,11 @@ function LeadFinderDashboard({ data = {}, permissions = {}, onExportBackup, onIm
 
 function LeadCommandCenterPage({
   data = {},
+  jobHandoffs = [],
   permissions = {},
   onAddLeadFromSource,
   onCheckMissingInfoWithRules,
+  onCreateJobHandoff,
   onGenerateProposalDraft,
   onLeadHandoff,
   onMarkMissingInfoRequested,
@@ -343,6 +356,7 @@ function LeadCommandCenterPage({
   onUpdateLeadReviewStatus,
 }) {
   const commandData = getLeadFinderCommandCenterData(data);
+  const handoffStats = getJobHandoffStats(jobHandoffs);
   const [localMessage, setLocalMessage] = useState("");
   const [actionLoading, setActionLoading] = useState("");
   const statCards = [
@@ -356,6 +370,8 @@ function LeadCommandCenterPage({
     ["Overdue Follow-Ups", commandData.stats.overdueFollowUps],
     ["Waiting on Response", commandData.stats.waitingOnResponse],
     ["Proposals Started", commandData.stats.proposalsStarted],
+    ["Ready for Ops Review", handoffStats.readyForOpsReview],
+    ["Ready to Create Job", handoffStats.readyToCreateJob],
   ];
 
   async function runLeadAction(lead, actionName, action) {
@@ -396,6 +412,10 @@ function LeadCommandCenterPage({
 
   async function createHandoff(lead, actionType) {
     await runLeadAction(lead, actionType, async () => onLeadHandoff?.(lead, actionType));
+  }
+
+  async function createJobHandoff(lead) {
+    await runLeadAction(lead, "job_handoff", async () => onCreateJobHandoff?.(lead));
   }
 
   async function followUpAction(lead, actionType) {
@@ -578,6 +598,7 @@ function LeadCommandCenterPage({
             onNavigate={onNavigate}
             actions={[
               ["Generate Proposal Draft", () => generateDraft(lead), permissions.editBid],
+              ["Create Job Handoff Packet", () => createJobHandoff(lead), permissions.editBid],
               ["Create Commercial Proposal", () => createHandoff(lead, "commercial_proposal"), permissions.createProposal],
               ["Create Residential Estimate", () => createHandoff(lead, "residential_estimate"), permissions.createProposal],
               ["Create GC Packet", () => createHandoff(lead, "gc_packet"), permissions.createProposal],
@@ -1442,6 +1463,7 @@ function LeadReviewQueueRow({
 
 function LeadEditPage({
   data = {},
+  jobHandoffs = [],
   leadAiConfigured = null,
   leadId = "",
   mode = "detail",
@@ -1451,6 +1473,7 @@ function LeadEditPage({
   onCheckMissingInfo,
   onCheckMissingInfoWithRules,
   onGenerateProposalDraft,
+  onCreateJobHandoff,
   onLeadHandoff,
   onMarkMissingInfoRequested,
   onNavigate,
@@ -1460,6 +1483,7 @@ function LeadEditPage({
   onUpdateLeadStatus,
 }) {
   const normalizedData = normalizeLeadFinderData(data);
+  const normalizedJobHandoffs = normalizeJobHandoffs(jobHandoffs);
   const existingLead = mode === "new" ? null : getLeadById(normalizedData, leadId);
   const [leadDraft, setLeadDraft] = useState(() => createLeadDraftForEditor(existingLead, mode, normalizedData.sources, prefillSourceId));
   const [localMessage, setLocalMessage] = useState("");
@@ -1607,6 +1631,28 @@ function LeadEditPage({
       setProposalDraftError(error?.message || "AI proposal drafting failed.");
     } finally {
       setProposalDraftLoading(false);
+    }
+  }
+
+  async function createJobHandoff() {
+    setHandoffLoading("job_handoff");
+    setHandoffError("");
+    setLocalMessage("");
+
+    try {
+      const result = await onCreateJobHandoff?.(leadDraft);
+
+      if (result?.lead) {
+        setLeadDraft(result.lead);
+      }
+
+      if (result?.message) {
+        setLocalMessage(result.message);
+      }
+    } catch (error) {
+      setHandoffError(error?.message || "Job handoff creation failed.");
+    } finally {
+      setHandoffLoading("");
     }
   }
 
@@ -1832,9 +1878,11 @@ function LeadEditPage({
         ) : null}
         {mode !== "new" ? (
           <LeadNextActions
+            existingJobHandoff={findJobHandoffForLead(normalizedJobHandoffs, leadDraft.id || existingLead?.id)}
             lead={leadDraft}
             loading={handoffLoading}
             permissions={permissions}
+            onCreateJobHandoff={createJobHandoff}
             onHandoff={createLeadHandoff}
             onNavigate={onNavigate}
           />
@@ -2178,7 +2226,7 @@ function LeadProposalDraftReview({ draft = {}, isApplying = false, onApply, onCa
   );
 }
 
-function LeadNextActions({ lead = {}, loading = "", permissions = {}, onHandoff, onNavigate }) {
+function LeadNextActions({ existingJobHandoff = null, lead = {}, loading = "", permissions = {}, onCreateJobHandoff, onHandoff, onNavigate }) {
   const actions = [
     {
       field: "estimateId",
@@ -2216,6 +2264,15 @@ function LeadNextActions({ lead = {}, loading = "", permissions = {}, onHandoff,
       permission: permissions.createContact,
       type: "contact",
     },
+    {
+      field: "jobHandoffId",
+      helper: "Prepare a prep-only operations packet for future Concrete Ops review. This does not create a real job.",
+      label: "Create Job Handoff Packet",
+      linkedLabel: "Job handoff packet",
+      openPath: (id) => `/job-handoffs/${id}`,
+      permission: permissions.editBid,
+      type: "job_handoff",
+    },
   ];
   const handoffHistory = Array.isArray(lead.handoffHistory) ? lead.handoffHistory.slice(0, 4) : [];
 
@@ -2223,8 +2280,9 @@ function LeadNextActions({ lead = {}, loading = "", permissions = {}, onHandoff,
     <LeadFormSection title="Next Actions">
       <div className="lead-next-actions">
         {actions.map((action) => {
-          const recordId = lead[action.field] || "";
+          const recordId = action.type === "job_handoff" ? lead[action.field] || existingJobHandoff?.id || "" : lead[action.field] || "";
           const isLoading = loading === action.type;
+          const runAction = action.type === "job_handoff" ? onCreateJobHandoff : onHandoff;
 
           return (
             <article className="lead-next-action-row" key={action.type}>
@@ -2245,8 +2303,8 @@ function LeadNextActions({ lead = {}, loading = "", permissions = {}, onHandoff,
                     Open
                   </button>
                 ) : null}
-                <button type="button" disabled={!action.permission || Boolean(loading)} onClick={() => onHandoff?.(action.type)}>
-                  {isLoading ? "Starting..." : recordId ? "Create Another" : action.label}
+                <button type="button" disabled={!action.permission || Boolean(loading)} onClick={() => runAction?.(action.type)}>
+                  {isLoading ? "Starting..." : recordId && action.type === "job_handoff" ? "Open Existing" : recordId ? "Create Another" : action.label}
                 </button>
               </div>
             </article>

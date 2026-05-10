@@ -4,6 +4,7 @@ import { LoginView } from "./components/auth/LoginView.jsx";
 import { BackupRestorePanel } from "./components/backup/BackupRestorePanel.jsx";
 import { BackupView } from "./components/backup/BackupView.jsx";
 import { Badge, StatusBadge } from "./components/common/Badges.jsx";
+import { JobHandoffsView } from "./components/jobHandoffs/JobHandoffsView.jsx";
 import { LeadFinderView } from "./components/leadFinder/LeadFinderView.jsx";
 import { CloudStatusCard } from "./components/settings/CloudStatusCard.jsx";
 import { TeamAccessPanel } from "./components/settings/TeamAccessPanel.jsx";
@@ -210,6 +211,17 @@ import {
   updateLeadStatus as updateLeadStatusRecord,
 } from "./utils/leadFinder.js";
 import {
+  createJobHandoffFromLead,
+  createJobHandoffFromProposal,
+  findJobHandoffForLead,
+  findJobHandoffForProposal,
+  getJobHandoffById,
+  mergeJobHandoffs,
+  normalizeJobHandoff,
+  normalizeJobHandoffs,
+  upsertJobHandoff,
+} from "./utils/jobHandoffs.js";
+import {
   applyCustomerSelectionToProposal,
   buildCustomerApprovalRecord,
   buildCustomerChangeRequestRecord,
@@ -258,6 +270,7 @@ const contactsStorageKey = "last-yard-contacts-v1";
 const priceLibraryStorageKey = "last-yard-price-library-v1";
 const bidsStorageKey = "last-yard-bids-v1";
 const leadFinderStorageKey = "last-yard-lead-finder-v1";
+const jobHandoffsStorageKey = "last-yard-job-handoffs-v1";
 const backupVersion = "1.0";
 const backupSource = "Last Yard Proposal Generator";
 const demoContactId = "demo-contact-abc-prime-contractors";
@@ -628,6 +641,10 @@ export default function App() {
     getLeadFinderFromSettings(initialAppState.companySettings, loadLeadFinderData()),
   );
   const [leadFinderMessage, setLeadFinderMessage] = useState("");
+  const [jobHandoffs, setJobHandoffs] = useState(() =>
+    getJobHandoffsFromSettings(initialAppState.companySettings, loadJobHandoffsData()),
+  );
+  const [jobHandoffMessage, setJobHandoffMessage] = useState("");
   const [leadAiConfigured, setLeadAiConfigured] = useState(null);
   const [activityLog, setActivityLog] = useState(() => loadActivityLogFromLocalStorage());
   const [bidDraft, setBidDraft] = useState(() => createEmptyBid());
@@ -689,6 +706,7 @@ export default function App() {
   const isPriceLibraryView = route.view === "priceLibrary";
   const isBidsView = route.view === "bids";
   const isLeadFinderView = route.view === "leadFinder";
+  const isJobHandoffsView = route.view === "jobHandoffs";
   const isActivityView = route.view === "activity";
   const isCustomerPortalView = route.view === "customerPortal";
   const isProposalDraftView = route.view === "new" || route.view === "edit";
@@ -747,6 +765,10 @@ export default function App() {
   useEffect(() => {
     saveLeadFinderData(leadFinderData);
   }, [leadFinderData]);
+
+  useEffect(() => {
+    saveJobHandoffsData(jobHandoffs);
+  }, [jobHandoffs]);
 
   useEffect(() => {
     if (!isLeadFinderView) {
@@ -1052,6 +1074,7 @@ export default function App() {
     setBackupMessage("");
     setAssetUploadMessage("");
     setLeadFinderMessage("");
+    setJobHandoffMessage("");
   }, [route.path]);
 
   useEffect(() => {
@@ -1069,7 +1092,8 @@ export default function App() {
         isActivityView ||
         isPriceLibraryView ||
         isBidsView ||
-        isLeadFinderView
+        isLeadFinderView ||
+        isJobHandoffsView
       ) {
         return;
       }
@@ -1084,7 +1108,7 @@ export default function App() {
 
     window.addEventListener("keydown", handlePrintShortcut);
     return () => window.removeEventListener("keydown", handlePrintShortcut);
-  }, [isActivityView, isBackupView, isBidsView, isContactsView, isDashboardView, isLeadFinderView, isListView, isLoginView, isPriceLibraryView, isSettingsView, proposalDraft]);
+  }, [isActivityView, isBackupView, isBidsView, isContactsView, isDashboardView, isJobHandoffsView, isLeadFinderView, isListView, isLoginView, isPriceLibraryView, isSettingsView, proposalDraft]);
 
   useEffect(() => {
     if (validationNotice && proposalValidation.errors.length === 0) {
@@ -1119,12 +1143,14 @@ export default function App() {
     const baseLog = Array.isArray(event.activityLog) ? event.activityLog : activityLog;
     const activityBids = Array.isArray(event.bids) ? event.bids : savedBids;
     const activityPriceLibrary = Array.isArray(event.priceLibrary) ? event.priceLibrary : priceLibrary;
+    const activityLeadFinder = isPlainObject(event.leadFinder) ? event.leadFinder : leadFinderData;
+    const activityJobHandoffs = Array.isArray(event.jobHandoffs) ? event.jobHandoffs : jobHandoffs;
     const nextLog = normalizeActivityLog([record, ...baseLog]);
-    const settingsWithActivity = getSettingsWithPriceLibraryAndBids(baseSettings, activityPriceLibrary, activityBids, nextLog);
+    const settingsWithActivity = getSettingsWithPriceLibraryAndBids(baseSettings, activityPriceLibrary, activityBids, nextLog, activityLeadFinder, activityJobHandoffs);
 
     setActivityLog(nextLog);
     setCompanySettings(settingsWithActivity);
-    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, activityPriceLibrary, activityBids, nextLog));
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, activityPriceLibrary, activityBids, nextLog, activityLeadFinder, activityJobHandoffs));
 
     if (canUseCloudSync(authUser)) {
       syncActivityLogToCloud(settingsWithActivity);
@@ -1765,7 +1791,7 @@ export default function App() {
       return;
     }
 
-    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog, leadFinderData);
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     setSettingsMessage(getCloudReadyMessage(authUser, "Company settings saved locally. Syncing to cloud...", "Company settings saved locally."));
@@ -1799,7 +1825,7 @@ export default function App() {
     try {
       const companyRecord = await ensureCloudCompany(
         user,
-        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData),
+        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs),
         companyCloudDeps,
       );
 
@@ -1809,7 +1835,7 @@ export default function App() {
 
       const settingsResult = await loadOrSeedCloudCompanySettings(
         companyRecord.id,
-        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData),
+        getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs),
         companyCloudDeps,
       );
 
@@ -1839,11 +1865,13 @@ export default function App() {
       const syncedBids = getBidsFromSettings(settingsResult.settings, savedBids);
       const syncedActivityLog = getActivityLogFromSettings(settingsResult.settings, activityLog);
       const syncedLeadFinder = getLeadFinderFromSettings(settingsResult.settings, leadFinderData);
-      const syncedSettings = getSettingsWithPriceLibraryAndBids(settingsResult.settings, syncedPriceLibrary, syncedBids, syncedActivityLog, syncedLeadFinder);
+      const syncedJobHandoffs = getJobHandoffsFromSettings(settingsResult.settings, jobHandoffs);
+      const syncedSettings = getSettingsWithPriceLibraryAndBids(settingsResult.settings, syncedPriceLibrary, syncedBids, syncedActivityLog, syncedLeadFinder, syncedJobHandoffs);
 
       setPriceLibrary(syncedPriceLibrary);
       setSavedBids(syncedBids);
       setLeadFinderData(syncedLeadFinder);
+      setJobHandoffs(syncedJobHandoffs);
       setActivityLog(syncedActivityLog);
       setCompanySettings(syncedSettings);
       setSettingsDraft(syncedSettings);
@@ -1895,12 +1923,14 @@ export default function App() {
     const bidsForSettings = Array.isArray(settings?.bidPipeline) ? settings.bidPipeline : savedBids;
     const activityForSettings = Array.isArray(settings?.activityLog) ? settings.activityLog : activityLog;
     const leadFinderForSettings = isPlainObject(settings?.leadFinder) ? settings.leadFinder : leadFinderData;
+    const jobHandoffsForSettings = Array.isArray(settings?.jobHandoffs) ? settings.jobHandoffs : jobHandoffs;
     const normalizedSettings = getSettingsWithPriceLibraryAndBids(
       settings,
       libraryForSettings,
       bidsForSettings,
       activityForSettings,
       leadFinderForSettings,
+      jobHandoffsForSettings,
     );
 
     if (!canUseCloudSync(authUser)) {
@@ -2080,7 +2110,7 @@ export default function App() {
       return;
     }
 
-    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog, leadFinderData);
+    const normalizedSettings = getSettingsWithPriceLibraryAndBids(settingsDraft, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs);
     setCompanySettings(normalizedSettings);
     setSettingsDraft(normalizedSettings);
     await syncSettingsToCloud(normalizedSettings);
@@ -2780,11 +2810,11 @@ export default function App() {
 
   async function commitBids(nextBids, message = "Bid pipeline saved locally.") {
     const normalizedBids = normalizeBids(nextBids);
-    const settingsWithBids = getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, normalizedBids, activityLog, leadFinderData);
+    const settingsWithBids = getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, normalizedBids, activityLog, leadFinderData, jobHandoffs);
 
     setSavedBids(normalizedBids);
     setCompanySettings(settingsWithBids);
-    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, normalizedBids, activityLog, leadFinderData));
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, normalizedBids, activityLog, leadFinderData, jobHandoffs));
     setBidMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
     if (canUseCloudSync(authUser)) {
@@ -2801,12 +2831,13 @@ export default function App() {
       savedBids,
       activityLog,
       normalizedLeadFinderData,
+      jobHandoffs,
     );
 
     setLeadFinderData(normalizedLeadFinderData);
     setCompanySettings(settingsWithLeadFinder);
     setSettingsDraft((currentSettings) =>
-      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, normalizedLeadFinderData),
+      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, normalizedLeadFinderData, jobHandoffs),
     );
     setLeadFinderMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
@@ -2816,6 +2847,66 @@ export default function App() {
     }
 
     return normalizedLeadFinderData;
+  }
+
+  async function commitJobHandoffs(nextHandoffs, message = "Job Handoff Packets saved locally.") {
+    const normalizedHandoffs = normalizeJobHandoffs(nextHandoffs);
+    const settingsWithHandoffs = getSettingsWithPriceLibraryAndBids(
+      companySettings,
+      priceLibrary,
+      savedBids,
+      activityLog,
+      leadFinderData,
+      normalizedHandoffs,
+    );
+
+    setJobHandoffs(normalizedHandoffs);
+    setCompanySettings(settingsWithHandoffs);
+    setSettingsDraft((currentSettings) =>
+      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, leadFinderData, normalizedHandoffs),
+    );
+    setJobHandoffMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
+
+    if (canUseCloudSync(authUser)) {
+      const synced = await syncSettingsToCloud(settingsWithHandoffs);
+      setJobHandoffMessage(synced ? `${message} Synced to cloud settings.` : `${message} Cloud sync failed. See Settings for details.`);
+    }
+
+    return normalizedHandoffs;
+  }
+
+  async function commitLeadFinderAndJobHandoffs(nextData, nextHandoffs, message = "Lead Finder and Job Handoff data saved locally.") {
+    const normalizedLeadFinderData = normalizeLeadFinderData(nextData);
+    const normalizedHandoffs = normalizeJobHandoffs(nextHandoffs);
+    const settingsWithBoth = getSettingsWithPriceLibraryAndBids(
+      companySettings,
+      priceLibrary,
+      savedBids,
+      activityLog,
+      normalizedLeadFinderData,
+      normalizedHandoffs,
+    );
+
+    setLeadFinderData(normalizedLeadFinderData);
+    setJobHandoffs(normalizedHandoffs);
+    setCompanySettings(settingsWithBoth);
+    setSettingsDraft((currentSettings) =>
+      getSettingsWithPriceLibraryAndBids(currentSettings, priceLibrary, savedBids, activityLog, normalizedLeadFinderData, normalizedHandoffs),
+    );
+    setLeadFinderMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
+    setJobHandoffMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
+
+    if (canUseCloudSync(authUser)) {
+      const synced = await syncSettingsToCloud(settingsWithBoth);
+      const syncMessage = synced ? `${message} Synced to cloud settings.` : `${message} Cloud sync failed. See Settings for details.`;
+      setLeadFinderMessage(syncMessage);
+      setJobHandoffMessage(syncMessage);
+    }
+
+    return {
+      handoffs: normalizedHandoffs,
+      leadFinder: normalizedLeadFinderData,
+    };
   }
 
   function exportLeadFinderBackup() {
@@ -3314,6 +3405,125 @@ export default function App() {
     };
   }
 
+  async function saveJobHandoff(packet) {
+    if (!canPerform("editBid", setJobHandoffMessage)) {
+      return null;
+    }
+
+    const normalizedPacket = normalizeJobHandoff({
+      ...packet,
+      updatedAt: new Date().toISOString(),
+    });
+    const nextHandoffs = upsertJobHandoff(jobHandoffs, normalizedPacket);
+
+    await commitJobHandoffs(nextHandoffs, `Saved ${normalizedPacket.projectName || "job handoff packet"} locally.`);
+    recordActivity({
+      action: jobHandoffs.some((item) => item.id === normalizedPacket.id) ? "Job handoff updated" : "Job handoff created",
+      entityType: "job_handoff",
+      entityId: normalizedPacket.id,
+      entityLabel: normalizedPacket.projectName || normalizedPacket.proposalTitle || "Job handoff packet",
+      jobHandoffs: nextHandoffs,
+      notes: normalizedPacket.handoffStatus,
+    });
+
+    return getJobHandoffById(nextHandoffs, normalizedPacket.id) || normalizedPacket;
+  }
+
+  async function createJobHandoffFromLeadAction(lead, options = {}) {
+    const normalizedLead = normalizeLead(lead);
+
+    if (!normalizedLead.id) {
+      setLeadFinderMessage("Save this lead before creating a Job Handoff Packet.");
+      return null;
+    }
+
+    if (!canPerform("editBid", setLeadFinderMessage)) {
+      return null;
+    }
+
+    const linkedProposalId = normalizedLead.proposalId || normalizedLead.estimateId || normalizedLead.packetId || "";
+    const linkedProposal = linkedProposalId ? savedProposals.find((proposal) => proposal.id === linkedProposalId) : null;
+    const existingHandoff =
+      (normalizedLead.jobHandoffId ? getJobHandoffById(jobHandoffs, normalizedLead.jobHandoffId) : null) ||
+      findJobHandoffForLead(jobHandoffs, normalizedLead.id);
+
+    if (existingHandoff && !options.forceDuplicate) {
+      const message = `Opened existing Job Handoff Packet for ${normalizedLead.title || "lead"}.`;
+      setLeadFinderMessage(message);
+      navigate(`/job-handoffs/${existingHandoff.id}`, { skipUnsavedCheck: true });
+      return {
+        handoff: existingHandoff,
+        lead: normalizedLead,
+        message,
+        recordId: existingHandoff.id,
+        recordType: "job_handoff",
+      };
+    }
+
+    const handoff = createJobHandoffFromLead(normalizedLead, { linkedProposal });
+    const nextHandoffs = upsertJobHandoff(jobHandoffs, handoff);
+    const linkedLead = applyLeadHandoff(normalizedLead, {
+      type: "job_handoff",
+      recordId: handoff.id,
+      label: handoff.projectName || "Job Handoff Packet",
+      notes: "Created prep-only Job Handoff Packet for future Concrete Ops review.",
+    });
+    const nextLeadFinderData = upsertLead(leadFinderData, linkedLead, leadFinderData.sources);
+    const message = `Created Job Handoff Packet for ${linkedLead.title || "lead"}.`;
+
+    await commitLeadFinderAndJobHandoffs(nextLeadFinderData, nextHandoffs, `${message} Lead link and handoff saved locally.`);
+    recordActivity({
+      action: "Job handoff created",
+      entityType: "job_handoff",
+      entityId: handoff.id,
+      entityLabel: handoff.projectName || handoff.proposalTitle || "Job handoff packet",
+      jobHandoffs: nextHandoffs,
+      leadFinder: nextLeadFinderData,
+      notes: `Lead Finder: ${linkedLead.title || linkedLead.id}`,
+    });
+    navigate(`/job-handoffs/${handoff.id}`, { skipUnsavedCheck: true });
+
+    return {
+      handoff,
+      lead: getLeadById(nextLeadFinderData, linkedLead.id) || linkedLead,
+      message,
+      recordId: handoff.id,
+      recordType: "job_handoff",
+    };
+  }
+
+  async function createJobHandoffFromProposalAction(proposal) {
+    if (!canPerform("editBid", setJobHandoffMessage)) {
+      return null;
+    }
+
+    const normalizedProposal = createEditableProposal(proposal);
+    const existingHandoff = findJobHandoffForProposal(jobHandoffs, normalizedProposal.id);
+
+    if (existingHandoff && !window.confirm("A Job Handoff Packet already exists for this proposal. Create another packet anyway?")) {
+      const message = "Opened existing Job Handoff Packet.";
+      setJobHandoffMessage(message);
+      navigate(`/job-handoffs/${existingHandoff.id}`, { skipUnsavedCheck: true });
+      return { cancelled: true, handoff: existingHandoff, message };
+    }
+
+    const handoff = createJobHandoffFromProposal(normalizedProposal);
+    const nextHandoffs = upsertJobHandoff(jobHandoffs, handoff);
+
+    await commitJobHandoffs(nextHandoffs, `Created Job Handoff Packet for ${handoff.projectName || "proposal"} locally.`);
+    recordActivity({
+      action: "Job handoff created",
+      entityType: "job_handoff",
+      entityId: handoff.id,
+      entityLabel: handoff.projectName || "Job handoff packet",
+      jobHandoffs: nextHandoffs,
+      notes: `Proposal: ${normalizedProposal.proposalNumber || normalizedProposal.id}`,
+    });
+    navigate(`/job-handoffs/${handoff.id}`, { skipUnsavedCheck: true });
+
+    return { handoff, message: `Created Job Handoff Packet for ${handoff.projectName || "proposal"}.` };
+  }
+
   async function handleLeadHandoff(lead, actionType) {
     const normalizedLead = normalizeLead(lead);
 
@@ -3324,6 +3534,10 @@ export default function App() {
 
     if (actionType === "contact") {
       return await createOrLinkContactFromLead(normalizedLead);
+    }
+
+    if (actionType === "job_handoff") {
+      return await createJobHandoffFromLeadAction(normalizedLead);
     }
 
     if (!canPerform("createProposal", setLeadFinderMessage)) {
@@ -4853,11 +5067,11 @@ export default function App() {
 
   async function commitPriceLibrary(nextLibrary, message = "Price library saved locally.") {
     const normalizedLibrary = normalizePriceLibrary(nextLibrary);
-    const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(companySettings, normalizedLibrary, savedBids, activityLog);
+    const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(companySettings, normalizedLibrary, savedBids, activityLog, leadFinderData, jobHandoffs);
 
     setPriceLibrary(normalizedLibrary);
     setCompanySettings(settingsWithLibrary);
-    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, normalizedLibrary, savedBids, activityLog));
+    setSettingsDraft((currentSettings) => getSettingsWithPriceLibraryAndBids(currentSettings, normalizedLibrary, savedBids, activityLog, leadFinderData, jobHandoffs));
     setPriceLibraryMessage(getCloudReadyMessage(authUser, `${message} Syncing to cloud settings...`, message));
 
     if (canUseCloudSync(authUser)) {
@@ -6726,7 +6940,7 @@ export default function App() {
       }
 
       if (type === "settings") {
-        downloadJsonFile(createCompanySettingsExport(getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog)), getCompanySettingsBackupFileName());
+        downloadJsonFile(createCompanySettingsExport(getSettingsWithPriceLibraryAndBids(companySettings, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs)), getCompanySettingsBackupFileName());
         setBackupMessage("Exported company settings.");
         recordActivity({
           action: "Backup exported",
@@ -6765,7 +6979,7 @@ export default function App() {
 
       if (type === "full") {
         downloadJsonFile(
-          createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary, savedBids, activityLog, leadFinderData),
+          createFullAppBackup(savedProposals, companySettings, savedContacts, priceLibrary, savedBids, activityLog, leadFinderData, jobHandoffs),
           getFullBackupFileName(),
         );
         setBackupMessage(
@@ -6843,11 +7057,15 @@ export default function App() {
         const importedPriceLibrary = getPriceLibraryFromSettings(importedSettings, priceLibrary);
         const importedBids = getBidsFromSettings(importedSettings, savedBids);
         const importedActivityLog = getActivityLogFromSettings(importedSettings, activityLog);
-        const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog);
+        const importedLeadFinder = getLeadFinderFromSettings(importedSettings, leadFinderData);
+        const importedJobHandoffs = getJobHandoffsFromSettings(importedSettings, jobHandoffs);
+        const settingsWithLibrary = getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog, importedLeadFinder, importedJobHandoffs);
 
         setPriceLibrary(importedPriceLibrary);
         setSavedBids(importedBids);
         setActivityLog(importedActivityLog);
+        setLeadFinderData(importedLeadFinder);
+        setJobHandoffs(importedJobHandoffs);
         setCompanySettings(settingsWithLibrary);
         setSettingsDraft(settingsWithLibrary);
         setBackupMessage("Imported company settings. New proposals will use the restored defaults.");
@@ -6858,6 +7076,8 @@ export default function App() {
           entityLabel: "Company settings import",
           activityLog: importedActivityLog,
           bids: importedBids,
+          jobHandoffs: importedJobHandoffs,
+          leadFinder: importedLeadFinder,
           priceLibrary: importedPriceLibrary,
           settings: settingsWithLibrary,
         });
@@ -6946,17 +7166,23 @@ export default function App() {
                 sources: [...leadFinderData.sources, ...importedBackup.leadFinder.sources],
                 leads: [...leadFinderData.leads, ...importedBackup.leadFinder.leads],
               });
+        const nextJobHandoffs =
+          mode === "replace"
+            ? normalizeJobHandoffs(importedBackup.jobHandoffs)
+            : mergeJobHandoffs(jobHandoffs, importedBackup.jobHandoffs);
         const importedSettings = getSettingsWithPriceLibraryAndBids(
           importedBackup.companySettings,
           importedPriceLibrary,
           nextBids,
           nextActivityLog,
           nextLeadFinder,
+          nextJobHandoffs,
         );
 
         setPriceLibrary(importedPriceLibrary);
         setSavedBids(nextBids);
         setLeadFinderData(nextLeadFinder);
+        setJobHandoffs(nextJobHandoffs);
         setActivityLog(nextActivityLog);
         setCompanySettings(importedSettings);
         setSettingsDraft(importedSettings);
@@ -6977,6 +7203,7 @@ export default function App() {
           notes: `${mode}: ${importedBackup.proposals.length} proposals, ${nextActivityLog.length} activity records`,
           activityLog: nextActivityLog,
           bids: nextBids,
+          jobHandoffs: nextJobHandoffs,
           leadFinder: nextLeadFinder,
           priceLibrary: importedPriceLibrary,
           settings: importedSettings,
@@ -7191,6 +7418,18 @@ export default function App() {
           onScoreLeadWithRules={scoreLeadWithRules}
           onUpdateLeadReviewStatus={updateLeadReviewStatus}
           onUpdateLeadStatus={updateLeadStatus}
+          jobHandoffs={jobHandoffs}
+          onCreateJobHandoff={createJobHandoffFromLeadAction}
+        />
+      ) : isJobHandoffsView ? (
+        <JobHandoffsView
+          handoffs={jobHandoffs}
+          message={jobHandoffMessage}
+          permissions={permissions}
+          route={route}
+          onBackToDashboard={() => navigate("/dashboard")}
+          onNavigate={navigate}
+          onSaveHandoff={saveJobHandoff}
         />
       ) : isBidsView ? (
         <BidsRouteErrorBoundary onBackToDashboard={() => navigate("/dashboard")} onNewBid={startNewBid} resetKey={route.path}>
@@ -7338,6 +7577,7 @@ export default function App() {
                 showStartBlank={false}
                 permissions={permissions}
                 onBackToList={() => navigate("/proposals")}
+                onCreateJobHandoff={() => createJobHandoffFromProposalAction(proposalDraft)}
                 onCreateRevision={createRevision}
                 onCreatePacketRecord={saveSubmittedPacketRecord}
                 onDuplicate={() => duplicateCurrentProposal(proposalDraft)}
@@ -10682,6 +10922,7 @@ function ProposalActionBar({
   showStartBlank = false,
   onBackToList,
   onCreatePacketRecord,
+  onCreateJobHandoff,
   onCreateRevision,
   onDuplicate,
   onOpenPrintView,
@@ -10752,6 +10993,11 @@ function ProposalActionBar({
         {!isPrintView ? (
           <button type="button" title="Create the next revision while preserving the current proposal." onClick={onCreateRevision} disabled={!permissions.editProposal}>
             Create Revision
+          </button>
+        ) : null}
+        {!isPrintView ? (
+          <button type="button" title="Prepare a prep-only Job Handoff Packet for future operations review." onClick={onCreateJobHandoff} disabled={!permissions.editBid}>
+            Create Job Handoff Packet
           </button>
         ) : null}
         {!isPrintView ? (
@@ -13957,6 +14203,14 @@ function parseRoute(pathname) {
     return { view: "bids", path: "/bids" };
   }
 
+  if (segments[0] === "job-handoffs") {
+    if (segments[1]) {
+      return { view: "jobHandoffs", section: "detail", id: decodeURIComponent(segments[1]), path: `/job-handoffs/${segments[1]}` };
+    }
+
+    return { view: "jobHandoffs", section: "list", path: "/job-handoffs" };
+  }
+
   if (segments[0] === "lead-finder") {
     if (segments[1] === "command-center") {
       return { view: "leadFinder", section: "commandCenter", path: "/lead-finder/command-center" };
@@ -14621,6 +14875,38 @@ function saveLeadFinderData(data) {
   }
 }
 
+function loadJobHandoffsData() {
+  const handoffSources = [];
+
+  try {
+    const storedValue = window.localStorage.getItem(jobHandoffsStorageKey);
+
+    if (storedValue) {
+      handoffSources.push(JSON.parse(storedValue));
+    }
+
+    const storedSettings = window.localStorage.getItem(companySettingsStorageKey);
+
+    if (storedSettings) {
+      const parsedSettings = JSON.parse(storedSettings);
+
+      handoffSources.push(extractJobHandoffsFromSettingsPaths(parsedSettings));
+    }
+  } catch {
+    // Fall through to any Job Handoff data collected before malformed local storage was encountered.
+  }
+
+  return mergeJobHandoffs(...handoffSources);
+}
+
+function saveJobHandoffsData(handoffs) {
+  try {
+    window.localStorage.setItem(jobHandoffsStorageKey, JSON.stringify(normalizeJobHandoffs(handoffs)));
+  } catch {
+    // Local Job Handoff saving is best-effort for this bridge phase.
+  }
+}
+
 function loadPriceLibrary() {
   try {
     const storedValue = window.localStorage.getItem(priceLibraryStorageKey);
@@ -14664,8 +14950,9 @@ function getSettingsWithPriceLibrary(settings = {}, priceLibrary = []) {
   });
 }
 
-function getSettingsWithPriceLibraryAndBids(settings = {}, priceLibrary = [], bids = [], activityLog = [], leadFinderData = null) {
+function getSettingsWithPriceLibraryAndBids(settings = {}, priceLibrary = [], bids = [], activityLog = [], leadFinderData = null, jobHandoffsData = null) {
   const normalizedLeadFinderData = mergeLeadFinderData(extractLeadFinderFromSettingsPaths(settings), leadFinderData);
+  const normalizedJobHandoffs = mergeJobHandoffs(extractJobHandoffsFromSettingsPaths(settings), jobHandoffsData);
 
   return normalizeCompanySettings({
     ...(settings || {}),
@@ -14674,9 +14961,11 @@ function getSettingsWithPriceLibraryAndBids(settings = {}, priceLibrary = [], bi
     company: isPlainObject(settings?.company)
       ? {
           ...settings.company,
+          jobHandoffs: mergeJobHandoffs(settings.company.jobHandoffs, normalizedJobHandoffs),
           leadFinder: mergeLeadFinderData(settings.company.leadFinder, normalizedLeadFinderData),
         }
       : settings?.company,
+    jobHandoffs: normalizedJobHandoffs,
     leadFinder: normalizedLeadFinderData,
     priceLibrary: normalizePriceLibrary(priceLibrary),
   });
@@ -14705,6 +14994,15 @@ function getLeadFinderFromSettings(settings = {}, fallbackLeadFinder = {}) {
 function extractLeadFinderFromSettingsPaths(settings = {}) {
   const source = isPlainObject(settings) ? settings : {};
   return mergeLeadFinderData(source.leadFinder, source.company?.leadFinder);
+}
+
+function getJobHandoffsFromSettings(settings = {}, fallbackJobHandoffs = []) {
+  return mergeJobHandoffs(fallbackJobHandoffs, extractJobHandoffsFromSettingsPaths(settings));
+}
+
+function extractJobHandoffsFromSettingsPaths(settings = {}) {
+  const source = isPlainObject(settings) ? settings : {};
+  return mergeJobHandoffs(source.jobHandoffs, source.company?.jobHandoffs);
 }
 
 function isDemoRecord(record = {}) {
@@ -14776,11 +15074,12 @@ function createPriceLibraryExport(priceLibrary = []) {
   };
 }
 
-function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = [], bids = [], activityLog = [], leadFinderData = {}) {
+function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = [], bids = [], activityLog = [], leadFinderData = {}, jobHandoffsData = []) {
   const normalizedPriceLibrary = normalizePriceLibrary(priceLibrary);
   const normalizedBids = normalizeBids(bids);
   const normalizedActivityLog = normalizeActivityLog(activityLog);
   const normalizedLeadFinderData = normalizeLeadFinderData(leadFinderData);
+  const normalizedJobHandoffs = normalizeJobHandoffs(jobHandoffsData);
 
   return {
     backupVersion,
@@ -14793,16 +15092,18 @@ function createFullAppBackup(proposals, settings, contacts = [], priceLibrary = 
       contacts: contactsStorageKey,
       bids: bidsStorageKey,
       leadFinder: leadFinderStorageKey,
+      jobHandoffs: jobHandoffsStorageKey,
       priceLibrary: priceLibraryStorageKey,
       activityLog: activityLogStorageKey,
     },
     proposals: cloneObject(proposals),
     companySettings: cloneObject(
-      getSettingsWithPriceLibraryAndBids(settings, normalizedPriceLibrary, normalizedBids, normalizedActivityLog, normalizedLeadFinderData),
+      getSettingsWithPriceLibraryAndBids(settings, normalizedPriceLibrary, normalizedBids, normalizedActivityLog, normalizedLeadFinderData, normalizedJobHandoffs),
     ),
     contacts: cloneObject(contacts),
     bids: cloneObject(normalizedBids),
     leadFinder: cloneObject(normalizedLeadFinderData),
+    jobHandoffs: cloneObject(normalizedJobHandoffs),
     priceLibrary: cloneObject(normalizedPriceLibrary),
     activityLog: cloneObject(normalizedActivityLog),
   };
@@ -14913,6 +15214,10 @@ function parseLeadFinderImport(importedJson) {
   return normalizeLeadFinderData(leadFinder);
 }
 
+function parseJobHandoffsImport(importedJson) {
+  return normalizeJobHandoffs(importedJson?.jobHandoffs || importedJson?.companySettings?.jobHandoffs || importedJson?.companySettings?.company?.jobHandoffs);
+}
+
 function parseFullAppBackupImport(importedJson) {
   if (!isPlainObject(importedJson) || (!Array.isArray(importedJson.proposals) && !isPlainObject(importedJson.companySettings))) {
     throw new Error("This file does not look like a full app backup.");
@@ -14929,13 +15234,15 @@ function parseFullAppBackupImport(importedJson) {
     ? getActivityLogFromSettings(importedSettings, importedJson.activityLog)
     : [];
   const importedLeadFinder = parseLeadFinderImport(importedJson);
+  const importedJobHandoffs = parseJobHandoffsImport(importedJson);
 
   return {
     proposals: parseProposalCollectionImport(importedJson),
-    companySettings: getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog, importedLeadFinder),
+    companySettings: getSettingsWithPriceLibraryAndBids(importedSettings, importedPriceLibrary, importedBids, importedActivityLog, importedLeadFinder, importedJobHandoffs),
     contacts: Array.isArray(importedJson.contacts) ? parseContactCollectionImport(importedJson) : [],
     bids: importedBids,
     leadFinder: importedLeadFinder,
+    jobHandoffs: importedJobHandoffs,
     priceLibrary: importedPriceLibrary,
     activityLog: importedActivityLog,
   };
@@ -16975,6 +17282,7 @@ function getDefaultCompanySettings() {
     defaultWarrantyNote: "",
     defaultSignatureBlock: terms.acceptance,
     proposalPdfStyle: getDefaultProposalPdfStyleSettings(),
+    jobHandoffs: normalizeJobHandoffs(),
     leadFinder: normalizeLeadFinderData(),
   };
 }
@@ -16982,6 +17290,7 @@ function getDefaultCompanySettings() {
 function normalizeCompanySettings(settings = {}) {
   const defaults = getDefaultCompanySettings();
   const normalizedLeadFinderData = mergeLeadFinderData(settings.leadFinder, settings.company?.leadFinder, defaults.leadFinder);
+  const normalizedJobHandoffs = mergeJobHandoffs(settings.jobHandoffs, settings.company?.jobHandoffs, defaults.jobHandoffs);
 
   return {
     ...defaults,
@@ -16989,6 +17298,7 @@ function normalizeCompanySettings(settings = {}) {
     company: isPlainObject(settings.company)
       ? {
           ...settings.company,
+          jobHandoffs: mergeJobHandoffs(settings.company.jobHandoffs, normalizedJobHandoffs),
           leadFinder: mergeLeadFinderData(settings.company.leadFinder, normalizedLeadFinderData),
         }
       : settings.company,
@@ -17040,6 +17350,7 @@ function normalizeCompanySettings(settings = {}) {
     defaultWarrantyLimitation: hasTextValue(settings.defaultWarrantyLimitation)
       ? settings.defaultWarrantyLimitation
       : defaults.defaultWarrantyLimitation,
+    jobHandoffs: normalizedJobHandoffs,
     defaultGcScopeControlNote: hasTextValue(settings.defaultGcScopeControlNote)
       ? settings.defaultGcScopeControlNote
       : defaults.defaultGcScopeControlNote,

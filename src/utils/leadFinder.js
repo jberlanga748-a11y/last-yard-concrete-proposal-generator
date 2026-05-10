@@ -525,6 +525,7 @@ export function createEmptyLead(seed = {}) {
     proposalId: "",
     packetId: "",
     contactId: "",
+    jobHandoffId: "",
     handoffHistory: [],
     lastContactDate: "",
     lastContactMethod: "",
@@ -698,6 +699,7 @@ export function normalizeLead(lead = {}) {
     proposalId: toSafeText(leadRecord.proposalId),
     packetId: toSafeText(leadRecord.packetId),
     contactId: toSafeText(leadRecord.contactId),
+    jobHandoffId: toSafeText(leadRecord.jobHandoffId),
     handoffHistory: normalizeLeadHandoffHistory(leadRecord.handoffHistory),
     lastContactDate: toDateInputValue(leadRecord.lastContactDate),
     lastContactMethod: normalizeOption(leadRecord.lastContactMethod, LEAD_CONTACT_METHODS, ""),
@@ -1251,6 +1253,8 @@ export function applyLeadHandoff(lead = {}, handoff = {}) {
     nextLead.status = "Proposal Started";
   } else if (type === "contact") {
     nextLead.contactId = recordId;
+  } else if (type === "job_handoff") {
+    nextLead.jobHandoffId = recordId;
   }
 
   nextLead.handoffHistory = normalizeLeadHandoffHistory([
