@@ -891,13 +891,31 @@ create table if not exists public.job_handoffs (
   schedule_notes text,
   document_links jsonb not null default '[]'::jsonb,
   handoff_status text,
+  ops_readiness_score numeric,
+  ops_readiness_label text,
+  ops_readiness_checklist jsonb not null default '[]'::jsonb,
+  ops_readiness_issues jsonb not null default '[]'::jsonb,
+  ops_readiness_last_checked_at timestamptz,
+  ops_readiness_override boolean not null default false,
+  ops_readiness_override_reason text,
+  ops_readiness_tbd_fields jsonb not null default '[]'::jsonb,
   handoff_data jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
+alter table public.job_handoffs add column if not exists ops_readiness_score numeric;
+alter table public.job_handoffs add column if not exists ops_readiness_label text;
+alter table public.job_handoffs add column if not exists ops_readiness_checklist jsonb not null default '[]'::jsonb;
+alter table public.job_handoffs add column if not exists ops_readiness_issues jsonb not null default '[]'::jsonb;
+alter table public.job_handoffs add column if not exists ops_readiness_last_checked_at timestamptz;
+alter table public.job_handoffs add column if not exists ops_readiness_override boolean not null default false;
+alter table public.job_handoffs add column if not exists ops_readiness_override_reason text;
+alter table public.job_handoffs add column if not exists ops_readiness_tbd_fields jsonb not null default '[]'::jsonb;
+
 create index if not exists job_handoffs_company_id_idx on public.job_handoffs(company_id);
 create index if not exists job_handoffs_company_status_idx on public.job_handoffs(company_id, handoff_status);
+create index if not exists job_handoffs_company_ops_readiness_idx on public.job_handoffs(company_id, ops_readiness_label);
 create index if not exists job_handoffs_source_lead_id_idx on public.job_handoffs(source_lead_id);
 create index if not exists job_handoffs_source_proposal_id_idx on public.job_handoffs(source_proposal_id);
 

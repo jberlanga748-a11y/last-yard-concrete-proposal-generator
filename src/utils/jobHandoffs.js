@@ -7,7 +7,15 @@ export const JOB_HANDOFF_STATUSES = [
   "Cancelled",
 ];
 
+export const JOB_HANDOFF_OPS_READINESS_LABELS = ["Not Ready", "Needs Review", "Ready"];
+
+export const JOB_HANDOFF_TBD_FIELDS = ["startDateTarget", "crewNotes", "scheduleNotes"];
+
 const READY_HANDOFF_STATUSES = new Set(["Ready for Ops Review", "Ready to Create Job"]);
+const READY_OPS_LABEL = "Ready";
+const NEEDS_REVIEW_OPS_LABEL = "Needs Review";
+const NOT_READY_OPS_LABEL = "Not Ready";
+const ACCEPTABLE_MISSING_INFO_STATUSES = new Set(["Ready", "Resolved", "Complete", "Not Applicable", "N/A"]);
 
 export function createJobHandoffId(prefix = "job-handoff") {
   const safePrefix =
@@ -63,6 +71,14 @@ export function createEmptyJobHandoff(seed = {}) {
     scheduleNotes: "",
     documentLinks: [],
     handoffStatus: "Draft",
+    opsReadinessScore: "",
+    opsReadinessLabel: "",
+    opsReadinessChecklist: [],
+    opsReadinessIssues: [],
+    opsReadinessLastCheckedAt: "",
+    opsReadinessOverride: false,
+    opsReadinessOverrideReason: "",
+    opsReadinessTbdFields: [],
     createdAt: now,
     updatedAt: now,
     ...seed,
@@ -111,6 +127,14 @@ export function normalizeJobHandoff(packet = {}) {
     scheduleNotes: toSafeText(source.scheduleNotes),
     documentLinks: normalizeDocumentLinks(source.documentLinks),
     handoffStatus: normalizeOption(source.handoffStatus, JOB_HANDOFF_STATUSES, "Draft"),
+    opsReadinessScore: clampScoreOrBlank(source.opsReadinessScore),
+    opsReadinessLabel: normalizeOption(source.opsReadinessLabel, JOB_HANDOFF_OPS_READINESS_LABELS, ""),
+    opsReadinessChecklist: normalizeOpsReadinessChecklist(source.opsReadinessChecklist),
+    opsReadinessIssues: normalizeTextList(source.opsReadinessIssues),
+    opsReadinessLastCheckedAt: toIsoDateTime(source.opsReadinessLastCheckedAt),
+    opsReadinessOverride: source.opsReadinessOverride === true,
+    opsReadinessOverrideReason: toSafeText(source.opsReadinessOverrideReason),
+    opsReadinessTbdFields: normalizeTbdFields(source.opsReadinessTbdFields),
     createdAt,
     updatedAt: toIsoDateTime(source.updatedAt) || createdAt,
   };
@@ -270,8 +294,10 @@ export function filterJobHandoffs(handoffs = [], filters = {}) {
   const serviceFilter = toSafeText(filters.serviceTypeFilter || "all");
   const cityFilter = toSafeText(filters.cityFilter).toLowerCase();
   const readyFilter = toSafeText(filters.readyFilter || "all");
+  const readinessFilter = toSafeText(filters.opsReadinessFilter || filters.readinessFilter || "all");
+  const sortOption = toSafeText(filters.sortOption || "updated_desc");
 
-  return normalizedPackets.filter((packet) => {
+  const filteredPackets = normalizedPackets.filter((packet) => {
     if (statusFilter !== "all" && packet.handoffStatus !== statusFilter) {
       return false;
     }
@@ -289,6 +315,22 @@ export function filterJobHandoffs(handoffs = [], filters = {}) {
     }
 
     if (readyFilter === "not_ready" && READY_HANDOFF_STATUSES.has(packet.handoffStatus)) {
+      return false;
+    }
+
+    if (readinessFilter === "ready" && packet.opsReadinessLabel !== READY_OPS_LABEL) {
+      return false;
+    }
+
+    if (readinessFilter === "needs_review" && packet.opsReadinessLabel !== NEEDS_REVIEW_OPS_LABEL) {
+      return false;
+    }
+
+    if (readinessFilter === "not_ready" && packet.opsReadinessLabel !== NOT_READY_OPS_LABEL) {
+      return false;
+    }
+
+    if (readinessFilter === "override" && packet.opsReadinessOverride !== true) {
       return false;
     }
 
@@ -310,6 +352,8 @@ export function filterJobHandoffs(handoffs = [], filters = {}) {
       .toLowerCase()
       .includes(searchText);
   });
+
+  return sortJobHandoffs(filteredPackets, sortOption);
 }
 
 export function getJobHandoffStats(handoffs = []) {
@@ -321,9 +365,119 @@ export function getJobHandoffStats(handoffs = []) {
     readyForOpsReview: packets.filter((packet) => packet.handoffStatus === "Ready for Ops Review").length,
     waitingOnCustomer: packets.filter((packet) => packet.handoffStatus === "Waiting on Customer / GC").length,
     readyToCreateJob: packets.filter((packet) => packet.handoffStatus === "Ready to Create Job").length,
+    opsReady: packets.filter((packet) => packet.opsReadinessLabel === READY_OPS_LABEL || packet.opsReadinessOverride).length,
+    opsNotReady: packets.filter((packet) => packet.opsReadinessLabel === NOT_READY_OPS_LABEL).length,
+    opsNeedsReview: packets.filter((packet) => packet.opsReadinessLabel === NEEDS_REVIEW_OPS_LABEL).length,
+    opsOverride: packets.filter((packet) => packet.opsReadinessOverride).length,
     createdLater: packets.filter((packet) => packet.handoffStatus === "Created in Concrete Ops Later").length,
     cancelled: packets.filter((packet) => packet.handoffStatus === "Cancelled").length,
   };
+}
+
+export function toggleJobHandoffOpsTbdField(packet = {}, field = "") {
+  const normalizedPacket = normalizeJobHandoff(packet);
+  const normalizedField = normalizeOption(field, JOB_HANDOFF_TBD_FIELDS, "");
+
+  if (!normalizedField) {
+    return normalizedPacket;
+  }
+
+  const nextTbdFields = normalizedPacket.opsReadinessTbdFields.includes(normalizedField)
+    ? normalizedPacket.opsReadinessTbdFields.filter((item) => item !== normalizedField)
+    : [...normalizedPacket.opsReadinessTbdFields, normalizedField];
+
+  return normalizeJobHandoff({
+    ...normalizedPacket,
+    opsReadinessTbdFields: nextTbdFields,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+export function calculateJobHandoffOpsReadiness(packet = {}, options = {}) {
+  const normalizedPacket = normalizeJobHandoff(packet);
+  const checkedAt = toIsoDateTime(options.checkedAt) || new Date().toISOString();
+  const checklist = buildOpsReadinessChecklist(normalizedPacket);
+  const passedCount = checklist.filter((item) => item.passed).length;
+  const score = Math.round((passedCount / checklist.length) * 100);
+  const hasBlockingIssue = checklist.some((item) => item.id === "follow_up_not_waiting" && !item.passed);
+  const calculatedLabel = hasBlockingIssue
+    ? score >= 60
+      ? NEEDS_REVIEW_OPS_LABEL
+      : NOT_READY_OPS_LABEL
+    : score >= 85
+      ? READY_OPS_LABEL
+      : score >= 60
+        ? NEEDS_REVIEW_OPS_LABEL
+        : NOT_READY_OPS_LABEL;
+  const issues = checklist.filter((item) => !item.passed).map((item) => item.issue || item.label);
+  const label = normalizedPacket.opsReadinessOverride ? READY_OPS_LABEL : calculatedLabel;
+
+  return normalizeJobHandoff({
+    ...normalizedPacket,
+    opsReadinessScore: score,
+    opsReadinessLabel: label,
+    opsReadinessChecklist: checklist,
+    opsReadinessIssues: issues,
+    opsReadinessLastCheckedAt: checkedAt,
+    updatedAt: checkedAt,
+  });
+}
+
+export function applyJobHandoffOpsReadinessOverride(packet = {}, reason = "", options = {}) {
+  const overrideReason = toSafeText(reason);
+
+  if (!overrideReason) {
+    throw new Error("Enter an override reason before overriding Concrete Ops readiness.");
+  }
+
+  const checkedPacket = calculateJobHandoffOpsReadiness(packet, options);
+  const now = toIsoDateTime(options.checkedAt) || new Date().toISOString();
+
+  return normalizeJobHandoff({
+    ...checkedPacket,
+    opsReadinessLabel: READY_OPS_LABEL,
+    opsReadinessOverride: true,
+    opsReadinessOverrideReason: overrideReason,
+    opsReadinessLastCheckedAt: checkedPacket.opsReadinessLastCheckedAt || now,
+    updatedAt: now,
+  });
+}
+
+export function buildOpsReadinessChecklist(packet = {}) {
+  const normalizedPacket = normalizeJobHandoff(packet);
+  const hasProjectLocation = Boolean(normalizedPacket.projectAddress || normalizedPacket.city || normalizedPacket.state);
+  const hasSourceLink = Boolean(normalizedPacket.sourceProposalId || normalizedPacket.sourceEstimateId || normalizedPacket.sourcePacketId);
+  const hasIncludedOrProposalScope = normalizedPacket.includedScope.length > 0 || Boolean(normalizedPacket.scopeSummary);
+  const exclusionsReviewed = normalizedPacket.exclusions.length > 0 || normalizedPacket.assumptions.length > 0;
+  const missingInfoResolved = ACCEPTABLE_MISSING_INFO_STATUSES.has(normalizedPacket.missingInfoStatus);
+  const proposalReadinessAcceptable =
+    normalizedPacket.proposalReadinessLabel === READY_OPS_LABEL ||
+    normalizedPacket.proposalReadinessScore >= 85;
+  const startDateReady = Boolean(normalizedPacket.startDateTarget) || normalizedPacket.opsReadinessTbdFields.includes("startDateTarget");
+  const crewReady = Boolean(normalizedPacket.crewNotes) || normalizedPacket.opsReadinessTbdFields.includes("crewNotes");
+  const scheduleReady = Boolean(normalizedPacket.scheduleNotes) || normalizedPacket.opsReadinessTbdFields.includes("scheduleNotes");
+
+  return [
+    createChecklistItem("customer_name", "Customer name exists", Boolean(normalizedPacket.customerName), "Add the customer or company name."),
+    createChecklistItem("contact_name", "Contact name exists", Boolean(normalizedPacket.contactName), "Add the primary contact name."),
+    createChecklistItem("contact_method", "Contact email or phone exists", Boolean(normalizedPacket.contactEmail || normalizedPacket.contactPhone), "Add a contact email or phone number."),
+    createChecklistItem("project_name", "Project name exists", Boolean(normalizedPacket.projectName), "Add the project name."),
+    createChecklistItem("project_location", "Project address or city/state exists", hasProjectLocation, "Add a project address or city/state."),
+    createChecklistItem("service_type", "Service type exists", Boolean(normalizedPacket.serviceType), "Add the service type."),
+    createChecklistItem("project_type", "Project type exists", Boolean(normalizedPacket.projectType), "Add the project type."),
+    createChecklistItem("scope_summary", "Scope summary exists", Boolean(normalizedPacket.scopeSummary), "Add a scope summary."),
+    createChecklistItem("included_scope", "Included scope exists or proposal scope exists", hasIncludedOrProposalScope, "Add included scope or proposal scope."),
+    createChecklistItem("exclusions_assumptions", "Exclusions/assumptions reviewed", exclusionsReviewed, "Review exclusions or assumptions."),
+    createChecklistItem("source_link", "Proposal/estimate/packet link exists if available", hasSourceLink, "Link the estimate, proposal, or packet when available."),
+    createChecklistItem("missing_info_ready", "Missing info status is Ready or resolved", missingInfoResolved, "Resolve missing info before creating a job."),
+    createChecklistItem("proposal_readiness_ready", "Proposal readiness label is Ready or acceptable", proposalReadinessAcceptable, "Confirm proposal readiness is acceptable."),
+    createChecklistItem("follow_up_not_waiting", "Follow-up status is not Waiting on Response", normalizedPacket.followUpStatus !== "Waiting on Response", "Follow-up is still waiting on response."),
+    createChecklistItem("operations_notes", "Operations notes added", Boolean(normalizedPacket.operationsNotes), "Add operations notes for the crew/ops review."),
+    createChecklistItem("start_date", "Start date target added or marked TBD", startDateReady, "Add a target start date or mark it TBD.", "startDateTarget"),
+    createChecklistItem("crew_notes", "Crew notes added or marked TBD", crewReady, "Add crew notes or mark them TBD.", "crewNotes"),
+    createChecklistItem("schedule_notes", "Schedule notes added or marked TBD", scheduleReady, "Add schedule notes or mark them TBD.", "scheduleNotes"),
+    createChecklistItem("handoff_status", "Handoff status is Ready for Ops Review or Ready to Create Job", READY_HANDOFF_STATUSES.has(normalizedPacket.handoffStatus), "Set handoff status to Ready for Ops Review or Ready to Create Job."),
+  ];
 }
 
 export function formatJobHandoffSummary(packet = {}) {
@@ -358,6 +512,75 @@ export function formatJobHandoffSummary(packet = {}) {
   ];
 
   return lines.filter(Boolean).join("\n\n");
+}
+
+function clampScoreOrBlank(value) {
+  if (value === "" || value === null || value === undefined) {
+    return "";
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : "";
+}
+
+function normalizeOpsReadinessChecklist(checklist = []) {
+  return (Array.isArray(checklist) ? checklist : [])
+    .filter(isPlainObject)
+    .map((item) => ({
+      id: toSafeText(item.id),
+      label: toSafeText(item.label),
+      passed: item.passed === true,
+      issue: toSafeText(item.issue),
+      tbdField: normalizeOption(item.tbdField, JOB_HANDOFF_TBD_FIELDS, ""),
+    }))
+    .filter((item) => item.id && item.label);
+}
+
+function normalizeTbdFields(value = []) {
+  return Array.from(
+    new Set((Array.isArray(value) ? value : normalizeTextList(value)).map((field) => normalizeOption(field, JOB_HANDOFF_TBD_FIELDS, "")).filter(Boolean)),
+  );
+}
+
+function createChecklistItem(id, label, passed, issue, tbdField = "") {
+  return {
+    id,
+    label,
+    passed: Boolean(passed),
+    issue: passed ? "" : toSafeText(issue),
+    tbdField: normalizeOption(tbdField, JOB_HANDOFF_TBD_FIELDS, ""),
+  };
+}
+
+function sortJobHandoffs(handoffs = [], sortOption = "updated_desc") {
+  const rankByReadyFirst = {
+    Ready: 0,
+    "Needs Review": 1,
+    "Not Ready": 2,
+    "": 3,
+  };
+  const rankByNeedsReviewFirst = {
+    "Needs Review": 0,
+    "Not Ready": 1,
+    Ready: 2,
+    "": 3,
+  };
+
+  return [...handoffs].sort((a, b) => {
+    if (sortOption === "ready_first") {
+      return (rankByReadyFirst[a.opsReadinessLabel] ?? 3) - (rankByReadyFirst[b.opsReadinessLabel] ?? 3);
+    }
+
+    if (sortOption === "needs_review_first") {
+      return (rankByNeedsReviewFirst[a.opsReadinessLabel] ?? 3) - (rankByNeedsReviewFirst[b.opsReadinessLabel] ?? 3);
+    }
+
+    if (sortOption === "recently_checked") {
+      return getTimeValue(b.opsReadinessLastCheckedAt) - getTimeValue(a.opsReadinessLastCheckedAt);
+    }
+
+    return getTimeValue(b.updatedAt || b.createdAt) - getTimeValue(a.updatedAt || a.createdAt);
+  });
 }
 
 function buildLeadInternalNotes(lead = {}) {

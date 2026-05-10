@@ -67,6 +67,9 @@ test("lead finder screens include dashboard sources inbox new lead and detail be
   assert.match(leadFinderViewSource, /Leads Missing Info/);
   assert.match(leadFinderViewSource, /Follow-Ups Due/);
   assert.match(leadFinderViewSource, /Ready To Bid \/ Ready To Proposal/);
+  assert.match(leadFinderViewSource, /Ready for Concrete Ops/);
+  assert.match(leadFinderViewSource, /Handoffs Ready for Concrete Ops/);
+  assert.match(leadFinderViewSource, /Handoffs Not Ready/);
   assert.match(leadFinderViewSource, /Open Command Center/);
   assert.match(leadFinderViewSource, /Mark Checked/);
   assert.match(leadFinderViewSource, /Add Lead From This Source/);
@@ -131,6 +134,14 @@ test("job handoff packet bridge adds prep-only routes, UI, and persistence", () 
   assert.match(jobHandoffsViewSource, /Proposal \/ Estimate Links/);
   assert.match(jobHandoffsViewSource, /Missing Info \/ Readiness/);
   assert.match(jobHandoffsViewSource, /Follow-Up Status/);
+  assert.match(jobHandoffsViewSource, /Concrete Ops Readiness/);
+  assert.match(jobHandoffsViewSource, /Check Ops Readiness/);
+  assert.match(jobHandoffsViewSource, /Override Readiness/);
+  assert.match(jobHandoffsViewSource, /Handoffs Ready for Concrete Ops/);
+  assert.match(jobHandoffsViewSource, /Handoffs Not Ready/);
+  assert.match(jobHandoffsSource, /calculateJobHandoffOpsReadiness/);
+  assert.match(jobHandoffsSource, /opsReadinessChecklist/);
+  assert.match(jobHandoffsSource, /opsReadinessOverrideReason/);
   assert.match(jobHandoffsViewSource, /Operations Notes/);
   assert.match(jobHandoffsViewSource, /Schedule \/ Crew Notes/);
   assert.match(jobHandoffsViewSource, /Copy Job Handoff Summary/);
@@ -217,6 +228,10 @@ test("Supabase schema includes future lead finder tables and RLS policies", () =
   assert.match(schemaSource, /job_handoff_id text/);
   assert.match(schemaSource, /create table if not exists public\.job_handoffs/);
   assert.match(schemaSource, /job_handoffs_company_status_idx/);
+  assert.match(schemaSource, /ops_readiness_score numeric/);
+  assert.match(schemaSource, /ops_readiness_checklist jsonb/);
+  assert.match(schemaSource, /ops_readiness_override boolean/);
+  assert.match(schemaSource, /job_handoffs_company_ops_readiness_idx/);
   assert.match(schemaSource, /next_follow_up_date date/);
   assert.match(schemaSource, /follow_up_status text/);
   assert.match(schemaSource, /Users can read lead sources/);

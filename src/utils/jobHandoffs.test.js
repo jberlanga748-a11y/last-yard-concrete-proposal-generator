@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   JOB_HANDOFF_STATUSES,
+  applyJobHandoffOpsReadinessOverride,
+  calculateJobHandoffOpsReadiness,
   createJobHandoffFromLead,
   filterJobHandoffs,
   findJobHandoffForLead,
@@ -12,6 +14,7 @@ import {
   mergeJobHandoffs,
   normalizeJobHandoff,
   normalizeJobHandoffs,
+  toggleJobHandoffOpsTbdField,
   upsertJobHandoff,
 } from "./jobHandoffs.js";
 
@@ -117,4 +120,137 @@ test("formats a copyable job handoff summary", () => {
   assert.match(summary, /Customer\/Company: ABC Apartments/);
   assert.match(summary, /Included Scope/);
   assert.match(summary, /Coordinate access/);
+});
+
+test("complete job handoff scores ready for Concrete Ops without OpenAI", () => {
+  const checked = calculateJobHandoffOpsReadiness({
+    id: "ready-handoff",
+    customerName: "ABC Apartments",
+    contactName: "Alex GC",
+    contactEmail: "alex@example.com",
+    projectName: "Sidewalk repair",
+    projectAddress: "123 Main St",
+    city: "Albany",
+    state: "OR",
+    serviceType: "Sidewalk",
+    projectType: "Replacement",
+    scopeSummary: "Replace damaged sidewalk panels.",
+    includedScope: ["Demo panels", "Place broom finish concrete"],
+    exclusions: ["Traffic control by GC"],
+    sourceProposalId: "proposal-1",
+    missingInfoStatus: "Ready",
+    proposalReadinessLabel: "Ready",
+    proposalReadinessScore: 95,
+    followUpStatus: "Contacted",
+    operationsNotes: "Confirm access before mobilization.",
+    startDateTarget: "2026-05-20",
+    crewNotes: "Two-person concrete crew.",
+    scheduleNotes: "Coordinate after demo.",
+    handoffStatus: "Ready for Ops Review",
+  });
+
+  assert.equal(checked.opsReadinessLabel, "Ready");
+  assert.equal(checked.opsReadinessScore, 100);
+  assert.equal(checked.opsReadinessIssues.length, 0);
+  assert.equal(checked.opsReadinessChecklist.length, 19);
+});
+
+test("incomplete job handoff detects missing fields and scores not ready", () => {
+  const checked = calculateJobHandoffOpsReadiness({
+    id: "not-ready-handoff",
+    projectName: "Unknown job",
+    followUpStatus: "Waiting on Response",
+  });
+
+  assert.equal(checked.opsReadinessLabel, "Not Ready");
+  assert.ok(checked.opsReadinessScore < 60);
+  assert.ok(checked.opsReadinessIssues.some((issue) => /customer/i.test(issue)));
+  assert.ok(checked.opsReadinessIssues.some((issue) => /waiting on response/i.test(issue)));
+});
+
+test("waiting on response blocks ready status even when other fields are strong", () => {
+  const checked = calculateJobHandoffOpsReadiness({
+    customerName: "ABC Apartments",
+    contactName: "Alex GC",
+    contactPhone: "555-0100",
+    projectName: "Sidewalk repair",
+    projectAddress: "123 Main St",
+    serviceType: "Sidewalk",
+    projectType: "Replacement",
+    scopeSummary: "Replace sidewalk.",
+    includedScope: ["Concrete replacement"],
+    assumptions: ["Normal working hours"],
+    sourceProposalId: "proposal-1",
+    missingInfoStatus: "Ready",
+    proposalReadinessLabel: "Ready",
+    proposalReadinessScore: 90,
+    followUpStatus: "Waiting on Response",
+    operationsNotes: "Ops notes saved.",
+    startDateTarget: "2026-05-20",
+    crewNotes: "Crew notes saved.",
+    scheduleNotes: "Schedule notes saved.",
+    handoffStatus: "Ready to Create Job",
+  });
+
+  assert.equal(checked.opsReadinessLabel, "Needs Review");
+  assert.ok(checked.opsReadinessIssues.some((issue) => /waiting on response/i.test(issue)));
+});
+
+test("TBD fields satisfy start date crew and schedule readiness items", () => {
+  const basePacket = {
+    customerName: "ABC Apartments",
+    contactName: "Alex GC",
+    contactEmail: "alex@example.com",
+    projectName: "Sidewalk repair",
+    projectAddress: "123 Main St",
+    serviceType: "Sidewalk",
+    projectType: "Replacement",
+    scopeSummary: "Replace sidewalk.",
+    includedScope: ["Concrete replacement"],
+    assumptions: ["Normal working hours"],
+    sourceProposalId: "proposal-1",
+    missingInfoStatus: "Ready",
+    proposalReadinessLabel: "Ready",
+    proposalReadinessScore: 90,
+    followUpStatus: "Contacted",
+    operationsNotes: "Ops notes saved.",
+    handoffStatus: "Ready for Ops Review",
+  };
+  const withTbd = ["startDateTarget", "crewNotes", "scheduleNotes"].reduce(
+    (packet, field) => toggleJobHandoffOpsTbdField(packet, field),
+    basePacket,
+  );
+  const checked = calculateJobHandoffOpsReadiness(withTbd);
+
+  assert.equal(checked.opsReadinessLabel, "Ready");
+  assert.equal(checked.opsReadinessScore, 100);
+  assert.deepEqual(checked.opsReadinessTbdFields, ["startDateTarget", "crewNotes", "scheduleNotes"]);
+});
+
+test("readiness override requires a reason and preserves issues", () => {
+  assert.throws(() => applyJobHandoffOpsReadinessOverride({ projectName: "Partial" }, ""), /override reason/i);
+
+  const overridden = applyJobHandoffOpsReadinessOverride({ projectName: "Partial" }, "Ops reviewed by owner.");
+
+  assert.equal(overridden.opsReadinessLabel, "Ready");
+  assert.equal(overridden.opsReadinessOverride, true);
+  assert.equal(overridden.opsReadinessOverrideReason, "Ops reviewed by owner.");
+  assert.ok(overridden.opsReadinessIssues.length > 0);
+});
+
+test("readiness results persist through normalize merge and filters", () => {
+  const checked = calculateJobHandoffOpsReadiness({
+    id: "readiness-persist",
+    projectName: "Partial",
+    updatedAt: "2026-05-01T00:00:00.000Z",
+  });
+  const normalized = normalizeJobHandoff(checked);
+  const merged = mergeJobHandoffs([], [normalized]);
+  const notReadyPackets = filterJobHandoffs(merged, { opsReadinessFilter: "not_ready" });
+  const stats = getJobHandoffStats(merged);
+
+  assert.equal(merged[0].opsReadinessLabel, "Not Ready");
+  assert.equal(merged[0].opsReadinessChecklist.length, 19);
+  assert.equal(notReadyPackets.length, 1);
+  assert.equal(stats.opsNotReady, 1);
 });

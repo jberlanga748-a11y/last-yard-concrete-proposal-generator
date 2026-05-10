@@ -356,7 +356,11 @@ function LeadCommandCenterPage({
   onUpdateLeadReviewStatus,
 }) {
   const commandData = getLeadFinderCommandCenterData(data);
-  const handoffStats = getJobHandoffStats(jobHandoffs);
+  const normalizedJobHandoffs = normalizeJobHandoffs(jobHandoffs);
+  const handoffStats = getJobHandoffStats(normalizedJobHandoffs);
+  const readyOpsHandoffs = normalizedJobHandoffs.filter(
+    (packet) => packet.opsReadinessLabel === "Ready" || packet.opsReadinessOverride || packet.handoffStatus === "Ready to Create Job",
+  );
   const [localMessage, setLocalMessage] = useState("");
   const [actionLoading, setActionLoading] = useState("");
   const statCards = [
@@ -372,6 +376,8 @@ function LeadCommandCenterPage({
     ["Proposals Started", commandData.stats.proposalsStarted],
     ["Ready for Ops Review", handoffStats.readyForOpsReview],
     ["Ready to Create Job", handoffStats.readyToCreateJob],
+    ["Handoffs Not Ready", handoffStats.opsNotReady],
+    ["Handoffs Ready for Concrete Ops", handoffStats.opsReady],
   ];
 
   async function runLeadAction(lead, actionName, action) {
@@ -606,6 +612,12 @@ function LeadCommandCenterPage({
           />
         ))}
       </CommandCenterSection>
+
+      <CommandCenterSection title="Ready for Concrete Ops" emptyText="No job handoff packets are ready for future Concrete Ops job creation yet.">
+        {readyOpsHandoffs.map((packet) => (
+          <CommandCenterHandoffRow key={packet.id} packet={packet} onNavigate={onNavigate} />
+        ))}
+      </CommandCenterSection>
     </div>
   );
 }
@@ -654,6 +666,37 @@ function CommandCenterLeadRow({ actionLoading = "", actions = [], lead = {}, onN
         ))}
         <button type="button" onClick={() => onNavigate?.(`/lead-finder/leads/${lead.id}`)}>
           Open
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function CommandCenterHandoffRow({ packet = {}, onNavigate }) {
+  return (
+    <article className="lead-inbox-row job-handoff-row">
+      <div className="lead-inbox-main">
+        <div className="bid-card-title">
+          <strong>{packet.projectName || packet.proposalTitle || "Untitled handoff"}</strong>
+          <Badge>{packet.handoffStatus}</Badge>
+          <Badge>{packet.opsReadinessLabel || "Ops Not Checked"}</Badge>
+          {packet.opsReadinessOverride ? <Badge>Override</Badge> : null}
+        </div>
+        <p>{[packet.customerName, packet.city, packet.state, packet.serviceType].filter(Boolean).join(" | ") || "No handoff details entered"}</p>
+        <small>
+          {packet.opsReadinessIssues?.length
+            ? `${packet.opsReadinessIssues.length} readiness issue${packet.opsReadinessIssues.length === 1 ? "" : "s"} still noted.`
+            : packet.operationsNotes || packet.scopeSummary || "No operations notes entered yet."}
+        </small>
+      </div>
+      <div className="lead-inbox-meta">
+        <span>{packet.opsReadinessLastCheckedAt ? `Checked ${formatDisplayDate(packet.opsReadinessLastCheckedAt)}` : "Not checked"}</span>
+        <span>{packet.handoffStatus}</span>
+        <strong>{packet.opsReadinessScore !== "" ? `${packet.opsReadinessScore}/100` : "No score"}</strong>
+      </div>
+      <div className="table-actions lead-review-actions">
+        <button type="button" onClick={() => onNavigate?.(`/job-handoffs/${packet.id}`)}>
+          Open Handoff
         </button>
       </div>
     </article>
