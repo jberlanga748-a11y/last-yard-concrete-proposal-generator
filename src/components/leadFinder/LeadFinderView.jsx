@@ -174,6 +174,7 @@ export function LeadFinderView({
           onCreateJobHandoff={onCreateJobHandoff}
           onMarkMissingInfoRequested={onMarkMissingInfoRequested}
           onSaveLead={onSaveLead}
+          onSendLeadToConcreteOps={onSendLeadToConcreteOps}
           onScoreLead={onScoreLead}
           onScoreLeadWithRules={onScoreLeadWithRules}
           onUpdateLeadStatus={onUpdateLeadStatus}
@@ -1601,6 +1602,7 @@ function LeadEditPage({
   onMarkMissingInfoRequested,
   onNavigate,
   onSaveLead,
+  onSendLeadToConcreteOps,
   onScoreLead,
   onScoreLeadWithRules,
   onUpdateLeadStatus,
