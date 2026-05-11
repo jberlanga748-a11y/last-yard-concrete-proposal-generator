@@ -66,6 +66,7 @@ export function LeadFinderView({
   onNavigate,
   onApplyProposalDraft,
   onSaveLead,
+  onSendLeadToConcreteOps,
   onSaveSource,
   onScoreAllUnscoredLeads,
   onScoreLead,
@@ -135,6 +136,7 @@ export function LeadFinderView({
           onLeadHandoff={onLeadHandoff}
           onNavigate={navigateLeadFinder}
           onSaveLead={onSaveLead}
+          onSendLeadToConcreteOps={onSendLeadToConcreteOps}
           onScoreAllUnscoredLeads={onScoreAllUnscoredLeads}
           onUpdateLeadReviewStatus={onUpdateLeadReviewStatus}
         />
@@ -359,6 +361,7 @@ function LeadCommandCenterPage({
   onMarkMissingInfoRequested,
   onNavigate,
   onSaveLead,
+  onSendLeadToConcreteOps,
   onSaveSource,
   onUpdateLeadReviewStatus,
 }) {
@@ -1616,6 +1619,7 @@ function LeadEditPage({
   const [proposalDraft, setProposalDraft] = useState(null);
   const [missingInfoLoading, setMissingInfoLoading] = useState("");
   const [missingInfoError, setMissingInfoError] = useState("");
+  const [sendLeadLoading, setSendLeadLoading] = useState(false);
 
   useEffect(() => {
     setLeadDraft(createLeadDraftForEditor(existingLead, mode, normalizedData.sources, prefillSourceId));
@@ -1629,6 +1633,7 @@ function LeadEditPage({
     setProposalDraft(null);
     setMissingInfoLoading("");
     setMissingInfoError("");
+    setSendLeadLoading(false);
   }, [existingLead?.id, mode, prefillSourceId]);
 
   const quickStatuses = ["Good Fit", "Maybe", "Bad Fit", "Contacted"];
@@ -1924,6 +1929,19 @@ function LeadEditPage({
     }
   }
 
+  async function sendLeadToConcreteOps() {
+    setSendLeadLoading(true);
+    setLocalMessage("");
+    try {
+      const result = await onSendLeadToConcreteOps?.(leadDraft);
+      if (result?.lead) setLeadDraft(result.lead);
+      if (result?.message) setLocalMessage(result.message);
+      else if (result?.error) setLocalMessage(result.error);
+    } finally {
+      setSendLeadLoading(false);
+    }
+  }
+
   if (mode !== "new" && !existingLead) {
     return (
       <div className="contact-empty-state">
@@ -1971,6 +1989,11 @@ function LeadEditPage({
             </button>
           ) : null}
           {mode !== "new" ? (
+            <button type="button" onClick={sendLeadToConcreteOps} disabled={!permissions.editBid || sendLeadLoading}>
+              {sendLeadLoading ? "Sending..." : "Send to Concrete Ops Lead"}
+            </button>
+          ) : null}
+          {mode !== "new" ? (
             <button type="button" onClick={generateProposalDraft} disabled={!permissions.editBid || proposalDraftLoading}>
               {proposalDraftLoading ? "Generating..." : "Generate Proposal Draft"}
             </button>
@@ -1985,6 +2008,11 @@ function LeadEditPage({
       {missingInfoError ? <p className="backup-message backup-message-error">{missingInfoError}</p> : null}
       {proposalDraftError ? <p className="backup-message backup-message-error">{proposalDraftError}</p> : null}
       {handoffError ? <p className="backup-message backup-message-error">{handoffError}</p> : null}
+      {leadDraft.concreteOpsLeadUrl ? (
+        <p className="backup-message">
+          <a href={leadDraft.concreteOpsLeadUrl} target="_blank" rel="noreferrer">Open in Concrete Ops</a>
+        </p>
+      ) : null}
       <fieldset className="editor-permission-fieldset" disabled={!permissions.editBid}>
         <LeadQuickActions statuses={quickStatuses} currentStatus={leadDraft.status} onSetStatus={setQuickStatus} />
         {proposalDraft ? (

@@ -718,9 +718,37 @@ export function normalizeLead(lead = {}) {
     missingInfoLastCheckedAt: toIsoDateTime(leadRecord.missingInfoLastCheckedAt),
     missingInfoSource: normalizeLeadScoreSource(leadRecord.missingInfoSource),
     missingInfoStatus: normalizeOption(leadRecord.missingInfoStatus, LEAD_MISSING_INFO_STATUSES, "Not Checked"),
+    concreteOpsLeadSendStatus: toSafeText(leadRecord.concreteOpsLeadSendStatus),
+    concreteOpsLeadId: toSafeText(leadRecord.concreteOpsLeadId),
+    concreteOpsLeadOpenPath: toSafeText(leadRecord.concreteOpsLeadOpenPath),
+    concreteOpsLeadUrl: toSafeText(leadRecord.concreteOpsLeadUrl),
+    concreteOpsLeadLastSentAt: toIsoDateTime(leadRecord.concreteOpsLeadLastSentAt),
+    concreteOpsLeadSendMessage: toSafeText(leadRecord.concreteOpsLeadSendMessage),
+    concreteOpsLeadSendError: toSafeText(leadRecord.concreteOpsLeadSendError),
+    concreteOpsLeadDuplicate: leadRecord.concreteOpsLeadDuplicate === true,
     createdAt,
     updatedAt: toSafeText(leadRecord.updatedAt) || createdAt,
   };
+}
+
+export function applyConcreteOpsLeadSendResultToLead(lead = {}, result = {}, options = {}) {
+  const normalizedLead = normalizeLead(lead);
+  const sentAt = toIsoDateTime(options.sentAt);
+  const updatedAt = toIsoDateTime(options.updatedAt) || new Date().toISOString();
+  const ok = result?.ok === true || result?.duplicate === true || result?.possibleDuplicate === true;
+  const status = ok ? (result?.duplicate ? "duplicate" : result?.possibleDuplicate ? "possible_duplicate" : "sent") : "failed";
+  return normalizeLead({
+    ...normalizedLead,
+    concreteOpsLeadSendStatus: status,
+    concreteOpsLeadId: toSafeText(result?.concreteOpsLeadId),
+    concreteOpsLeadOpenPath: toSafeText(result?.openPath),
+    concreteOpsLeadUrl: toSafeText(result?.concreteOpsUrl),
+    concreteOpsLeadLastSentAt: ok ? (sentAt || new Date().toISOString()) : normalizedLead.concreteOpsLeadLastSentAt,
+    concreteOpsLeadSendMessage: toSafeText(result?.message),
+    concreteOpsLeadSendError: ok ? "" : toSafeText(result?.error || result?.message),
+    concreteOpsLeadDuplicate: result?.duplicate === true,
+    updatedAt,
+  });
 }
 
 export function getLeadFinderBackupFileName(date = new Date()) {

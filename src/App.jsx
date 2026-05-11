@@ -184,6 +184,7 @@ import {
 } from "./utils/activityLog.js";
 import { getAuthGateState, getLogoutCleanupState } from "./utils/authSession.js";
 import {
+  applyConcreteOpsLeadSendResultToLead,
   applyLeadHandoff,
   applyLeadAiScore,
   applyLeadMissingInfoCheck,
@@ -3195,6 +3196,35 @@ export default function App() {
     });
 
     return lead;
+  }
+
+  async function sendLeadToConcreteOps(lead) {
+    if (!canPerform("editBid", setLeadFinderMessage)) return null;
+    const normalizedLead = normalizeLead(lead);
+    if (!normalizedLead.id) {
+      setLeadFinderMessage("Save this lead before sending it to Concrete Ops.");
+      return null;
+    }
+    setLeadFinderMessage("Sending lead to Concrete Ops...");
+    let responseData = null;
+    try {
+      const response = await fetch("/api/integrations/send-lead-to-concrete-ops", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceLeadId: normalizedLead.id, lead: normalizedLead }),
+      });
+      responseData = await response.json().catch(() => ({}));
+      if (!response.ok && !responseData.duplicate && !responseData.possibleDuplicate) {
+        responseData = { ...responseData, ok: false, error: responseData.error || responseData.message || "Concrete Ops lead send failed." };
+      }
+    } catch (error) {
+      responseData = { ok: false, reason: "concrete_ops_unreachable", error: error?.message || "Concrete Ops lead send failed.", message: "Concrete Ops is unreachable right now." };
+    }
+    const updatedLead = applyConcreteOpsLeadSendResultToLead(normalizedLead, responseData, { sentAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    const nextLeadFinderData = upsertLead(leadFinderData, updatedLead, leadFinderData.sources);
+    await commitLeadFinderData(nextLeadFinderData, updatedLead.concreteOpsLeadSendMessage || updatedLead.concreteOpsLeadSendError || "Concrete Ops lead send status updated.");
+    setLeadFinderMessage(updatedLead.concreteOpsLeadSendMessage || updatedLead.concreteOpsLeadSendError || "Concrete Ops lead send status updated.");
+    return { ...responseData, lead: getLeadById(nextLeadFinderData, updatedLead.id) || updatedLead };
   }
 
   async function scoreAllUnscoredLeads() {
@@ -7783,6 +7813,7 @@ export default function App() {
           onLeadHandoff={handleLeadHandoff}
           onMarkMissingInfoRequested={markLeadMissingInfoRequested}
           onSaveLead={saveLead}
+          onSendLeadToConcreteOps={sendLeadToConcreteOps}
           onSaveSource={saveLeadSource}
           onScoreAllUnscoredLeads={scoreAllUnscoredLeads}
           onScoreLead={scoreLeadWithAi}
